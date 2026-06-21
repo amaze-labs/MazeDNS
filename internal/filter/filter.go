@@ -107,3 +107,7 @@ func (e *Engine) Len() int {
 func normalize(domain string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
 }
+
+// Normalize lowercases a domain and strips a trailing dot. Exported so callers
+// can build policy keys (e.g. rewrites) consistently with the matcher.
+func Normalize(domain string) string { return normalize(domain) }

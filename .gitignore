@@ -5,3 +5,16 @@
 # OS / editor
 .DS_Store
 *.swp
+
+# Go build artifacts
+/mazedns
+/dist/
+*.test
+
+# Runtime data (SQLite)
+*.db
+*.db-wal
+*.db-shm
+
+# Node / frontend (Phase 3)
+node_modules/

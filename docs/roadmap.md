@@ -8,11 +8,13 @@ Single-node first; the data model is designed so clustering is additive.
       config, structured logs, stat counters, Dockerfile. *It resolves and it
       blocks* — verified end-to-end (blocked NXDOMAIN, subdomain block, forward,
       cache hit).
-- [ ] **Phase 2 — API + persistence.** JSON REST control plane, SQLite store
-      (upstreams, blocklists, rules, rewrites, clients), query-log storage,
-      Prometheus `/metrics`. ← current focus
+- [x] **Phase 2 — API + persistence.** JSON REST control plane, SQLite store
+      (rules, rewrites, query log), live policy reload, Prometheus `/metrics`.
+      Verified: an API-added deny rule and rewrite change resolution, and the
+      query log persists to SQLite. (Upstreams/clients tables: a later pass.)
 - [ ] **Phase 3 — Web UI.** React + Vite + TS SPA: dashboard (live stats, query
       log) + config screens; embedded into the Go binary via `go:embed`.
+      ← current focus
 - [ ] **Phase 4 — Auth.** Local users (argon2id, sessions) + OIDC via Authentik;
       route guards + RBAC (admin / read-only).
 - [ ] **Phase 5 — Advanced DNS.** DoH/DoT/DoQ server endpoints + encrypted

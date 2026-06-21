@@ -19,6 +19,14 @@ filter:
   blocklist_files:
     - "blocklist.hosts"        # relative paths resolve next to this config file
 
+api:
+  enabled: true
+  address: "127.0.0.1"         # keep the control plane off the public internet
+  port: 8080                   # http://127.0.0.1:8080  ->  /api, /metrics, /healthz
+
+database:
+  path: "mazedns.db"           # SQLite file (relative to the working directory)
+
 log:
   level: "info"                # debug|info|warn|error
   query_log: false             # set true to log every query

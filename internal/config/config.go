@@ -36,6 +36,8 @@ type Config struct {
 	Upstreams []string `yaml:"upstreams"`
 	Cache     Cache    `yaml:"cache"`
 	Filter    Filter   `yaml:"filter"`
+	API       API      `yaml:"api"`
+	Database  Database `yaml:"database"`
 	Log       Log      `yaml:"log"`
 }
 
@@ -60,6 +62,18 @@ type Filter struct {
 	BlocklistFiles []string `yaml:"blocklist_files"`
 }
 
+// API configures the HTTP control-plane / metrics server.
+type API struct {
+	Enabled bool   `yaml:"enabled"`
+	Address string `yaml:"address"`
+	Port    int    `yaml:"port"`
+}
+
+// Database configures the SQLite datastore.
+type Database struct {
+	Path string `yaml:"path"`
+}
+
 // Log configures logging.
 type Log struct {
 	Level    string `yaml:"level"` // debug|info|warn|error
@@ -81,7 +95,9 @@ func Default() Config {
 			Enabled:       true,
 			BlockResponse: "nxdomain",
 		},
-		Log: Log{Level: "info", QueryLog: false},
+		API:      API{Enabled: true, Address: "127.0.0.1", Port: 8080},
+		Database: Database{Path: "mazedns.db"},
+		Log:      Log{Level: "info", QueryLog: false},
 	}
 }
 
@@ -119,6 +135,12 @@ func (c Config) validate() error {
 	case "", "nxdomain", "zeroip":
 	default:
 		return fmt.Errorf("filter.block_response must be nxdomain or zeroip, got %q", c.Filter.BlockResponse)
+	}
+	if c.API.Enabled && (c.API.Port <= 0 || c.API.Port > 65535) {
+		return fmt.Errorf("api.port out of range: %d", c.API.Port)
+	}
+	if c.Database.Path == "" {
+		return fmt.Errorf("database.path is required")
 	}
 	return nil
 }

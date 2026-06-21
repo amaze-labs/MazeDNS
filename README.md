@@ -41,13 +41,20 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 
 ## Quick start
 
-> The code skeleton lands next. Once it does:
->
-> ```bash
-> go run ./cmd/mazedns --config configs/mazedns.yaml
-> dig @127.0.0.1 -p 5300 example.com      # resolves
-> dig @127.0.0.1 -p 5300 doubleclick.net  # blocked
-> ```
+```bash
+go run ./cmd/mazedns --config configs/mazedns.yaml
+
+# DNS  (dev port 5300; macOS reserves 5353 for mDNS)
+dig @127.0.0.1 -p 5300 example.com        # resolves
+dig @127.0.0.1 -p 5300 doubleclick.net    # blocked (NXDOMAIN)
+
+# Control plane  (http://127.0.0.1:8080)
+curl -XPOST :8080/api/rules    -d '{"action":"deny","domain":"ads.example.com"}'
+curl -XPOST :8080/api/rewrites -d '{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}'
+curl :8080/api/stats
+curl ':8080/api/querylog?limit=20'
+curl :8080/metrics              # Prometheus
+```
 
 ## Security notes
 

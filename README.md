@@ -56,6 +56,24 @@ curl ':8080/api/querylog?limit=20'
 curl :8080/metrics              # Prometheus
 ```
 
+### Web UI
+
+The React dashboard (stats, query log, rules, rewrites) is served by the binary
+when built with the frontend embedded:
+
+```bash
+npm --prefix web install && npm --prefix web run build
+go run -tags embed_dist ./cmd/mazedns --config configs/mazedns.yaml
+# → http://127.0.0.1:8080
+```
+
+Frontend dev with hot reload (UI on :5173, proxying /api to the Go server):
+
+```bash
+go run ./cmd/mazedns --config configs/mazedns.yaml   # API on :8080
+npm --prefix web run dev                              # UI on :5173
+```
+
 ## Security notes
 
 - Never expose the admin API / UI to the internet — management network / VPN only.

@@ -1,4 +1,4 @@
-// Package api serves the MazeDNS HTTP control plane and Prometheus metrics.
+// Package api serves the MazeDNS HTTP control plane, web UI, and Prometheus metrics.
 package api
 
 import (
@@ -13,6 +13,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/web"
 )
 
 // Server is the HTTP API server.
@@ -38,6 +39,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 	mux.HandleFunc("GET /api/rewrites", s.listRewrites)
 	mux.HandleFunc("POST /api/rewrites", s.addRewrite)
 	mux.HandleFunc("DELETE /api/rewrites/{id}", s.deleteRewrite)
+	mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
 	s.http = &http.Server{
 		Addr:              addr,
 		Handler:           logRequests(mux),

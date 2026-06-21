@@ -16,5 +16,7 @@
 *.db-wal
 *.db-shm
 
-# Node / frontend (Phase 3)
+# Node / frontend
 node_modules/
+web/dist/
+*.tsbuildinfo

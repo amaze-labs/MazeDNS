@@ -1,0 +1,216 @@
+:root {
+  --bg: #0f1216;
+  --panel: #171c23;
+  --line: #262d36;
+  --fg: #e6e9ee;
+  --muted: #8a93a0;
+  --accent: #4ea1ff;
+  --danger: #ff5d6c;
+  --ok: #3ecf8e;
+  --rewrite: #c48aff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.app {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+header h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+nav {
+  display: flex;
+  gap: 8px;
+}
+
+nav button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+
+nav button:hover {
+  color: var(--fg);
+}
+
+nav button.active {
+  color: var(--fg);
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.card-value {
+  font-size: 28px;
+  font-weight: 600;
+}
+
+.card-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card.danger .card-value {
+  color: var(--danger);
+}
+
+h2 {
+  font-size: 15px;
+  margin: 24px 0 12px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+.muted {
+  color: var(--muted);
+  text-align: center;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.badge.blocked {
+  background: rgba(255, 93, 108, 0.15);
+  color: var(--danger);
+}
+
+.badge.forward {
+  background: rgba(78, 161, 255, 0.15);
+  color: var(--accent);
+}
+
+.badge.cache {
+  background: rgba(62, 207, 142, 0.15);
+  color: var(--ok);
+}
+
+.badge.rewrite {
+  background: rgba(196, 138, 255, 0.15);
+  color: var(--rewrite);
+}
+
+.badge.allow {
+  background: rgba(62, 207, 142, 0.15);
+  color: var(--ok);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+input,
+select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+}
+
+input {
+  flex: 1;
+  min-width: 180px;
+}
+
+form button {
+  background: var(--accent);
+  color: #001022;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button.del {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+button.del:hover {
+  color: var(--danger);
+}
+
+.error {
+  background: rgba(255, 93, 108, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(255, 93, 108, 0.3);
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}

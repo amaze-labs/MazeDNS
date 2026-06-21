@@ -12,11 +12,12 @@ Single-node first; the data model is designed so clustering is additive.
       (rules, rewrites, query log), live policy reload, Prometheus `/metrics`.
       Verified: an API-added deny rule and rewrite change resolution, and the
       query log persists to SQLite. (Upstreams/clients tables: a later pass.)
-- [ ] **Phase 3 — Web UI.** React + Vite + TS SPA: dashboard (live stats, query
-      log) + config screens; embedded into the Go binary via `go:embed`.
-      ← current focus
+- [x] **Phase 3 — Web UI.** React + Vite + TS SPA: dashboard (live stats + query
+      log) and rules/rewrites config screens, served by the Go binary via
+      `go:embed` (build `-tags embed_dist`). Verified: the binary serves
+      index.html, hashed assets, SPA fallback, and the API together.
 - [ ] **Phase 4 — Auth.** Local users (argon2id, sessions) + OIDC via Authentik;
-      route guards + RBAC (admin / read-only).
+      route guards + RBAC (admin / read-only). ← current focus
 - [ ] **Phase 5 — Advanced DNS.** DoH/DoT/DoQ server endpoints + encrypted
       upstreams, DNSSEC validation, conditional / split-horizon forwarding,
       authoritative zones, EDNS Client Subnet, rate limiting.

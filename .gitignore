@@ -1,0 +1,7 @@
+# Local secrets / env (keep .env.example tracked)
+.env
+**/.env
+
+# OS / editor
+.DS_Store
+*.swp

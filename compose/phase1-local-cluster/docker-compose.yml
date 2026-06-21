@@ -1,0 +1,85 @@
+# Phase 1 — Local 2-node Technitium cluster (proof of concept)
+#
+# Two Technitium DNS Server nodes on one host, on a user-defined bridge network
+# with STATIC IPs (clustering requires stable addresses). HTTPS is enabled with
+# a self-signed cert because the cluster control channel uses DANE-EE TLS.
+#
+# Do NOT put a TLS-terminating reverse proxy in front of the web/cluster port —
+# it breaks DANE validation.
+#
+# Pin TECHNITIUM_TAG for production. Tags:
+#   https://hub.docker.com/r/technitium/dns-server/tags
+
+name: mazedns-phase1
+
+networks:
+  dnsnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  node1-config:
+  node1-logs:
+  node2-config:
+  node2-logs:
+
+services:
+  node1:
+    image: docker.io/technitium/dns-server:${TECHNITIUM_TAG:-latest}
+    container_name: tech-node1
+    hostname: ns1
+    restart: unless-stopped
+    environment:
+      DNS_SERVER_DOMAIN: ns1.${CLUSTER_DOMAIN:-dns.example.com}
+      DNS_SERVER_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme-local-only}
+      DNS_SERVER_WEB_SERVICE_HTTP_PORT: "5380"
+      DNS_SERVER_WEB_SERVICE_HTTPS_PORT: "53443"
+      DNS_SERVER_WEB_SERVICE_ENABLE_HTTPS: "true"
+      DNS_SERVER_WEB_SERVICE_USE_SELF_SIGNED_CERT: "true"
+      # Authoritative-style for this PoC. The resolver tier (later phase)
+      # switches this to a network-ACL-restricted Allow.
+      DNS_SERVER_RECURSION: "Deny"
+      DNS_SERVER_LOG_FOLDER_PATH: /var/log/technitium/dns
+    sysctls:
+      - net.ipv4.ip_local_port_range=1024 65535
+    networks:
+      dnsnet:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "5380:5380/tcp"     # web console HTTP   -> http://127.0.0.1:5380
+      - "53443:53443/tcp"   # web console HTTPS  -> https://127.0.0.1:53443  (cluster join URL)
+      - "5301:53/udp"       # DNS  -> dig @127.0.0.1 -p 5301 ...
+      - "5301:53/tcp"
+    volumes:
+      - node1-config:/etc/dns
+      - node1-logs:/var/log/technitium/dns
+
+  node2:
+    image: docker.io/technitium/dns-server:${TECHNITIUM_TAG:-latest}
+    container_name: tech-node2
+    hostname: ns2
+    restart: unless-stopped
+    environment:
+      DNS_SERVER_DOMAIN: ns2.${CLUSTER_DOMAIN:-dns.example.com}
+      DNS_SERVER_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme-local-only}
+      DNS_SERVER_WEB_SERVICE_HTTP_PORT: "5380"
+      DNS_SERVER_WEB_SERVICE_HTTPS_PORT: "53443"
+      DNS_SERVER_WEB_SERVICE_ENABLE_HTTPS: "true"
+      DNS_SERVER_WEB_SERVICE_USE_SELF_SIGNED_CERT: "true"
+      DNS_SERVER_RECURSION: "Deny"
+      DNS_SERVER_LOG_FOLDER_PATH: /var/log/technitium/dns
+    sysctls:
+      - net.ipv4.ip_local_port_range=1024 65535
+    networks:
+      dnsnet:
+        ipv4_address: 172.28.0.11
+    ports:
+      - "5381:5380/tcp"     # web console HTTP   -> http://127.0.0.1:5381
+      - "53444:53443/tcp"   # web console HTTPS  -> https://127.0.0.1:53444
+      - "5302:53/udp"       # DNS  -> dig @127.0.0.1 -p 5302 ...
+      - "5302:53/tcp"
+    volumes:
+      - node2-config:/etc/dns
+      - node2-logs:/var/log/technitium/dns

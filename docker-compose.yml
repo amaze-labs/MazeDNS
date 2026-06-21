@@ -1,0 +1,14 @@
+name: mazedns
+
+services:
+  mazedns:
+    build: .
+    image: mazedns:dev
+    container_name: mazedns
+    restart: unless-stopped
+    ports:
+      - "53:5300/udp"   # host :53 -> container :5300
+      - "53:5300/tcp"
+    # Override the baked-in config by mounting your own:
+    # volumes:
+    #   - ./configs:/etc/mazedns:ro

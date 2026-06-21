@@ -1,0 +1,24 @@
+# MazeDNS — Phase 1 sample config
+listen:
+  address: "0.0.0.0"
+  port: 5300              # non-privileged dev port (macOS reserves 5353 for mDNS); map host 53 -> 5300 in Docker
+
+upstreams:                # tried in order; first to answer wins
+  - "1.1.1.1:53"
+  - "9.9.9.9:53"
+
+cache:
+  enabled: true
+  max_entries: 10000
+  min_ttl: "10s"
+  max_ttl: "24h"
+
+filter:
+  enabled: true
+  block_response: "nxdomain"   # "nxdomain" or "zeroip" (0.0.0.0 / ::)
+  blocklist_files:
+    - "blocklist.hosts"        # relative paths resolve next to this config file
+
+log:
+  level: "info"                # debug|info|warn|error
+  query_log: false             # set true to log every query

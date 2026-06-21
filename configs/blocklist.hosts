@@ -1,0 +1,6 @@
+# MazeDNS sample blocklist (hosts format). A blocked domain also blocks its
+# subdomains. Replace/extend with real lists (e.g. StevenBlack, OISD) later.
+0.0.0.0 doubleclick.net
+0.0.0.0 googleadservices.com
+0.0.0.0 ads.example.com
+0.0.0.0 tracking.example.org

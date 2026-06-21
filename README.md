@@ -1,55 +1,56 @@
-# MazeDNS — Clustered DNS System
+# MazeDNS
 
-A production-oriented, multi-site **clustered DNS** built on
-[Technitium DNS Server](https://technitium.com/dns/) v15, running on **Docker**
-and **k3s**.
+A self-hosted, **fully custom DNS filtering resolver** — think AdGuard Home /
+Pi-hole, but built from scratch in Go with advanced DNS features and designed for
+multi-site **clustering**.
 
-- **Master/agent model** via Technitium's native **clustering**: one *primary*
-  owns config + the web UI; *secondaries* replicate it and keep serving if the
-  primary fails (and can be promoted).
-- **Two tiers**, because this deployment is both authoritative and recursive:
-  - **Authoritative** (public-facing): hosts your zones, DNSSEC-signed,
-    recursion OFF.
-  - **Resolver** (internal): recursive caching for clients, recursion ON but
-    restricted to internal networks.
-- **Multi-site** over a WireGuard mesh; observability via Prometheus + Grafana.
+> Status: **early build.** The Go core resolver is the first milestone; API, web
+> UI, auth, advanced protocols, and clustering follow — see
+> [docs/roadmap.md](docs/roadmap.md).
 
-See **[docs/architecture.md](docs/architecture.md)** for the full design and
-**[docs/roadmap.md](docs/roadmap.md)** for the build phases.
+## What it does (target)
 
-## Quick start (Phase 1 — local proof of concept)
+- **Filtering resolver:** forward + cache + block (ads / trackers / malware) via
+  blocklists (hosts / AdGuard-syntax / regex), allow/deny rules, per-client
+  policies, custom local records & rewrites.
+- **Advanced DNS:** DoH / DoT / DoQ (server + upstream), DNSSEC validation,
+  conditional / split-horizon forwarding, authoritative zones, rate limiting.
+- **Web UI:** React SPA — live stats, query log, and all configuration.
+- **Auth:** pluggable — local users (SQLite) by default, or **OIDC SSO via
+  Authentik**.
+- **Clustering:** master holds config; agents replicate it; multisite HA on
+  Docker + k3s. Built once the single-node core is solid.
+- **Observability:** Prometheus metrics + Grafana.
 
-Spin up a 2-node cluster on your laptop and watch replication + failover:
+## Stack
 
-```bash
-cd compose/phase1-local-cluster
-./scripts/up.sh
-# then follow compose/phase1-local-cluster/README.md
-```
+| Layer      | Choice                                                              |
+|------------|--------------------------------------------------------------------|
+| DNS engine | **Go** + [`miekg/dns`](https://github.com/miekg/dns) (wire codec only) |
+| API        | Go HTTP (JSON REST) + Prometheus `/metrics`                        |
+| Datastore  | **SQLite** (pure-Go driver, static-binary friendly)                |
+| Frontend   | **React + Vite + TypeScript** SPA                                   |
+| Auth       | Local (argon2id) **or** OIDC (Authentik)                            |
+| Deploy     | Docker, then k3s                                                    |
 
-## Repository layout
+Everything that makes MazeDNS unique — resolver logic, filtering, cache, API, UI,
+auth, clustering — is custom. `miekg/dns` is used only for RFC-correct DNS packet
+encoding/decoding, nothing more.
 
-```
-MazeDNS/
-├── docs/
-│   ├── architecture.md          # design: the two tiers, clustering, constraints
-│   └── roadmap.md               # phased build plan (Phase 0–6)
-└── compose/
-    └── phase1-local-cluster/    # ← you are starting here
-        ├── docker-compose.yml   # 2-node cluster (static IPs, HTTPS for DANE-EE)
-        ├── .env.example
-        ├── README.md            # step-by-step walkthrough
-        └── scripts/             # up / verify / failover-test
-```
+See [docs/architecture.md](docs/architecture.md) for the full design.
 
-(k8s manifests, the WireGuard mesh, and the monitoring stack arrive in later phases.)
+## Quick start
 
-## ⚠️ Security notes (read before going beyond local)
+> The code skeleton lands next. Once it does:
+>
+> ```bash
+> go run ./cmd/mazedns --config configs/mazedns.yaml
+> dig @127.0.0.1 -p 5300 example.com      # resolves
+> dig @127.0.0.1 -p 5300 doubleclick.net  # blocked
+> ```
 
-- **Never expose the web/API port (5380 / 53443) to the internet.** Keep it on a
-  management network / VPN only. v15 supports OIDC SSO for admin auth.
-- **Never run an open recursive resolver on a public authoritative server** —
-  that's why the resolver and authoritative tiers are kept separate.
-- Clustering authenticates node-to-node with **DANE-EE TLS**: do **not** put a
-  TLS-terminating reverse proxy in front of the cluster/web port.
-- Clustering requires **static IPs** per node.
+## Security notes
+
+- Never expose the admin API / UI to the internet — management network / VPN only.
+- The resolver answers recursive queries only for configured client networks
+  (no open resolver); per-client rate limiting is on by default.

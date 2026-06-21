@@ -1,28 +1,32 @@
 # Build roadmap
 
-Living checklist — update as we go.
+Custom Go DNS filtering resolver → advanced features → multi-site clustering.
+Single-node first; the data model is designed so clustering is additive.
 
-- [x] **Phase 0 — Repo + decisions.** Layout, git, architecture doc.
-- [ ] **Phase 1 — Local PoC (Docker Compose).** 2-node cluster on your laptop:
-      form cluster, sign a zone, replicate it, fail the primary, promote.
-      → `compose/phase1-local-cluster/` (ready now)
-- [ ] **Phase 2 — Harden the authoritative tier.** DNSSEC + DS at registrar,
-      TSIG, QPM rate-limiting, recursion OFF, lock the web/API port, OIDC SSO.
-- [ ] **Phase 3 — Resolver tier.** Second cluster: recursion ACLs, split-horizon
-      internal zones, forwarders, blocklists.
-- [ ] **Phase 4 — Multi-site networking.** WireGuard mesh, static overlay IPs,
-      join nodes across sites.
-- [ ] **Phase 5 — k3s.** StatefulSet + PVC + MetalLB fixed IPs (no ingress on the
-      cluster channel); add the k3s-site nodes.
-- [ ] **Phase 6 — Observability + DR.** Prometheus/Grafana/Alertmanager,
-      Technitium exporter, blackbox DNS probes, SOA-drift alerts, config backups
-      + a promote-to-primary runbook.
+- [x] **Phase 1 — Core resolver (runnable).** Go engine: UDP/TCP listeners,
+      forward to upstreams + TTL cache, blocklist filter (hosts format), YAML
+      config, structured logs, stat counters, Dockerfile. *It resolves and it
+      blocks* — verified end-to-end (blocked NXDOMAIN, subdomain block, forward,
+      cache hit).
+- [ ] **Phase 2 — API + persistence.** JSON REST control plane, SQLite store
+      (upstreams, blocklists, rules, rewrites, clients), query-log storage,
+      Prometheus `/metrics`. ← current focus
+- [ ] **Phase 3 — Web UI.** React + Vite + TS SPA: dashboard (live stats, query
+      log) + config screens; embedded into the Go binary via `go:embed`.
+- [ ] **Phase 4 — Auth.** Local users (argon2id, sessions) + OIDC via Authentik;
+      route guards + RBAC (admin / read-only).
+- [ ] **Phase 5 — Advanced DNS.** DoH/DoT/DoQ server endpoints + encrypted
+      upstreams, DNSSEC validation, conditional / split-horizon forwarding,
+      authoritative zones, EDNS Client Subnet, rate limiting.
+- [ ] **Phase 6 — Clustering.** Master→agent config replication (row-versioned
+      diffs), multisite over WireGuard, Docker + k3s manifests, HA.
+- [ ] **Phase 7 — Observability + DR.** Grafana dashboards, alerting, config
+      backups, upgrade / runbooks.
 
-## Inputs needed for later phases
+## Decisions locked
 
-- Public domain(s) + registrar (for DS/NS records, DNSSEC).
-- Site count; which sites are k3s vs Docker; static public IP per site?
-- Overlay: self-managed WireGuard vs Tailscale/Netbird vs existing VPN.
-- IdP for SSO (Keycloak / Authentik / Entra / Google) — or defer.
-- Internal zone name(s) + client CIDRs for the resolver tier.
-- Anycast ambitions (own AS + IP space?) — otherwise multi-NS is enough.
+- Custom app; `miekg/dns` for wire format only.
+- Go backend/engine; React + Vite + TypeScript SPA frontend.
+- SQLite (pure-Go) datastore, row-versioned for replication.
+- Pluggable auth: local SQLite (default) + OIDC Authentik.
+- Clustering is a goal; build single-node first, design for it.

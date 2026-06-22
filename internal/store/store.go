@@ -236,6 +236,12 @@ func (s *Store) DeleteRule(id int64) error {
 	return err
 }
 
+// ClearRules removes every rule (used by a "replace" config import).
+func (s *Store) ClearRules() error {
+	_, err := s.db.Exec(`DELETE FROM rules`)
+	return err
+}
+
 // ListRewrites returns all rewrites ordered by domain.
 func (s *Store) ListRewrites() ([]Rewrite, error) {
 	rows, err := s.db.Query(`SELECT id, domain, rrtype, value, enabled, updated_at FROM rewrites ORDER BY domain`)
@@ -269,8 +275,46 @@ func (s *Store) AddRewrite(domain, rrtype, value string) (int64, error) {
 	return id, err
 }
 
+// AddRewritesBulk inserts/updates many rewrites in one transaction, returning the count applied.
+func (s *Store) AddRewritesBulk(rws []Rewrite) (int, error) {
+	if len(rws) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at) VALUES(?,?,?,1,?)
+		 ON CONFLICT(domain, rrtype) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at`)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	defer stmt.Close()
+	now := time.Now().Unix()
+	n := 0
+	for _, r := range rws {
+		if _, err := stmt.Exec(r.Domain, r.RRType, r.Value, now); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // DeleteRewrite removes a rewrite by id.
 func (s *Store) DeleteRewrite(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM rewrites WHERE id=?`, id)
+	return err
+}
+
+// ClearRewrites removes every rewrite (used by a "replace" config import).
+func (s *Store) ClearRewrites() error {
+	_, err := s.db.Exec(`DELETE FROM rewrites`)
 	return err
 }

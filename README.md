@@ -97,6 +97,21 @@ Bootstrap settings stay in the config file / env because they're needed before
 the DB or UI exists: listen and API addresses/ports, TLS, the first-run admin
 credentials, and OIDC/SSO.
 
+### Backup & restore
+
+The Settings tab can **export** the full mutable config — settings, rules, and
+rewrites — as a single versioned JSON bundle, and **import** it back. Import has
+two modes: `merge` (upsert on top of what's there) and `replace` (clear rules
+and rewrites first). A restore applies settings live, reloads the filtering
+policy, and bumps the cluster config version so workers re-sync. The bundle
+deliberately omits users/sessions, the query log, and per-node cluster keys.
+
+```bash
+curl -s http://127.0.0.1:8080/api/config/export -o mazedns-config.json
+curl -s -X POST 'http://127.0.0.1:8080/api/config/import?mode=replace' \
+  -H 'Content-Type: application/json' --data-binary @mazedns-config.json
+```
+
 ## Build & deploy
 
 Common tasks via the `Makefile` (`make help` lists them all):

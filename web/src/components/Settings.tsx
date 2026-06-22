@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Settings as S, type ForwardGroup } from '../api'
 
 const linesToList = (s: string) =>
@@ -11,6 +11,9 @@ export default function Settings() {
   const [err, setErr] = useState('')
   const [ok, setOk] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge')
+  const [importMsg, setImportMsg] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     try {
@@ -42,6 +45,38 @@ export default function Settings() {
     setForwarders(forwarders.map((g, j) => (j === i ? { ...g, ...f } : g)))
   const addFwd = () => setForwarders([...forwarders, { suffix: '', upstreams: [] }])
   const delFwd = (i: number) => setForwarders(forwarders.filter((_, j) => j !== i))
+
+  const doExport = async () => {
+    setErr('')
+    try {
+      const blob = await api.exportConfig()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `mazedns-config-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  const doImport = async (file: File) => {
+    setErr('')
+    setImportMsg('')
+    try {
+      const bundle = JSON.parse(await file.text())
+      const res = await api.importConfig(bundle, importMode)
+      setImportMsg(
+        `Imported ${res.rules} rules, ${res.rewrites} rewrites${res.settings ? ', settings applied' : ''} (${res.mode}).`,
+      )
+      await load()
+    } catch (e: any) {
+      setErr(e.message)
+    } finally {
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
 
   const save = async () => {
     setSaving(true)
@@ -186,6 +221,28 @@ export default function Settings() {
           Reset
         </button>
       </div>
+
+      <section className="settings-card">
+        <h3>Backup & restore</h3>
+        <label className="muted">
+          Export downloads settings, rules, and rewrites as one JSON file. Import restores it —
+          <em> merge</em> upserts on top of what's here; <em> replace</em> clears rules and rewrites first.
+        </label>
+        {importMsg && <div className="ok-msg">{importMsg}</div>}
+        <div className="row">
+          <button onClick={doExport}>Export config</button>
+          <select value={importMode} onChange={(e) => setImportMode(e.target.value as 'merge' | 'replace')}>
+            <option value="merge">Merge</option>
+            <option value="replace">Replace</option>
+          </select>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])}
+          />
+        </div>
+      </section>
     </div>
   )
 }

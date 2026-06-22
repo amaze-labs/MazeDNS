@@ -56,8 +56,17 @@ Single-node first; the data model is designed so clustering is additive.
             stays in the file/env. `GET`/`PUT /api/settings` + a Settings tab;
             verified live-apply (zeroip block took effect immediately) and
             persistence across restart.
-- [ ] **Phase 8 — Observability + DR.** Grafana dashboards, alerting, config
-      backups, upgrade / runbooks.
+- [ ] **Phase 8 — Observability + DR.** Grafana dashboards, alerting, upgrade /
+      runbooks (largely operator-owned infrastructure).
+      - [x] Config backup / restore (app-layer DR): `GET /api/config/export`
+            downloads settings + rules + rewrites as one versioned JSON bundle;
+            `POST /api/config/import?mode=merge|replace` restores it (merge
+            upserts, replace clears first), validates, applies settings live and
+            reloads the policy (+ bumps the cluster config version so workers
+            re-sync). Users/sessions, the query log, and node keys are excluded.
+            Backup & restore UI lives in the Settings tab. Verified end-to-end:
+            export, replace (extra rule pruned), merge (kept both), version and
+            mode validation, and live re-block after restore.
 
 ## Decisions locked
 

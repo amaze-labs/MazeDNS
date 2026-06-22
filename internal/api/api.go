@@ -75,6 +75,10 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
 
+		// Config backup / restore (admin): export everything as one JSON bundle.
+		mux.HandleFunc("GET /api/config/export", s.requireRole(roleAdmin, s.exportConfig))
+		mux.HandleFunc("POST /api/config/import", s.requireRole(roleAdmin, s.importConfig))
+
 		// Cluster control plane (master only).
 		if clusterEnabled {
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))

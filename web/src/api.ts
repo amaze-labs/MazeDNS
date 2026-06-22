@@ -139,6 +139,19 @@ export const api = {
   saveSettings: (s: Settings) =>
     fetch('/api/settings', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<Settings>),
 
+  exportConfig: async (): Promise<Blob> => {
+    const r = await fetch('/api/config/export')
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}))
+      throw new Error(body.error || r.statusText)
+    }
+    return r.blob()
+  },
+  importConfig: (bundle: unknown, mode: 'merge' | 'replace') =>
+    fetch(`/api/config/import?mode=${mode}`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify(bundle) }).then(
+      j<{ mode: string; rules: number; rewrites: number; settings: boolean }>,
+    ),
+
   rewrites: () => fetch('/api/rewrites').then(j<Rewrite[]>),
   addRewrite: (domain: string, rrtype: string, value: string) =>
     fetch('/api/rewrites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ domain, rrtype, value }) }).then(j),

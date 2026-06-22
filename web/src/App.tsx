@@ -3,10 +3,11 @@ import Dashboard from './components/Dashboard'
 import Rules from './components/Rules'
 import Rewrites from './components/Rewrites'
 import Cluster from './components/Cluster'
+import Settings from './components/Settings'
 import Login from './components/Login'
 import { api, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'dashboard' | 'rules' | 'rewrites' | 'cluster'
+type Tab = 'dashboard' | 'rules' | 'rewrites' | 'cluster' | 'settings'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -44,6 +45,7 @@ export default function App() {
 
   const tabs: Tab[] = ['dashboard', 'rules', 'rewrites']
   if (info?.cluster_enabled) tabs.push('cluster')
+  tabs.push('settings')
 
   return (
     <div className="app">
@@ -75,6 +77,7 @@ export default function App() {
         {tab === 'rules' && <Rules />}
         {tab === 'rewrites' && <Rewrites />}
         {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
+        {tab === 'settings' && <Settings />}
       </main>
     </div>
   )

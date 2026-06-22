@@ -34,7 +34,7 @@ Single-node first; the data model is designed so clustering is additive.
             master tracks them; `GET /api/cluster/nodes` + a Cluster UI tab.
       - [ ] Infrastructure (WireGuard mesh, k3s manifests, HA) — deliberately
             left to the deploying operator.
-- [ ] **Phase 7 — Product enhancements.** ← current focus
+- [x] **Phase 7 — Product enhancements.**
       - [x] Rule import (AdGuard / Pi-hole / hosts) + rule categories
             (ads / trackers / malware / custom). Verified: mixed list imported,
             path/wildcard rules rejected, blocked live.
@@ -48,7 +48,14 @@ Single-node first; the data model is designed so clustering is additive.
       - [x] Cluster metrics: workers report query counters on each poll; master
             stores them per node; Cluster tab shows aggregate cards + per-node
             stats. Verified (node reported total=6 blocked=4 forwarded=2).
-      - [ ] Settings managed in the web UI (operational config in the DB).
+      - [x] Settings managed in the web UI (operational config in the DB).
+            Upstreams, conditional forwarders, block response, rate limit,
+            DNSSEC, and cache are stored in the DB (seeded from the config file
+            on first run) and hot-swapped via an atomic pointer on save — no
+            restart. Bootstrap (listen/API addresses, TLS, admin creds, OIDC)
+            stays in the file/env. `GET`/`PUT /api/settings` + a Settings tab;
+            verified live-apply (zeroip block took effect immediately) and
+            persistence across restart.
 - [ ] **Phase 8 — Observability + DR.** Grafana dashboards, alerting, config
       backups, upgrade / runbooks.
 

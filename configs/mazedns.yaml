@@ -1,4 +1,12 @@
-# MazeDNS — Phase 1 sample config
+# MazeDNS sample config.
+#
+# Bootstrap settings (listen/api addresses + ports, tls, database, auth/oidc)
+# are read from this file (or env) on every start.
+#
+# Operational settings (upstreams, forwarders, rate_limit, dnssec, cache,
+# filter.block_response) are only SEEDED from this file on first run — after
+# that they live in the database and are edited from the Settings tab in the UI.
+# Editing them here later has no effect unless the DB has no settings row yet.
 listen:
   address: "0.0.0.0"
   port: 5300              # non-privileged dev port (macOS reserves 5353 for mDNS); map host 53 -> 5300 in Docker

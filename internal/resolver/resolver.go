@@ -1,5 +1,7 @@
 // Package resolver handles DNS queries: rate-limit, authoritative zones, rewrite,
-// filter, cache, forward.
+// filter, cache, forward. Operational settings (upstreams, forwarders, cache,
+// rate-limit, block mode, DNSSEC) are held in a runtime that is swapped
+// atomically via ApplySettings, so they can be changed live from the UI.
 package resolver
 
 import (
@@ -47,23 +49,35 @@ type QueryEvent struct {
 
 // ForwardGroup routes a domain suffix to a specific set of upstreams (split-horizon).
 type ForwardGroup struct {
-	Suffix    string
-	Upstreams []string
+	Suffix    string   `json:"suffix"`
+	Upstreams []string `json:"upstreams"`
 }
 
-// Options configures a Resolver. Cache may be nil to disable caching.
+// CacheSettings configures the response cache.
+type CacheSettings struct {
+	Enabled    bool `json:"enabled"`
+	MaxEntries int  `json:"max_entries"`
+	MinTTLSec  int  `json:"min_ttl_sec"`
+	MaxTTLSec  int  `json:"max_ttl_sec"`
+}
+
+// Settings is the operational, UI-editable configuration applied at runtime.
+type Settings struct {
+	Upstreams     []string       `json:"upstreams"`
+	Forwarders    []ForwardGroup `json:"forwarders"`
+	BlockResponse string         `json:"block_response"` // "nxdomain" | "zeroip"
+	RateLimitQPM  int            `json:"rate_limit_qpm"`  // 0 = off
+	DNSSEC        bool           `json:"dnssec"`
+	Cache         CacheSettings  `json:"cache"`
+}
+
+// Options holds the static (non-UI-editable) resolver configuration.
 type Options struct {
-	Upstreams     []string
-	Forwarders    []ForwardGroup
-	Zones         []ZoneSpec
-	RateLimitQPM  int
-	ForceDNSSEC   bool
-	Cache         *cache.Cache
-	BlockResponse string // "nxdomain" | "zeroip"
-	QueryLog      bool
-	Timeout       time.Duration
-	Metrics       *metrics.Metrics
-	OnQuery       func(QueryEvent)
+	Timeout  time.Duration
+	Zones    []ZoneSpec
+	QueryLog bool
+	Metrics  *metrics.Metrics
+	OnQuery  func(QueryEvent)
 }
 
 // Stats holds atomic query counters.
@@ -81,74 +95,89 @@ type condForward struct {
 	ups    []Upstream
 }
 
-// Resolver answers DNS queries.
-type Resolver struct {
+// runtime is the swappable operational state derived from Settings.
+type runtime struct {
 	defaultUpstreams []Upstream
 	conditional      []condForward
-	zones            *Zones
-	cache            *cache.Cache
-	blockMode        string
-	queryLog         bool
-	forceDNSSEC      bool
-	metrics          *metrics.Metrics
-	onQuery          func(QueryEvent)
 	rate             *rateLimiter
-	stats            Stats
-	pol              atomic.Pointer[Policy]
+	blockMode        string
+	forceDNSSEC      bool
+	cache            *cache.Cache
 }
 
-// New builds a Resolver. Call SetPolicy before serving to install filtering rules.
+// Resolver answers DNS queries.
+type Resolver struct {
+	timeout  time.Duration
+	zones    *Zones
+	queryLog bool
+	metrics  *metrics.Metrics
+	onQuery  func(QueryEvent)
+	stats    Stats
+	rt       atomic.Pointer[runtime]
+	pol      atomic.Pointer[Policy]
+}
+
+// New builds a Resolver with empty operational settings — call ApplySettings to
+// install upstreams/cache/etc., and SetPolicy to install filtering rules.
 func New(opts Options) *Resolver {
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	parseAll := func(specs []string) []Upstream {
-		out := make([]Upstream, 0, len(specs))
-		for _, s := range specs {
-			u, err := ParseUpstream(s, timeout)
-			if err != nil {
-				slog.Warn("invalid upstream", "spec", s, "err", err)
-				continue
-			}
-			out = append(out, u)
-		}
-		return out
+	r := &Resolver{
+		timeout:  timeout,
+		zones:    NewZones(opts.Zones),
+		queryLog: opts.QueryLog,
+		metrics:  opts.Metrics,
+		onQuery:  opts.OnQuery,
 	}
+	r.rt.Store(&runtime{blockMode: "nxdomain"})
+	r.pol.Store(&Policy{Block: filter.New(), Allow: filter.New(), Rewrites: map[string][]RewriteRR{}})
+	return r
+}
 
-	cond := make([]condForward, 0, len(opts.Forwarders))
-	for _, f := range opts.Forwarders {
+func (r *Resolver) parseUpstreams(specs []string) []Upstream {
+	out := make([]Upstream, 0, len(specs))
+	for _, s := range specs {
+		u, err := ParseUpstream(s, r.timeout)
+		if err != nil {
+			slog.Warn("invalid upstream", "spec", s, "err", err)
+			continue
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
+// ApplySettings rebuilds and atomically swaps the operational runtime.
+func (r *Resolver) ApplySettings(s Settings) {
+	mode := s.BlockResponse
+	if mode != "zeroip" {
+		mode = "nxdomain"
+	}
+	rt := &runtime{
+		defaultUpstreams: r.parseUpstreams(s.Upstreams),
+		blockMode:        mode,
+		forceDNSSEC:      s.DNSSEC,
+	}
+	for _, f := range s.Forwarders {
 		suffix := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(f.Suffix), "."))
 		if suffix == "" {
 			continue
 		}
-		cond = append(cond, condForward{suffix: suffix, ups: parseAll(f.Upstreams)})
+		rt.conditional = append(rt.conditional, condForward{suffix: suffix, ups: r.parseUpstreams(f.Upstreams)})
 	}
-	sort.Slice(cond, func(i, j int) bool { return len(cond[i].suffix) > len(cond[j].suffix) })
-
-	mode := opts.BlockResponse
-	if mode == "" {
-		mode = "nxdomain"
+	sort.Slice(rt.conditional, func(i, j int) bool { return len(rt.conditional[i].suffix) > len(rt.conditional[j].suffix) })
+	if s.RateLimitQPM > 0 {
+		rt.rate = newRateLimiter(s.RateLimitQPM)
 	}
-	var rl *rateLimiter
-	if opts.RateLimitQPM > 0 {
-		rl = newRateLimiter(opts.RateLimitQPM)
+	if s.Cache.Enabled {
+		rt.cache = cache.New(s.Cache.MaxEntries,
+			time.Duration(s.Cache.MinTTLSec)*time.Second, time.Duration(s.Cache.MaxTTLSec)*time.Second)
 	}
-
-	r := &Resolver{
-		defaultUpstreams: parseAll(opts.Upstreams),
-		conditional:      cond,
-		zones:            NewZones(opts.Zones),
-		cache:            opts.Cache,
-		blockMode:        mode,
-		queryLog:         opts.QueryLog,
-		forceDNSSEC:      opts.ForceDNSSEC,
-		metrics:          opts.Metrics,
-		onQuery:          opts.OnQuery,
-		rate:             rl,
-	}
-	r.pol.Store(&Policy{Block: filter.New(), Allow: filter.New(), Rewrites: map[string][]RewriteRR{}})
-	return r
+	r.rt.Store(rt)
+	slog.Info("settings applied", "upstreams", len(rt.defaultUpstreams), "forwarders", len(rt.conditional),
+		"block", rt.blockMode, "ratelimit", s.RateLimitQPM, "dnssec", s.DNSSEC, "cache", s.Cache.Enabled)
 }
 
 // SetPolicy atomically swaps the active filtering/rewrite policy.
@@ -176,10 +205,10 @@ func (r *Resolver) StatsSnapshot() (total, blocked, cached, forwarded, rewritten
 
 // CacheLen returns the number of cached entries (0 if caching is disabled).
 func (r *Resolver) CacheLen() int {
-	if r.cache == nil {
-		return 0
+	if c := r.rt.Load().cache; c != nil {
+		return c.Len()
 	}
-	return r.cache.Len()
+	return 0
 }
 
 // Handle implements dns.Handler (UDP/TCP/DoT).
@@ -191,10 +220,8 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	r.record(req, resp, action, category, client, start)
 }
 
-// Resolve runs the full pipeline and returns the response, the action taken
-// ("authoritative", "rewrite", "blocked", "cache", "forward", "refused",
-// "error"), and the block category (only set for "blocked"). It does not write
-// or log — callers do that via record.
+// Resolve runs the full pipeline and returns the response, the action taken, and
+// the block category (only set for "blocked").
 func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, string) {
 	r.stats.Total.Add(1)
 	if len(req.Question) == 0 {
@@ -203,8 +230,9 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		return m, "error", ""
 	}
 	q := req.Question[0]
+	rt := r.rt.Load()
 
-	if r.rate != nil && !r.rate.allow(client) {
+	if rt.rate != nil && !rt.rate.allow(client) {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeRefused)
 		return m, "refused", ""
@@ -230,12 +258,12 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	// 3. Block (unless explicitly allowed).
 	if cat, blocked := pol.Block.Match(q.Name); blocked && !pol.Allow.IsBlocked(q.Name) {
 		r.stats.Blocked.Add(1)
-		return r.blockedResponse(req, q), "blocked", cat
+		return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
 	}
 
 	// 4. Cache.
-	if r.cache != nil {
-		if cached, ok := r.cache.Get(q); ok {
+	if rt.cache != nil {
+		if cached, ok := rt.cache.Get(q); ok {
 			cached.Id = req.Id
 			r.stats.Cached.Add(1)
 			return cached, "cache", ""
@@ -243,10 +271,10 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	}
 
 	// 5. Forward upstream (split-horizon aware; force DO for DNSSEC if configured).
-	if r.forceDNSSEC {
+	if rt.forceDNSSEC {
 		ensureDO(req)
 	}
-	resp, rtt, err := r.forward(req, r.upstreamsFor(name))
+	resp, rtt, err := r.forward(req, upstreamsFor(rt, name))
 	if err != nil || resp == nil {
 		r.stats.Errors.Add(1)
 		slog.Warn("forward failed", "name", q.Name, "err", err)
@@ -258,8 +286,8 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	if r.metrics != nil {
 		r.metrics.UpstreamDuration.Observe(rtt.Seconds())
 	}
-	if r.cache != nil {
-		r.cache.Set(q, resp)
+	if rt.cache != nil {
+		rt.cache.Set(q, resp)
 	}
 	resp.Id = req.Id
 	return resp, "forward", ""
@@ -286,13 +314,13 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 	}
 }
 
-func (r *Resolver) upstreamsFor(name string) []Upstream {
-	for _, cf := range r.conditional {
+func upstreamsFor(rt *runtime, name string) []Upstream {
+	for _, cf := range rt.conditional {
 		if (name == cf.suffix || strings.HasSuffix(name, "."+cf.suffix)) && len(cf.ups) > 0 {
 			return cf.ups
 		}
 	}
-	return r.defaultUpstreams
+	return rt.defaultUpstreams
 }
 
 func (r *Resolver) forward(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
@@ -342,11 +370,11 @@ func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR
 	return m
 }
 
-func (r *Resolver) blockedResponse(req *dns.Msg, q dns.Question) *dns.Msg {
+func (r *Resolver) blockedResponse(req *dns.Msg, q dns.Question, blockMode string) *dns.Msg {
 	m := new(dns.Msg)
 	m.SetReply(req)
 	m.Authoritative = true
-	if r.blockMode == "zeroip" {
+	if blockMode == "zeroip" {
 		switch q.Qtype {
 		case dns.TypeA:
 			m.Answer = append(m.Answer, &dns.A{Hdr: rrHeader(q.Name, dns.TypeA), A: net.IPv4zero})

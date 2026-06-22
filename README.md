@@ -58,8 +58,8 @@ curl :8080/metrics              # Prometheus
 
 ### Web UI
 
-The React dashboard (stats, query log, rules, rewrites) is served by the binary
-when built with the frontend embedded:
+The React dashboard (stats, query log, rules, rewrites, and settings) is served
+by the binary when built with the frontend embedded:
 
 ```bash
 npm --prefix web install && npm --prefix web run build
@@ -84,6 +84,18 @@ revocable. Roles: `admin` (full) and `readonly` (GET only).
 
 For SSO, fill in `auth.oidc.*` (issuer, client_id, client_secret, redirect_url)
 for your Authentik provider — a "Sign in with SSO" button then appears.
+
+### Settings
+
+Operational settings — upstream resolvers, conditional forwarders, block
+response, per-client rate limit, DNSSEC, and the response cache — are stored in
+the database and managed from the **Settings** tab. Saving applies them live
+(atomic hot-swap, no restart). The config file seeds these values on first run
+only; after that the database is the source of truth.
+
+Bootstrap settings stay in the config file / env because they're needed before
+the DB or UI exists: listen and API addresses/ports, TLS, the first-run admin
+credentials, and OIDC/SSO.
 
 ## Build & deploy
 

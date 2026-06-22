@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log/slog"
 	"net"
@@ -17,7 +18,6 @@ import (
 
 	"github.com/IPMaze/MazeDNS/internal/api"
 	"github.com/IPMaze/MazeDNS/internal/auth"
-	"github.com/IPMaze/MazeDNS/internal/cache"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/filter"
@@ -85,22 +85,11 @@ func main() {
 	qlog := store.NewQueryLogWriter(st, 4096)
 	defer qlog.Close()
 
-	// Response cache.
-	var c *cache.Cache
-	if cfg.Cache.Enabled {
-		c = cache.New(cfg.Cache.MaxEntries, cfg.Cache.MinTTL.Std(), cfg.Cache.MaxTTL.Std())
-	}
-
 	res := resolver.New(resolver.Options{
-		Upstreams:     cfg.Upstreams,
-		Forwarders:    toForwardGroups(cfg.Forwarders),
-		Zones:         toZoneSpecs(cfg.Zones),
-		RateLimitQPM:  rateLimitQPM(cfg.RateLimit),
-		ForceDNSSEC:   cfg.DNSSEC.Enabled,
-		Cache:         c,
-		BlockResponse: cfg.Filter.BlockResponse,
-		QueryLog:      cfg.Log.QueryLog,
-		Metrics:       mx,
+		Timeout:  5 * time.Second,
+		Zones:    toZoneSpecs(cfg.Zones),
+		QueryLog: cfg.Log.QueryLog,
+		Metrics:  mx,
 		OnQuery: func(ev resolver.QueryEvent) {
 			qlog.Write(store.QueryLogEntry{
 				TS:        ev.TS.UnixMilli(),
@@ -114,6 +103,9 @@ func main() {
 			})
 		},
 	})
+	// Operational settings: the DB is the source of truth, seeded from the config
+	// file on first run, then managed live from the UI.
+	res.ApplySettings(loadOrSeedSettings(st, cfg))
 
 	// Build the filtering/rewrite policy from file blocklists + DB rules/rewrites.
 	buildPolicy := func() (*resolver.Policy, error) {
@@ -308,6 +300,38 @@ func toZoneSpecs(zs []config.Zone) []resolver.ZoneSpec {
 		out = append(out, resolver.ZoneSpec{Name: z.Name, Records: recs})
 	}
 	return out
+}
+
+func settingsFromConfig(cfg config.Config) resolver.Settings {
+	return resolver.Settings{
+		Upstreams:     cfg.Upstreams,
+		Forwarders:    toForwardGroups(cfg.Forwarders),
+		BlockResponse: cfg.Filter.BlockResponse,
+		RateLimitQPM:  rateLimitQPM(cfg.RateLimit),
+		DNSSEC:        cfg.DNSSEC.Enabled,
+		Cache: resolver.CacheSettings{
+			Enabled:    cfg.Cache.Enabled,
+			MaxEntries: cfg.Cache.MaxEntries,
+			MinTTLSec:  int(cfg.Cache.MinTTL.Std().Seconds()),
+			MaxTTLSec:  int(cfg.Cache.MaxTTL.Std().Seconds()),
+		},
+	}
+}
+
+// loadOrSeedSettings returns the DB-stored operational settings, seeding them
+// from the config file the first time (so the file is just initial defaults).
+func loadOrSeedSettings(st *store.Store, cfg config.Config) resolver.Settings {
+	if raw, _ := st.GetSettings(); raw != "" {
+		var s resolver.Settings
+		if json.Unmarshal([]byte(raw), &s) == nil {
+			return s
+		}
+	}
+	s := settingsFromConfig(cfg)
+	if b, err := json.Marshal(s); err == nil {
+		_ = st.SaveSettings(string(b))
+	}
+	return s
 }
 
 // bootstrapAdmin creates the first admin if no users exist. Username/password

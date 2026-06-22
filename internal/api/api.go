@@ -72,6 +72,9 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
 
+		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
+		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
+
 		// Cluster control plane (master only).
 		if clusterEnabled {
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
@@ -386,6 +389,53 @@ func clampHours(s string) int {
 		h = 24 * 30
 	}
 	return h
+}
+
+// getSettings returns the current operational settings (readonly access).
+func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
+	raw, err := s.store.GetSettings()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var settings resolver.Settings
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &settings)
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
+// putSettings validates, persists, and applies new operational settings live.
+func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
+	var in resolver.Settings
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if len(in.Upstreams) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one upstream is required")
+		return
+	}
+	if in.BlockResponse != "zeroip" {
+		in.BlockResponse = "nxdomain"
+	}
+	if in.RateLimitQPM < 0 {
+		in.RateLimitQPM = 0
+	}
+	if in.Cache.MaxEntries < 0 {
+		in.Cache.MaxEntries = 0
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.store.SaveSettings(string(b)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.res.ApplySettings(in)
+	writeJSON(w, http.StatusOK, in)
 }
 
 func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {

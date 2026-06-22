@@ -78,6 +78,27 @@ export interface CategoryCount {
   count: number
 }
 
+export interface ForwardGroup {
+  suffix: string
+  upstreams: string[]
+}
+
+export interface CacheSettings {
+  enabled: boolean
+  max_entries: number
+  min_ttl_sec: number
+  max_ttl_sec: number
+}
+
+export interface Settings {
+  upstreams: string[]
+  forwarders: ForwardGroup[]
+  block_response: string
+  rate_limit_qpm: number
+  dnssec: boolean
+  cache: CacheSettings
+}
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
     const body = await r.json().catch(() => ({}))
@@ -113,6 +134,10 @@ export const api = {
   importRules: (text: string, category: string) =>
     fetch('/api/rules/import', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, category }) }).then(j<{ imported: number }>),
   deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }),
+
+  settings: () => fetch('/api/settings').then(j<Settings>),
+  saveSettings: (s: Settings) =>
+    fetch('/api/settings', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<Settings>),
 
   rewrites: () => fetch('/api/rewrites').then(j<Rewrite[]>),
   addRewrite: (domain: string, rrtype: string, value: string) =>

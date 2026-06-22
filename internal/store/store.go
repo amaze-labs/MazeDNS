@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 	q_rewritten INTEGER NOT NULL DEFAULT 0,
 	q_errors INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS settings (
+	id INTEGER PRIMARY KEY CHECK (id = 1),
+	data TEXT NOT NULL
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)

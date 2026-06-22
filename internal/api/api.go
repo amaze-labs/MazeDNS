@@ -17,6 +17,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
+	"github.com/IPMaze/MazeDNS/internal/ruleimport"
 	"github.com/IPMaze/MazeDNS/internal/store"
 	"github.com/IPMaze/MazeDNS/web"
 )
@@ -62,6 +63,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
+		mux.HandleFunc("POST /api/rules/import", s.requireRole(roleAdmin, s.importRules))
 		mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
 		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
@@ -311,8 +313,9 @@ func (s *Server) listRules(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Action string `json:"action"`
-		Domain string `json:"domain"`
+		Action   string `json:"action"`
+		Domain   string `json:"domain"`
+		Category string `json:"category"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -327,13 +330,42 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain required")
 		return
 	}
-	id, err := s.store.AddRule(in.Action, domain)
+	category := normalizeCategory(in.Category)
+	id, err := s.store.AddRule(in.Action, domain, category)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.afterChange()
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "action": in.Action, "domain": domain})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "action": in.Action, "domain": domain, "category": category})
+}
+
+func (s *Server) importRules(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Text     string `json:"text"`
+		Category string `json:"category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	parsed := ruleimport.Parse(in.Text)
+	if len(parsed) == 0 {
+		writeError(w, http.StatusBadRequest, "no valid rules found in input")
+		return
+	}
+	category := normalizeCategory(in.Category)
+	rules := make([]store.Rule, 0, len(parsed))
+	for _, p := range parsed {
+		rules = append(rules, store.Rule{Action: p.Action, Domain: p.Domain, Category: category})
+	}
+	n, err := s.store.AddRulesBulk(rules)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.afterChange()
+	writeJSON(w, http.StatusCreated, map[string]any{"imported": n})
 }
 
 func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
@@ -416,6 +448,15 @@ func (s *Server) afterChange() {
 	}
 	if err := s.reload(); err != nil {
 		slog.Warn("policy reload failed", "err", err)
+	}
+}
+
+func normalizeCategory(c string) string {
+	switch c {
+	case "ads", "trackers", "malware", "custom":
+		return c
+	default:
+		return "custom"
 	}
 }
 

@@ -24,6 +24,7 @@ export interface Rule {
   id: number
   action: string
   domain: string
+  category: string
   enabled: boolean
   updated_at: number
 }
@@ -82,8 +83,10 @@ export const api = {
   queryLog: (limit = 100) => fetch(`/api/querylog?limit=${limit}`).then(j<QueryLogEntry[]>),
 
   rules: () => fetch('/api/rules').then(j<Rule[]>),
-  addRule: (action: string, domain: string) =>
-    fetch('/api/rules', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ action, domain }) }).then(j),
+  addRule: (action: string, domain: string, category: string) =>
+    fetch('/api/rules', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ action, domain, category }) }).then(j),
+  importRules: (text: string, category: string) =>
+    fetch('/api/rules/import', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, category }) }).then(j<{ imported: number }>),
   deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }),
 
   rewrites: () => fetch('/api/rewrites').then(j<Rewrite[]>),

@@ -39,8 +39,12 @@ func (s *Store) ApplySnapshot(version int64, rules []Rule, rewrites []Rewrite) e
 		return err
 	}
 	for _, r := range rules {
-		if err := exec(`INSERT INTO rules(action, domain, enabled, updated_at) VALUES(?,?,?,?)`,
-			r.Action, r.Domain, r.Enabled, r.UpdatedAt); err != nil {
+		cat := r.Category
+		if cat == "" {
+			cat = "custom"
+		}
+		if err := exec(`INSERT INTO rules(action, domain, category, enabled, updated_at) VALUES(?,?,?,?,?)`,
+			r.Action, r.Domain, cat, r.Enabled, r.UpdatedAt); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

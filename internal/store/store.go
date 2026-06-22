@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite")
@@ -14,11 +15,12 @@ type Store struct {
 	db *sql.DB
 }
 
-// Rule is an allow/deny entry for a domain.
+// Rule is an allow/deny entry for a domain, tagged with a category.
 type Rule struct {
 	ID        int64  `json:"id"`
-	Action    string `json:"action"` // "allow" | "deny"
+	Action    string `json:"action"`   // "allow" | "deny"
 	Domain    string `json:"domain"`
+	Category  string `json:"category"` // "ads" | "trackers" | "malware" | "custom"
 	Enabled   bool   `json:"enabled"`
 	UpdatedAt int64  `json:"updated_at"`
 }
@@ -65,6 +67,7 @@ CREATE TABLE IF NOT EXISTS rules (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	action TEXT NOT NULL,
 	domain TEXT NOT NULL,
+	category TEXT NOT NULL DEFAULT 'custom',
 	enabled INTEGER NOT NULL DEFAULT 1,
 	updated_at INTEGER NOT NULL,
 	UNIQUE(action, domain)
@@ -120,12 +123,20 @@ CREATE TABLE IF NOT EXISTS nodes (
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// Additive column migrations for databases created before a column existed.
+	for _, alter := range []string{
+		`ALTER TABLE rules ADD COLUMN category TEXT NOT NULL DEFAULT 'custom'`,
+	} {
+		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migrate alter: %w", err)
+		}
+	}
 	return nil
 }
 
 // ListRules returns all rules ordered by domain.
 func (s *Store) ListRules() ([]Rule, error) {
-	rows, err := s.db.Query(`SELECT id, action, domain, enabled, updated_at FROM rules ORDER BY domain`)
+	rows, err := s.db.Query(`SELECT id, action, domain, category, enabled, updated_at FROM rules ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +144,7 @@ func (s *Store) ListRules() ([]Rule, error) {
 	var out []Rule
 	for rows.Next() {
 		var r Rule
-		if err := rows.Scan(&r.ID, &r.Action, &r.Domain, &r.Enabled, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Action, &r.Domain, &r.Category, &r.Enabled, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -142,18 +153,57 @@ func (s *Store) ListRules() ([]Rule, error) {
 }
 
 // AddRule inserts or re-enables a rule and returns its id.
-func (s *Store) AddRule(action, domain string) (int64, error) {
+func (s *Store) AddRule(action, domain, category string) (int64, error) {
+	if category == "" {
+		category = "custom"
+	}
 	now := time.Now().Unix()
 	if _, err := s.db.Exec(
-		`INSERT INTO rules(action, domain, enabled, updated_at) VALUES(?,?,1,?)
-		 ON CONFLICT(action, domain) DO UPDATE SET enabled=1, updated_at=?`,
-		action, domain, now, now,
+		`INSERT INTO rules(action, domain, category, enabled, updated_at) VALUES(?,?,?,1,?)
+		 ON CONFLICT(action, domain) DO UPDATE SET category=excluded.category, enabled=1, updated_at=excluded.updated_at`,
+		action, domain, category, now,
 	); err != nil {
 		return 0, err
 	}
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM rules WHERE action=? AND domain=?`, action, domain).Scan(&id)
 	return id, err
+}
+
+// AddRulesBulk inserts/updates many rules in one transaction, returning the count applied.
+func (s *Store) AddRulesBulk(rules []Rule) (int, error) {
+	if len(rules) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO rules(action, domain, category, enabled, updated_at) VALUES(?,?,?,1,?)
+		 ON CONFLICT(action, domain) DO UPDATE SET category=excluded.category, enabled=1, updated_at=excluded.updated_at`)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	defer stmt.Close()
+	now := time.Now().Unix()
+	n := 0
+	for _, r := range rules {
+		cat := r.Category
+		if cat == "" {
+			cat = "custom"
+		}
+		if _, err := stmt.Exec(r.Action, r.Domain, cat, now); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // DeleteRule removes a rule by id.

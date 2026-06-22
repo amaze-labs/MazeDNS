@@ -34,7 +34,15 @@ Single-node first; the data model is designed so clustering is additive.
             master tracks them; `GET /api/cluster/nodes` + a Cluster UI tab.
       - [ ] Infrastructure (WireGuard mesh, k3s manifests, HA) — deliberately
             left to the deploying operator.
-- [ ] **Phase 7 — Observability + DR.** Grafana dashboards, alerting, config
+- [ ] **Phase 7 — Product enhancements.** ← current focus
+      - [x] Rule import (AdGuard / Pi-hole / hosts) + rule categories
+            (ads / trackers / malware / custom). Verified: mixed list imported,
+            path/wildcard rules rejected, blocked live.
+      - [ ] Dashboard time-series charts (queries / blocked / by-category).
+      - [ ] Per-node API keys + guided node enrollment.
+      - [ ] Cluster metrics on the dashboard.
+      - [ ] Settings managed in the web UI (operational config in the DB).
+- [ ] **Phase 8 — Observability + DR.** Grafana dashboards, alerting, config
       backups, upgrade / runbooks.
 
 ## Decisions locked

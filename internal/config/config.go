@@ -35,7 +35,9 @@ type Config struct {
 	Listen     Listen      `yaml:"listen"`
 	Upstreams  []string    `yaml:"upstreams"`
 	Forwarders []Forwarder `yaml:"forwarders"`
+	Zones      []Zone      `yaml:"zones"`
 	RateLimit  RateLimit   `yaml:"rate_limit"`
+	DNSSEC     DNSSEC      `yaml:"dnssec"`
 	DoT        Endpoint    `yaml:"dot"`
 	DoH        DoHEndpoint `yaml:"doh"`
 	TLS        TLS         `yaml:"tls"`
@@ -59,10 +61,29 @@ type Forwarder struct {
 	Upstreams []string `yaml:"upstreams"`
 }
 
+// Zone is an authoritative zone served locally.
+type Zone struct {
+	Name    string       `yaml:"name"`
+	Records []ZoneRecord `yaml:"records"`
+}
+
+// ZoneRecord is one record in an authoritative zone.
+type ZoneRecord struct {
+	Name  string `yaml:"name"` // relative label; "@" or "" = apex
+	Type  string `yaml:"type"` // A | AAAA | CNAME | TXT | MX
+	Value string `yaml:"value"`
+	TTL   uint32 `yaml:"ttl"`
+}
+
 // RateLimit configures per-client query-rate limiting.
 type RateLimit struct {
 	Enabled bool `yaml:"enabled"`
 	QPM     int  `yaml:"qpm"` // max queries per minute per client IP
+}
+
+// DNSSEC configures DNSSEC-aware forwarding.
+type DNSSEC struct {
+	Enabled bool `yaml:"enabled"` // force the DO bit upstream + surface AD
 }
 
 // Endpoint is a generic enable/address/port listener (used for DoT).

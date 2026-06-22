@@ -1,4 +1,5 @@
-// Package resolver handles DNS queries: rate-limit, rewrite, filter, cache, forward.
+// Package resolver handles DNS queries: rate-limit, authoritative zones, rewrite,
+// filter, cache, forward.
 package resolver
 
 import (
@@ -53,7 +54,9 @@ type ForwardGroup struct {
 type Options struct {
 	Upstreams     []string
 	Forwarders    []ForwardGroup
+	Zones         []ZoneSpec
 	RateLimitQPM  int
+	ForceDNSSEC   bool
 	Cache         *cache.Cache
 	BlockResponse string // "nxdomain" | "zeroip"
 	QueryLog      bool
@@ -81,9 +84,11 @@ type condForward struct {
 type Resolver struct {
 	defaultUpstreams []Upstream
 	conditional      []condForward
+	zones            *Zones
 	cache            *cache.Cache
 	blockMode        string
 	queryLog         bool
+	forceDNSSEC      bool
 	metrics          *metrics.Metrics
 	onQuery          func(QueryEvent)
 	rate             *rateLimiter
@@ -118,7 +123,6 @@ func New(opts Options) *Resolver {
 		}
 		cond = append(cond, condForward{suffix: suffix, ups: parseAll(f.Upstreams)})
 	}
-	// Most-specific (longest) suffix wins.
 	sort.Slice(cond, func(i, j int) bool { return len(cond[i].suffix) > len(cond[j].suffix) })
 
 	mode := opts.BlockResponse
@@ -133,9 +137,11 @@ func New(opts Options) *Resolver {
 	r := &Resolver{
 		defaultUpstreams: parseAll(opts.Upstreams),
 		conditional:      cond,
+		zones:            NewZones(opts.Zones),
 		cache:            opts.Cache,
 		blockMode:        mode,
 		queryLog:         opts.QueryLog,
+		forceDNSSEC:      opts.ForceDNSSEC,
 		metrics:          opts.Metrics,
 		onQuery:          opts.OnQuery,
 		rate:             rl,
@@ -184,9 +190,9 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	r.record(req, resp, action, client, start)
 }
 
-// Resolve runs the full pipeline and returns the response message and the action
-// taken ("rewrite", "blocked", "cache", "forward", "refused", "error"). It does
-// not write or log — callers (UDP/TCP, DoH) do that via record.
+// Resolve runs the full pipeline and returns the response and the action taken
+// ("authoritative", "rewrite", "blocked", "cache", "forward", "refused", "error").
+// It does not write or log — callers do that via record.
 func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 	r.stats.Total.Add(1)
 	if len(req.Question) == 0 {
@@ -202,9 +208,16 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 		return m, "refused"
 	}
 
-	pol := r.pol.Load()
 	name := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 
+	// 1. Authoritative zones we own (answered locally, never forwarded).
+	if z := r.zones.match(name); z != nil {
+		return z.answer(req, q, name), "authoritative"
+	}
+
+	pol := r.pol.Load()
+
+	// 2. Local rewrite.
 	if rrs, ok := pol.Rewrites[name]; ok {
 		if resp := r.rewriteResponse(req, q, rrs); resp != nil {
 			r.stats.Rewritten.Add(1)
@@ -212,11 +225,13 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 		}
 	}
 
+	// 3. Block (unless explicitly allowed).
 	if pol.Block.IsBlocked(q.Name) && !pol.Allow.IsBlocked(q.Name) {
 		r.stats.Blocked.Add(1)
 		return r.blockedResponse(req, q), "blocked"
 	}
 
+	// 4. Cache.
 	if r.cache != nil {
 		if cached, ok := r.cache.Get(q); ok {
 			cached.Id = req.Id
@@ -225,6 +240,10 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 		}
 	}
 
+	// 5. Forward upstream (split-horizon aware; force DO for DNSSEC if configured).
+	if r.forceDNSSEC {
+		ensureDO(req)
+	}
 	resp, rtt, err := r.forward(req, r.upstreamsFor(name))
 	if err != nil || resp == nil {
 		r.stats.Errors.Add(1)
@@ -337,6 +356,14 @@ func (r *Resolver) blockedResponse(req *dns.Msg, q dns.Question) *dns.Msg {
 	}
 	m.Rcode = dns.RcodeNameError // NXDOMAIN
 	return m
+}
+
+func ensureDO(m *dns.Msg) {
+	if o := m.IsEdns0(); o != nil {
+		o.SetDo(true)
+		return
+	}
+	m.SetEdns0(4096, true)
 }
 
 func rrHeader(name string, t uint16) dns.RR_Header {

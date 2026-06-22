@@ -83,7 +83,9 @@ func main() {
 	res := resolver.New(resolver.Options{
 		Upstreams:     cfg.Upstreams,
 		Forwarders:    toForwardGroups(cfg.Forwarders),
+		Zones:         toZoneSpecs(cfg.Zones),
 		RateLimitQPM:  rateLimitQPM(cfg.RateLimit),
+		ForceDNSSEC:   cfg.DNSSEC.Enabled,
 		Cache:         c,
 		BlockResponse: cfg.Filter.BlockResponse,
 		QueryLog:      cfg.Log.QueryLog,
@@ -262,6 +264,18 @@ func rateLimitQPM(rl config.RateLimit) int {
 		return 0
 	}
 	return rl.QPM
+}
+
+func toZoneSpecs(zs []config.Zone) []resolver.ZoneSpec {
+	out := make([]resolver.ZoneSpec, 0, len(zs))
+	for _, z := range zs {
+		recs := make([]resolver.ZoneRecordSpec, 0, len(z.Records))
+		for _, r := range z.Records {
+			recs = append(recs, resolver.ZoneRecordSpec{Name: r.Name, Type: r.Type, Value: r.Value, TTL: r.TTL})
+		}
+		out = append(out, resolver.ZoneSpec{Name: z.Name, Records: recs})
+	}
+	return out
 }
 
 // bootstrapAdmin creates the first admin if no users exist. Username/password

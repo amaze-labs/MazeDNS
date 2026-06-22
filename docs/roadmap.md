@@ -21,11 +21,14 @@ Single-node first; the data model is designed so clustering is additive.
       default; route guards + RBAC (admin mutates, read-only GETs); React login
       gate. Verified: 401 → login → authed access → admin mutation → logout.
       (OIDC needs your Authentik to test the live flow.)
-- [ ] **Phase 5 — Advanced DNS.** DoH/DoT/DoQ server endpoints + encrypted
-      upstreams, DNSSEC validation, conditional / split-horizon forwarding,
-      authoritative zones, EDNS Client Subnet, rate limiting. ← current focus
+- [x] **Phase 5 — Advanced DNS.** Encrypted upstreams (DoT/DoH), DoH/DoT server
+      endpoints, split-horizon forwarding, per-client rate limiting, authoritative
+      zones, and DNSSEC-transparent forwarding (force DO + surface AD). Verified
+      end-to-end. (DoQ, EDNS Client Subnet, and a local validating resolver are
+      future options.)
 - [ ] **Phase 6 — Clustering.** Master→agent config replication (row-versioned
       diffs), multisite over WireGuard, Docker + k3s manifests, HA.
+      ← current focus
 - [ ] **Phase 7 — Observability + DR.** Grafana dashboards, alerting, config
       backups, upgrade / runbooks.
 

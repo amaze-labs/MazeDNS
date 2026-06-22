@@ -16,6 +16,15 @@ rate_limit:
   enabled: false
   qpm: 600                # max queries per minute per client IP (REFUSED beyond)
 
+dnssec:
+  enabled: false          # force the DO bit upstream and surface the AD flag
+
+zones: []                 # authoritative zones, e.g.
+                          # - name: "home.lan"
+                          #   records:
+                          #     - { name: "@",   type: "A", value: "192.168.1.1" }
+                          #     - { name: "nas", type: "A", value: "192.168.1.10" }
+
 # Encrypted DNS endpoints for clients (uses a self-signed cert if tls.* is empty)
 dot:
   enabled: false

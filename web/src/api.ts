@@ -40,9 +40,11 @@ export interface Rewrite {
 
 export interface Node {
   name: string
+  key_prefix: string
   address: string
   version: number
   last_seen: number
+  created_at: number
 }
 
 export interface SessionUser {
@@ -54,6 +56,7 @@ export interface SessionUser {
 export interface AuthInfo {
   auth_enabled: boolean
   oidc_enabled: boolean
+  cluster_enabled: boolean
 }
 
 export interface SeriesPoint {
@@ -112,4 +115,7 @@ export const api = {
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
+  addNode: (name: string) =>
+    fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ name: string; key: string }>),
+  deleteNode: (name: string) => fetch(`/api/cluster/nodes/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 }

@@ -3,8 +3,9 @@
 # worker runs on a separate host/site (reaching the master over your private
 # overlay); here both are shown on one host for illustration.
 #
-#   MAZEDNS_ADMIN_PASSWORD=... MAZEDNS_CLUSTER_TOKEN=... \
-#     docker compose -f docker-compose.prod.yml up -d
+#   1. MAZEDNS_ADMIN_PASSWORD=... docker compose -f docker-compose.prod.yml up -d master
+#   2. In the UI (Cluster tab) enroll a node and copy its key.
+#   3. Put that key in MAZEDNS_NODE_KEY below and start the worker.
 
 name: mazedns
 
@@ -19,7 +20,7 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_ADMIN_USERNAME: "admin"
       MAZEDNS_ADMIN_PASSWORD: "${MAZEDNS_ADMIN_PASSWORD:?set a strong admin password}"
-      MAZEDNS_CLUSTER_TOKEN: "${MAZEDNS_CLUSTER_TOKEN:?set a shared cluster token}"
+      MAZEDNS_CLUSTER_ENABLED: "true"   # serve cluster endpoints + enroll nodes in the UI
     ports:
       - "53:5300/udp"
       - "53:5300/tcp"
@@ -36,8 +37,9 @@ services:
       MAZEDNS_MODE: worker
       MAZEDNS_API_ADDRESS: "0.0.0.0"      # worker exposes only /healthz + /metrics
       MAZEDNS_DB_PATH: "/data/mazedns.db"
-      MAZEDNS_CLUSTER_TOKEN: "${MAZEDNS_CLUSTER_TOKEN:?set a shared cluster token}"
-      MAZEDNS_MASTER_URL: "http://master:8080"   # pulls config snapshots from the master
+      MAZEDNS_MASTER_URL: "http://master:8080"
+      # Enroll this node in the master UI (Cluster tab) and paste its key here:
+      MAZEDNS_NODE_KEY: "${MAZEDNS_NODE_KEY:?enroll a node in the master UI and set its key}"
     ports:
       - "5301:5300/udp"   # example second resolver on this host
       - "5301:5300/tcp"

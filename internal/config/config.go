@@ -157,13 +157,14 @@ type OIDC struct {
 	AdminGroup   string   `yaml:"admin_group"`
 }
 
-// Cluster configures master<->worker configuration replication.
+// Cluster configures master<->worker configuration replication. The master
+// serves cluster endpoints when enabled; each worker authenticates with a
+// per-node API key issued by the master's "add node" flow.
 type Cluster struct {
 	Enabled   bool     `yaml:"enabled"`
-	Token     string   `yaml:"token"`      // shared secret between master and workers
 	MasterURL string   `yaml:"master_url"` // worker: master base URL, e.g. http://master:8080
+	NodeKey   string   `yaml:"node_key"`   // worker: per-node API key from the master
 	Interval  Duration `yaml:"interval"`   // worker: snapshot poll interval
-	NodeName  string   `yaml:"node_name"`  // worker: name reported to the master (default: hostname)
 }
 
 // Database configures the SQLite datastore.
@@ -236,16 +237,16 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
 	}
-	if v := os.Getenv("MAZEDNS_CLUSTER_TOKEN"); v != "" {
-		cfg.Cluster.Token = v
-		cfg.Cluster.Enabled = true
-	}
 	if v := os.Getenv("MAZEDNS_MASTER_URL"); v != "" {
 		cfg.Cluster.MasterURL = v
 		cfg.Cluster.Enabled = true
 	}
-	if v := os.Getenv("MAZEDNS_NODE_NAME"); v != "" {
-		cfg.Cluster.NodeName = v
+	if v := os.Getenv("MAZEDNS_NODE_KEY"); v != "" {
+		cfg.Cluster.NodeKey = v
+		cfg.Cluster.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
+		cfg.Cluster.Enabled = true
 	}
 	if err := cfg.validate(); err != nil {
 		return cfg, err

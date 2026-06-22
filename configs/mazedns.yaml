@@ -56,11 +56,11 @@ api:
   address: "127.0.0.1"         # keep the control plane off the public internet
   port: 8080                   # http://127.0.0.1:8080  ->  /api, /metrics, /healthz
 
-cluster:                       # master<->worker config replication (Phase 6)
-  enabled: false
-  token: ""                    # shared secret (or MAZEDNS_CLUSTER_TOKEN)
-  master_url: ""               # worker only: master base URL (or MAZEDNS_MASTER_URL)
-  interval: "30s"              # worker snapshot poll interval
+cluster:                       # master<->worker config replication
+  enabled: false               # master: serve cluster endpoints (enroll nodes in the UI)
+  master_url: ""               # worker: master base URL (or MAZEDNS_MASTER_URL)
+  node_key: ""                 # worker: per-node API key from the master (or MAZEDNS_NODE_KEY)
+  interval: "30s"              # worker: snapshot poll interval
 
 database:
   path: "mazedns.db"           # SQLite file (relative to the working directory)

@@ -67,26 +67,57 @@ func (s *Store) ApplySnapshot(version int64, rules []Rule, rewrites []Rewrite) e
 	return tx.Commit()
 }
 
-// Node is a cluster member (worker) as last seen by the master.
+// Node is a cluster worker enrolled on the master. The API key itself is never
+// stored — only its hash (for auth) and a short prefix (for display).
 type Node struct {
-	Name     string `json:"name"`
-	Address  string `json:"address"`
-	Version  int64  `json:"version"`
-	LastSeen int64  `json:"last_seen"`
+	Name      string `json:"name"`
+	KeyPrefix string `json:"key_prefix"`
+	Address   string `json:"address"`
+	Version   int64  `json:"version"`
+	LastSeen  int64  `json:"last_seen"`
+	CreatedAt int64  `json:"created_at"`
 }
 
-// UpsertNode records (or refreshes) a worker node's last-seen state.
-func (s *Store) UpsertNode(name, address string, version int64) error {
+// CreateNode enrolls a new node with the given API key hash and display prefix.
+func (s *Store) CreateNode(name, keyHash, keyPrefix string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO nodes(name, address, version, last_seen) VALUES(?,?,?,?)
-		 ON CONFLICT(name) DO UPDATE SET address=excluded.address, version=excluded.version, last_seen=excluded.last_seen`,
-		name, address, version, time.Now().Unix())
+		`INSERT INTO nodes(name, key_hash, key_prefix, address, version, last_seen, created_at)
+		 VALUES(?,?,?,'',0,0,?)`,
+		name, keyHash, keyPrefix, time.Now().Unix())
 	return err
 }
 
-// ListNodes returns all known worker nodes ordered by name.
+// NodeByKeyHash returns the node whose key hash matches, or (nil, nil) if none.
+func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
+	if keyHash == "" {
+		return nil, nil
+	}
+	n := &Node{}
+	err := s.db.QueryRow(
+		`SELECT name, key_prefix, address, version, last_seen, created_at
+		 FROM nodes WHERE key_hash=?`, keyHash).
+		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// TouchNode refreshes a node's last-seen address and config version.
+func (s *Store) TouchNode(name, address string, version int64) error {
+	_, err := s.db.Exec(
+		`UPDATE nodes SET address=?, version=?, last_seen=? WHERE name=?`,
+		address, version, time.Now().Unix(), name)
+	return err
+}
+
+// ListNodes returns all enrolled nodes ordered by name.
 func (s *Store) ListNodes() ([]Node, error) {
-	rows, err := s.db.Query(`SELECT name, address, version, last_seen FROM nodes ORDER BY name`)
+	rows, err := s.db.Query(
+		`SELECT name, key_prefix, address, version, last_seen, created_at FROM nodes ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -94,10 +125,16 @@ func (s *Store) ListNodes() ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
-		if err := rows.Scan(&n.Name, &n.Address, &n.Version, &n.LastSeen); err != nil {
+		if err := rows.Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// DeleteNode revokes a node (removing its key).
+func (s *Store) DeleteNode(name string) error {
+	_, err := s.db.Exec(`DELETE FROM nodes WHERE name=?`, name)
+	return err
 }

@@ -42,7 +42,9 @@ Single-node first; the data model is designed so clustering is additive.
             by category (donut) + a Malicious (malware) card. Block category is
             attributed in the query log; verified via the timeseries/categories
             endpoints.
-      - [ ] Per-node API keys + guided node enrollment.
+      - [x] Per-node API keys + guided node enrollment: master issues a hashed
+            key per node (shown once), snapshot auth by key, revoke; UI "Add
+            node" wizard + node table. Verified end-to-end (wrong key 401).
       - [ ] Cluster metrics on the dashboard.
       - [ ] Settings managed in the web UI (operational config in the DB).
 - [ ] **Phase 8 — Observability + DR.** Grafana dashboards, alerting, config

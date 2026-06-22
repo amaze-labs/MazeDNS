@@ -3,7 +3,8 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -30,21 +31,21 @@ const (
 
 // Server is the HTTP API server.
 type Server struct {
-	store        *store.Store
-	res          *resolver.Resolver
-	reload       func() error
-	auth         *auth.Manager
-	authEnabled  bool
-	clusterToken string
-	http         *http.Server
+	store          *store.Store
+	res            *resolver.Resolver
+	reload         func() error
+	auth           *auth.Manager
+	authEnabled    bool
+	clusterEnabled bool
+	http           *http.Server
 }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
 // served; in master mode the control-plane API and web UI are mounted, plus the
-// cluster snapshot endpoint when clusterToken is set. reload rebuilds the
-// resolver policy after every mutation.
-func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled, worker bool, clusterToken string) *Server {
-	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled, clusterToken: clusterToken}
+// cluster endpoints when clusterEnabled. reload rebuilds the resolver policy
+// after every mutation.
+func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
+	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", m.Handler())
@@ -71,10 +72,12 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
 
-		// Cluster: worker node list (for the UI) + token-authenticated snapshot.
-		mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
-		if clusterToken != "" {
-			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot)
+		// Cluster control plane (master only).
+		if clusterEnabled {
+			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
+			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
+			mux.HandleFunc("DELETE /api/cluster/nodes/{name}", s.requireRole(roleAdmin, s.deleteNode))
+			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 		}
 
 		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
@@ -114,25 +117,38 @@ func (s *Server) requireRole(minRole string, h http.HandlerFunc) http.HandlerFun
 	}
 }
 
-// ---- cluster replication ----
+// ---- cluster control plane ----
 
+func hashKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
+// clusterSnapshot serves the config snapshot to a worker authenticated by its
+// per-node API key (Bearer). It also refreshes the node's last-seen state.
 func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	const prefix = "Bearer "
 	h := r.Header.Get("Authorization")
-	if s.clusterToken == "" || !strings.HasPrefix(h, prefix) ||
-		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, prefix)), []byte(s.clusterToken)) != 1 {
-		writeError(w, http.StatusUnauthorized, "invalid cluster token")
+	if !strings.HasPrefix(h, prefix) {
+		writeError(w, http.StatusUnauthorized, "missing node key")
 		return
 	}
-	// Record the calling worker (for cluster visibility in the UI).
-	if node := r.Header.Get("X-MazeDNS-Node"); node != "" {
-		ver, _ := strconv.ParseInt(r.Header.Get("X-MazeDNS-Node-Version"), 10, 64)
-		addr := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			addr = host
-		}
-		_ = s.store.UpsertNode(node, addr, ver)
+	node, err := s.store.NodeByKeyHash(hashKey(strings.TrimPrefix(h, prefix)))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
+	if node == nil {
+		writeError(w, http.StatusUnauthorized, "invalid node key")
+		return
+	}
+	ver, _ := strconv.ParseInt(r.Header.Get("X-MazeDNS-Node-Version"), 10, 64)
+	addr := r.RemoteAddr
+	if host, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
+		addr = host
+	}
+	_ = s.store.TouchNode(node.Name, addr, ver)
+
 	rules, err := s.store.ListRules()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -165,12 +181,52 @@ func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, nodes)
 }
 
+// addNode enrolls a worker, generating its API key (returned once, in clear).
+func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	key, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key generation failed")
+		return
+	}
+	prefix := key
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	if err := s.store.CreateNode(name, hashKey(key), prefix); err != nil {
+		writeError(w, http.StatusConflict, "could not create node (name in use?): "+err.Error())
+		return
+	}
+	// The key is shown only here — it is stored hashed.
+	writeJSON(w, http.StatusCreated, map[string]string{"name": name, "key": key})
+}
+
+func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteNode(r.PathValue("name")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ---- auth handlers ----
 
 func (s *Server) authInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"auth_enabled": s.authEnabled,
-		"oidc_enabled": s.authEnabled && s.auth.OIDCEnabled(),
+		"auth_enabled":    s.authEnabled,
+		"oidc_enabled":    s.authEnabled && s.auth.OIDCEnabled(),
+		"cluster_enabled": s.clusterEnabled,
 	})
 }
 

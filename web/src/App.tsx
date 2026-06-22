@@ -7,7 +7,6 @@ import Login from './components/Login'
 import { api, type SessionUser, type AuthInfo } from './api'
 
 type Tab = 'dashboard' | 'rules' | 'rewrites' | 'cluster'
-const tabs: Tab[] = ['dashboard', 'rules', 'rewrites', 'cluster']
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -43,6 +42,9 @@ export default function App() {
     return <Login oidc={!!info.oidc_enabled} onLogin={() => refresh()} />
   }
 
+  const tabs: Tab[] = ['dashboard', 'rules', 'rewrites']
+  if (info?.cluster_enabled) tabs.push('cluster')
+
   return (
     <div className="app">
       <header>
@@ -72,7 +74,7 @@ export default function App() {
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'rules' && <Rules />}
         {tab === 'rewrites' && <Rewrites />}
-        {tab === 'cluster' && <Cluster />}
+        {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
       </main>
     </div>
   )

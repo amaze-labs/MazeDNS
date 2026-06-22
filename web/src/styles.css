@@ -330,3 +330,15 @@ textarea.import {
   margin-right: 4px;
   vertical-align: middle;
 }
+
+.keybox {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 8px 0 0;
+  overflow-x: auto;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+  white-space: pre;
+}

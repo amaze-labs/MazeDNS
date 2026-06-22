@@ -138,20 +138,22 @@ manual dispatch.
 
 ### Clustering (master ↔ worker)
 
-The master is the source of truth; workers pull its config (rules + rewrites)
-over a token-authenticated snapshot and apply it locally — no restart.
+The master is the source of truth; each worker pulls its config (rules +
+rewrites) over a snapshot authenticated by a **per-node API key**, and applies
+it locally — no restart.
 
-- **Master:** `cluster.enabled: true` + a shared `cluster.token`. It then serves
-  `GET /api/cluster/snapshot` (Bearer-token auth) and bumps a config version on
-  every change.
-- **Worker:** `cluster.enabled: true` + the same `token` + `master_url` (+
-  `interval`). It polls the master and re-applies whenever the version changes.
+- **Master:** `cluster.enabled: true`. Enroll workers in the UI's **Cluster** tab
+  (or `POST /api/cluster/nodes`); each enrollment returns a one-time key (stored
+  hashed). Revoke a node to cut it off.
+- **Worker:** `cluster.enabled: true` + `master_url` + `node_key` (+ `interval`).
+  It polls the master, re-applies on each config-version change, and reports its
+  address/version back (shown in the Cluster tab).
 
-Env equivalents: `MAZEDNS_CLUSTER_TOKEN` (both) and `MAZEDNS_MASTER_URL`
-(worker) — either auto-enables clustering. `docker-compose.prod.yml` wires this up.
+Env equivalents: `MAZEDNS_MASTER_URL` + `MAZEDNS_NODE_KEY` (worker, auto-enable),
+`MAZEDNS_CLUSTER_ENABLED=true` (master). `docker-compose.prod.yml` wires this up.
 
 > Multisite networking (a WireGuard mesh so workers reach the master privately)
-> and k3s manifests are the remaining Phase 6 deployment pieces.
+> and k3s manifests are left to the deploying operator.
 
 ## Security notes
 

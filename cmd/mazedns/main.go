@@ -177,14 +177,10 @@ func main() {
 
 	// Worker: replicate config from the master.
 	var agentCancel context.CancelFunc
-	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" {
-		nodeName := cfg.Cluster.NodeName
-		if nodeName == "" {
-			nodeName, _ = os.Hostname()
-		}
+	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" && cfg.Cluster.NodeKey != "" {
 		var agentCtx context.Context
 		agentCtx, agentCancel = context.WithCancel(context.Background())
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.Token, nodeName, cfg.Cluster.Interval.Std(), st, reload)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload)
 		go ag.Run(agentCtx)
 	}
 
@@ -236,14 +232,10 @@ func main() {
 
 	// HTTP server: master serves API + UI + metrics (+ cluster snapshot when a
 	// cluster token is set); worker serves only /healthz + /metrics.
-	clusterToken := ""
-	if cfg.Cluster.Enabled {
-		clusterToken = cfg.Cluster.Token
-	}
 	var apiSrv *api.Server
 	if cfg.API.Enabled {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
-		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker, clusterToken)
+		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker, cfg.Cluster.Enabled && !worker)
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)
 			if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {

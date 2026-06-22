@@ -116,9 +116,12 @@ CREATE TABLE IF NOT EXISTS meta (
 INSERT OR IGNORE INTO meta(key, value) VALUES('config_version', 0);
 CREATE TABLE IF NOT EXISTS nodes (
 	name TEXT PRIMARY KEY,
-	address TEXT NOT NULL,
-	version INTEGER NOT NULL,
-	last_seen INTEGER NOT NULL
+	key_hash TEXT NOT NULL DEFAULT '',
+	key_prefix TEXT NOT NULL DEFAULT '',
+	address TEXT NOT NULL DEFAULT '',
+	version INTEGER NOT NULL DEFAULT 0,
+	last_seen INTEGER NOT NULL DEFAULT 0,
+	created_at INTEGER NOT NULL DEFAULT 0
 );
 `
 	if _, err := s.db.Exec(schema); err != nil {
@@ -128,6 +131,9 @@ CREATE TABLE IF NOT EXISTS nodes (
 	for _, alter := range []string{
 		`ALTER TABLE rules ADD COLUMN category TEXT NOT NULL DEFAULT 'custom'`,
 		`ALTER TABLE query_log ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN key_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Node } from '../api'
 
+const ONLINE_WINDOW = 120 // seconds
+
 function ago(unixSec: number): string {
   if (!unixSec) return 'never'
   const s = Math.max(0, Math.floor(Date.now() / 1000 - unixSec))
@@ -50,10 +52,22 @@ export default function Cluster() {
     load()
   }
 
+  const now = Date.now() / 1000
+  const online = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
+  const totalQ = nodes.reduce((sum, n) => sum + n.total, 0)
+  const totalB = nodes.reduce((sum, n) => sum + n.blocked, 0)
+
   return (
     <div>
-      <h2>Cluster nodes</h2>
+      <h2>Cluster metrics</h2>
       {err && <div className="error">{err}</div>}
+
+      <div className="cards">
+        <Card label="Nodes" value={nodes.length} />
+        <Card label="Online" value={online} />
+        <Card label="Cluster queries" value={totalQ} />
+        <Card label="Cluster blocked" value={totalB} accent="danger" />
+      </div>
 
       <form className="row" onSubmit={add}>
         <input placeholder="new node name (e.g. site-b)" value={name} onChange={(e) => setName(e.target.value)} />
@@ -76,6 +90,8 @@ MAZEDNS_NODE_KEY=${newKey.key}`}</pre>
             <th>Node</th>
             <th>Key</th>
             <th>Address</th>
+            <th>Queries</th>
+            <th>Blocked</th>
             <th>Version</th>
             <th>Last seen</th>
             <th></th>
@@ -89,6 +105,8 @@ MAZEDNS_NODE_KEY=${newKey.key}`}</pre>
                 <code>{n.key_prefix}…</code>
               </td>
               <td>{n.address || '—'}</td>
+              <td>{n.total}</td>
+              <td>{n.blocked}</td>
               <td>{n.version}</td>
               <td>{ago(n.last_seen)}</td>
               <td>
@@ -100,13 +118,22 @@ MAZEDNS_NODE_KEY=${newKey.key}`}</pre>
           ))}
           {nodes.length === 0 && (
             <tr>
-              <td colSpan={6} className="muted">
+              <td colSpan={8} className="muted">
                 No nodes enrolled — add one above
               </td>
             </tr>
           )}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function Card({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div className={`card ${accent || ''}`}>
+      <div className="card-value">{value}</div>
+      <div className="card-label">{label}</div>
     </div>
   )
 }

@@ -45,7 +45,9 @@ Single-node first; the data model is designed so clustering is additive.
       - [x] Per-node API keys + guided node enrollment: master issues a hashed
             key per node (shown once), snapshot auth by key, revoke; UI "Add
             node" wizard + node table. Verified end-to-end (wrong key 401).
-      - [ ] Cluster metrics on the dashboard.
+      - [x] Cluster metrics: workers report query counters on each poll; master
+            stores them per node; Cluster tab shows aggregate cards + per-node
+            stats. Verified (node reported total=6 blocked=4 forwarded=2).
       - [ ] Settings managed in the web UI (operational config in the DB).
 - [ ] **Phase 8 — Observability + DR.** Grafana dashboards, alerting, config
       backups, upgrade / runbooks.

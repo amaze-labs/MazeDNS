@@ -67,6 +67,16 @@ func (s *Store) ApplySnapshot(version int64, rules []Rule, rewrites []Rewrite) e
 	return tx.Commit()
 }
 
+// NodeStats is a worker's query counters, reported to the master on each poll.
+type NodeStats struct {
+	Total     int64 `json:"total"`
+	Blocked   int64 `json:"blocked"`
+	Cached    int64 `json:"cached"`
+	Forwarded int64 `json:"forwarded"`
+	Rewritten int64 `json:"rewritten"`
+	Errors    int64 `json:"errors"`
+}
+
 // Node is a cluster worker enrolled on the master. The API key itself is never
 // stored — only its hash (for auth) and a short prefix (for display).
 type Node struct {
@@ -76,6 +86,7 @@ type Node struct {
 	Version   int64  `json:"version"`
 	LastSeen  int64  `json:"last_seen"`
 	CreatedAt int64  `json:"created_at"`
+	NodeStats
 }
 
 // CreateNode enrolls a new node with the given API key hash and display prefix.
@@ -106,18 +117,23 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 	return n, nil
 }
 
-// TouchNode refreshes a node's last-seen address and config version.
-func (s *Store) TouchNode(name, address string, version int64) error {
+// TouchNode refreshes a node's last-seen address, config version, and stats.
+func (s *Store) TouchNode(name, address string, version int64, st NodeStats) error {
 	_, err := s.db.Exec(
-		`UPDATE nodes SET address=?, version=?, last_seen=? WHERE name=?`,
-		address, version, time.Now().Unix(), name)
+		`UPDATE nodes SET address=?, version=?, last_seen=?,
+		   q_total=?, q_blocked=?, q_cached=?, q_forwarded=?, q_rewritten=?, q_errors=?
+		 WHERE name=?`,
+		address, version, time.Now().Unix(),
+		st.Total, st.Blocked, st.Cached, st.Forwarded, st.Rewritten, st.Errors, name)
 	return err
 }
 
-// ListNodes returns all enrolled nodes ordered by name.
+// ListNodes returns all enrolled nodes (with their latest stats) ordered by name.
 func (s *Store) ListNodes() ([]Node, error) {
 	rows, err := s.db.Query(
-		`SELECT name, key_prefix, address, version, last_seen, created_at FROM nodes ORDER BY name`)
+		`SELECT name, key_prefix, address, version, last_seen, created_at,
+		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors
+		 FROM nodes ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +141,8 @@ func (s *Store) ListNodes() ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
-		if err := rows.Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt,
+			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors); err != nil {
 			return nil, err
 		}
 		out = append(out, n)

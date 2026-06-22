@@ -180,7 +180,14 @@ func main() {
 	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" && cfg.Cluster.NodeKey != "" {
 		var agentCtx context.Context
 		agentCtx, agentCancel = context.WithCancel(context.Background())
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload)
+		statsFn := func() store.NodeStats {
+			t, b, ca, fwd, rw, e := res.StatsSnapshot()
+			return store.NodeStats{
+				Total: int64(t), Blocked: int64(b), Cached: int64(ca),
+				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
+			}
+		}
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn)
 		go ag.Run(agentCtx)
 	}
 

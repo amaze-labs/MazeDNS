@@ -147,7 +147,11 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if host, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
 		addr = host
 	}
-	_ = s.store.TouchNode(node.Name, addr, ver)
+	var st store.NodeStats
+	if raw := r.Header.Get("X-MazeDNS-Stats"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &st)
+	}
+	_ = s.store.TouchNode(node.Name, addr, ver, st)
 
 	rules, err := s.store.ListRules()
 	if err != nil {

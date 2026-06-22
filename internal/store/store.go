@@ -121,7 +121,13 @@ CREATE TABLE IF NOT EXISTS nodes (
 	address TEXT NOT NULL DEFAULT '',
 	version INTEGER NOT NULL DEFAULT 0,
 	last_seen INTEGER NOT NULL DEFAULT 0,
-	created_at INTEGER NOT NULL DEFAULT 0
+	created_at INTEGER NOT NULL DEFAULT 0,
+	q_total INTEGER NOT NULL DEFAULT 0,
+	q_blocked INTEGER NOT NULL DEFAULT 0,
+	q_cached INTEGER NOT NULL DEFAULT 0,
+	q_forwarded INTEGER NOT NULL DEFAULT 0,
+	q_rewritten INTEGER NOT NULL DEFAULT 0,
+	q_errors INTEGER NOT NULL DEFAULT 0
 );
 `
 	if _, err := s.db.Exec(schema); err != nil {
@@ -134,6 +140,12 @@ CREATE TABLE IF NOT EXISTS nodes (
 		`ALTER TABLE nodes ADD COLUMN key_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN q_total INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN q_blocked INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN q_cached INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN q_forwarded INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN q_rewritten INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN q_errors INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

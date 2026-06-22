@@ -45,6 +45,12 @@ export interface Node {
   version: number
   last_seen: number
   created_at: number
+  total: number
+  blocked: number
+  cached: number
+  forwarded: number
+  rewritten: number
+  errors: number
 }
 
 export interface SessionUser {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,10 +14,12 @@ import (
 )
 
 // Agent runs on a worker: it periodically pulls the config snapshot from the
-// master and applies it to the local store, then triggers a policy reload.
+// master, applies it to the local store, triggers a policy reload, and reports
+// this node's identity + version to the master.
 type Agent struct {
 	masterURL string
 	token     string
+	nodeName  string
 	interval  time.Duration
 	store     *store.Store
 	reload    func() error
@@ -24,13 +27,14 @@ type Agent struct {
 }
 
 // NewAgent builds a replication agent.
-func NewAgent(masterURL, token string, interval time.Duration, st *store.Store, reload func() error) *Agent {
+func NewAgent(masterURL, token, nodeName string, interval time.Duration, st *store.Store, reload func() error) *Agent {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
 	return &Agent{
 		masterURL: strings.TrimRight(masterURL, "/"),
 		token:     token,
+		nodeName:  nodeName,
 		interval:  interval,
 		store:     st,
 		reload:    reload,
@@ -40,7 +44,7 @@ func NewAgent(masterURL, token string, interval time.Duration, st *store.Store, 
 
 // Run syncs immediately, then every interval until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) {
-	slog.Info("cluster agent started", "master", a.masterURL, "interval", a.interval)
+	slog.Info("cluster agent started", "master", a.masterURL, "node", a.nodeName, "interval", a.interval)
 	a.syncOnce(ctx)
 	t := time.NewTicker(a.interval)
 	defer t.Stop()
@@ -80,6 +84,11 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.token)
+	if a.nodeName != "" {
+		req.Header.Set("X-MazeDNS-Node", a.nodeName)
+		ver, _ := a.store.GetConfigVersion()
+		req.Header.Set("X-MazeDNS-Node-Version", strconv.FormatInt(ver, 10))
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return nil, err

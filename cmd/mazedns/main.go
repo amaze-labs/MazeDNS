@@ -177,9 +177,13 @@ func main() {
 	// Worker: replicate config from the master.
 	var agentCancel context.CancelFunc
 	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" {
+		nodeName := cfg.Cluster.NodeName
+		if nodeName == "" {
+			nodeName, _ = os.Hostname()
+		}
 		var agentCtx context.Context
 		agentCtx, agentCancel = context.WithCancel(context.Background())
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.Token, cfg.Cluster.Interval.Std(), st, reload)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.Token, nodeName, cfg.Cluster.Interval.Std(), st, reload)
 		go ag.Run(agentCtx)
 	}
 

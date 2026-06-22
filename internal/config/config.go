@@ -163,6 +163,7 @@ type Cluster struct {
 	Token     string   `yaml:"token"`      // shared secret between master and workers
 	MasterURL string   `yaml:"master_url"` // worker: master base URL, e.g. http://master:8080
 	Interval  Duration `yaml:"interval"`   // worker: snapshot poll interval
+	NodeName  string   `yaml:"node_name"`  // worker: name reported to the master (default: hostname)
 }
 
 // Database configures the SQLite datastore.
@@ -242,6 +243,9 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_MASTER_URL"); v != "" {
 		cfg.Cluster.MasterURL = v
 		cfg.Cluster.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_NODE_NAME"); v != "" {
+		cfg.Cluster.NodeName = v
 	}
 	if err := cfg.validate(); err != nil {
 		return cfg, err

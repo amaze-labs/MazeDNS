@@ -110,6 +110,12 @@ CREATE TABLE IF NOT EXISTS meta (
 	value INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO meta(key, value) VALUES('config_version', 0);
+CREATE TABLE IF NOT EXISTS nodes (
+	name TEXT PRIMARY KEY,
+	address TEXT NOT NULL,
+	version INTEGER NOT NULL,
+	last_seen INTEGER NOT NULL
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)

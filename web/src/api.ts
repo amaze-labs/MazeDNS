@@ -37,6 +37,13 @@ export interface Rewrite {
   updated_at: number
 }
 
+export interface Node {
+  name: string
+  address: string
+  version: number
+  last_seen: number
+}
+
 export interface SessionUser {
   id: number
   username: string
@@ -83,4 +90,7 @@ export const api = {
   addRewrite: (domain: string, rrtype: string, value: string) =>
     fetch('/api/rewrites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ domain, rrtype, value }) }).then(j),
   deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }),
+
+  // cluster
+  clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
 }

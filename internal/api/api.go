@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -66,7 +67,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
 
-		// Cluster replication: workers pull the config snapshot (token-authenticated).
+		// Cluster: worker node list (for the UI) + token-authenticated snapshot.
+		mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
 		if clusterToken != "" {
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot)
 		}
@@ -118,6 +120,15 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid cluster token")
 		return
 	}
+	// Record the calling worker (for cluster visibility in the UI).
+	if node := r.Header.Get("X-MazeDNS-Node"); node != "" {
+		ver, _ := strconv.ParseInt(r.Header.Get("X-MazeDNS-Node-Version"), 10, 64)
+		addr := r.RemoteAddr
+		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			addr = host
+		}
+		_ = s.store.UpsertNode(node, addr, ver)
+	}
 	rules, err := s.store.ListRules()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -136,6 +147,18 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		rewrites = []store.Rewrite{}
 	}
 	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites})
+}
+
+func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
+	nodes, err := s.store.ListNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if nodes == nil {
+		nodes = []store.Node{}
+	}
+	writeJSON(w, http.StatusOK, nodes)
 }
 
 // ---- auth handlers ----

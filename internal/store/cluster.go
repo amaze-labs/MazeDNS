@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"time"
 )
 
 // GetConfigVersion returns the monotonic config version, bumped on each mutation.
@@ -60,4 +61,39 @@ func (s *Store) ApplySnapshot(version int64, rules []Rule, rewrites []Rewrite) e
 		return err
 	}
 	return tx.Commit()
+}
+
+// Node is a cluster member (worker) as last seen by the master.
+type Node struct {
+	Name     string `json:"name"`
+	Address  string `json:"address"`
+	Version  int64  `json:"version"`
+	LastSeen int64  `json:"last_seen"`
+}
+
+// UpsertNode records (or refreshes) a worker node's last-seen state.
+func (s *Store) UpsertNode(name, address string, version int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO nodes(name, address, version, last_seen) VALUES(?,?,?,?)
+		 ON CONFLICT(name) DO UPDATE SET address=excluded.address, version=excluded.version, last_seen=excluded.last_seen`,
+		name, address, version, time.Now().Unix())
+	return err
+}
+
+// ListNodes returns all known worker nodes ordered by name.
+func (s *Store) ListNodes() ([]Node, error) {
+	rows, err := s.db.Query(`SELECT name, address, version, last_seen FROM nodes ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.Name, &n.Address, &n.Version, &n.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }

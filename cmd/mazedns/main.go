@@ -25,8 +25,12 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
+// version is set at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
+	modeFlag := flag.String("mode", "", "run mode: master (default, with web UI) or worker")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -35,6 +39,14 @@ func main() {
 		os.Exit(1)
 	}
 	slog.SetDefault(newLogger(cfg.Log.Level))
+
+	mode := firstNonEmpty(*modeFlag, os.Getenv("MAZEDNS_MODE"), "master")
+	if mode != "master" && mode != "worker" {
+		slog.Error("invalid mode (want master|worker)", "mode", mode)
+		os.Exit(1)
+	}
+	worker := mode == "worker"
+	slog.Info("MazeDNS starting", "version", version, "mode", mode)
 
 	// Datastore.
 	st, err := store.Open(cfg.Database.Path)
@@ -45,9 +57,9 @@ func main() {
 	defer st.Close()
 	slog.Info("store ready", "path", cfg.Database.Path)
 
-	// Auth: bootstrap admin + optional OIDC.
-	var authMgr *auth.Manager
-	if cfg.Auth.Enabled {
+	// Auth (master only): bootstrap admin + optional OIDC.
+	authMgr := auth.NewManager(st, nil, cfg.Auth.SessionTTL.Std())
+	if !worker && cfg.Auth.Enabled {
 		if err := bootstrapAdmin(st, cfg.Auth.Admin); err != nil {
 			slog.Error("bootstrap admin", "err", err)
 			os.Exit(1)
@@ -64,8 +76,6 @@ func main() {
 		}
 		authMgr = auth.NewManager(st, oidcProvider, cfg.Auth.SessionTTL.Std())
 		slog.Info("auth enabled", "oidc", oidcProvider != nil)
-	} else {
-		authMgr = auth.NewManager(st, nil, cfg.Auth.SessionTTL.Std())
 	}
 
 	mx := metrics.New()
@@ -175,7 +185,7 @@ func main() {
 		}
 	}()
 
-	// Encrypted DNS endpoints (DoT/DoH).
+	// Encrypted DNS endpoints (DoT/DoH), driven by config in either mode.
 	var dotSrv *dns.Server
 	var dohSrv *http.Server
 	if cfg.DoT.Enabled || cfg.DoH.Enabled {
@@ -209,15 +219,15 @@ func main() {
 		}
 	}
 
-	// HTTP API + UI + metrics.
+	// HTTP server: master serves API + UI + metrics; worker serves only metrics/health.
 	var apiSrv *api.Server
 	if cfg.API.Enabled {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
-		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled)
+		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker)
 		go func() {
-			slog.Info("MazeDNS API starting", "addr", apiAddr, "auth", cfg.Auth.Enabled)
+			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)
 			if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
-				slog.Error("api server stopped", "err", serveErr)
+				slog.Error("http server stopped", "err", serveErr)
 			}
 		}()
 	}

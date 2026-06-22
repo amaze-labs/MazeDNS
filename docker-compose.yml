@@ -1,3 +1,8 @@
+# Dev compose: builds the image locally and runs MazeDNS in master mode
+# (resolver + API + web UI). UI: http://127.0.0.1:8080
+#
+#   make compose-dev      # or: docker compose up --build
+
 name: mazedns
 
 services:
@@ -6,9 +11,20 @@ services:
     image: mazedns:dev
     container_name: mazedns
     restart: unless-stopped
+    environment:
+      MAZEDNS_MODE: master
+      MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind the UI/API inside the container
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_ADMIN_USERNAME: "admin"
+      MAZEDNS_ADMIN_PASSWORD: "change-me-please"
     ports:
-      - "53:5300/udp"   # host :53 -> container :5300
+      - "53:5300/udp"   # DNS
       - "53:5300/tcp"
-    # Override the baked-in config by mounting your own:
-    # volumes:
-    #   - ./configs:/etc/mazedns:ro
+      - "8080:8080"     # web UI + API
+      # - "853:853"     # DoT  (enable dot.* in config)
+      # - "8443:8443"   # DoH  (enable doh.* in config)
+    volumes:
+      - mazedns-data:/data
+
+volumes:
+  mazedns-data:

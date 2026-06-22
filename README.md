@@ -85,6 +85,57 @@ revocable. Roles: `admin` (full) and `readonly` (GET only).
 For SSO, fill in `auth.oidc.*` (issuer, client_id, client_secret, redirect_url)
 for your Authentik provider — a "Sign in with SSO" button then appears.
 
+## Build & deploy
+
+Common tasks via the `Makefile` (`make help` lists them all):
+
+```bash
+make build-ui      # frontend + binary with embedded UI -> bin/mazedns
+make run-ui        # master mode with the UI on :8080
+make run-worker    # worker mode (resolver + /metrics, no UI/API)
+make test vet      # Go tests + vet
+make docker        # build the container image
+make compose-dev   # docker compose up --build (master, UI on :8080)
+```
+
+### One image, two modes
+
+A single container image runs either role, selected by `MAZEDNS_MODE`:
+
+| Mode | Serves | Use |
+|------|--------|-----|
+| `master` (default) | DNS + control-plane API + **web UI** + `/metrics` | the node you manage |
+| `worker` | DNS + `/healthz` + `/metrics` only | replica resolver nodes |
+
+(The worker is a standalone resolver today; master→worker config replication
+arrives in Phase 6.)
+
+### Container env overrides
+
+Override the baked config without mounting a file:
+
+| Env | Overrides |
+|-----|-----------|
+| `MAZEDNS_MODE` | `master` / `worker` |
+| `MAZEDNS_API_ADDRESS` | UI/API bind address (use `0.0.0.0` in a container) |
+| `MAZEDNS_LISTEN_ADDRESS` | DNS bind address |
+| `MAZEDNS_DB_PATH` | SQLite path (e.g. `/data/mazedns.db`) |
+| `MAZEDNS_ADMIN_USERNAME` / `MAZEDNS_ADMIN_PASSWORD` | first-run admin |
+| `MAZEDNS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
+
+### Compose
+
+- **Dev:** `docker compose up --build` (`docker-compose.yml`) — master + UI on `:8080`.
+- **Prod:** `MAZEDNS_ADMIN_PASSWORD=… docker compose -f docker-compose.prod.yml up -d`
+  — pulls `ghcr.io/ipmaze/mazedns:latest` and runs a master + a worker.
+
+### CI
+
+`.github/workflows/build-containers.yml` builds a **multi-arch** image
+(`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/ipmaze/mazedns` (tags
+`sha-<short>`, `latest`, and the git tag on `v*`) on push to `main`, tags, or
+manual dispatch.
+
 ## Security notes
 
 - Never expose the admin API / UI to the internet — management network / VPN only.

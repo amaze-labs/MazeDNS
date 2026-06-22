@@ -33,33 +33,37 @@ type Server struct {
 	http        *http.Server
 }
 
-// New constructs the API server. reload rebuilds and installs the resolver policy
-// from the store after every mutation. authMgr/authEnabled gate the data endpoints.
-func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled bool) *Server {
+// New constructs the HTTP server. In worker mode only /healthz and /metrics are
+// served; in master mode the full control-plane API and web UI are mounted.
+// reload rebuilds the resolver policy after every mutation.
+func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled, worker bool) *Server {
 	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", m.Handler())
 
-	// Auth endpoints (open).
-	mux.HandleFunc("GET /api/auth/info", s.authInfo)
-	mux.HandleFunc("POST /api/auth/login", s.login)
-	mux.HandleFunc("POST /api/auth/logout", s.logout)
-	mux.HandleFunc("GET /api/auth/me", s.me)
-	mux.HandleFunc("GET /api/auth/oidc/login", s.oidcLogin)
-	mux.HandleFunc("GET /api/auth/oidc/callback", s.oidcCallback)
+	if !worker {
+		// Auth endpoints (open).
+		mux.HandleFunc("GET /api/auth/info", s.authInfo)
+		mux.HandleFunc("POST /api/auth/login", s.login)
+		mux.HandleFunc("POST /api/auth/logout", s.logout)
+		mux.HandleFunc("GET /api/auth/me", s.me)
+		mux.HandleFunc("GET /api/auth/oidc/login", s.oidcLogin)
+		mux.HandleFunc("GET /api/auth/oidc/callback", s.oidcCallback)
 
-	// Data endpoints (protected: readonly may GET, admin may mutate).
-	mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
-	mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
-	mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
-	mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
-	mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
-	mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
-	mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
-	mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+		// Data endpoints (protected: readonly may GET, admin may mutate).
+		mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
+		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
+		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
+		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
+		mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
+		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
+		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
+		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
 
-	mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
+		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
+	}
+
 	s.http = &http.Server{
 		Addr:              addr,
 		Handler:           logRequests(mux),

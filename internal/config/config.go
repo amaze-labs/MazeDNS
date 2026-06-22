@@ -211,6 +211,19 @@ func Load(path string) (Config, error) {
 			cfg.Filter.BlocklistFiles[i] = filepath.Join(dir, f)
 		}
 	}
+	// Deployment-time env overrides (handy for containers).
+	if v := os.Getenv("MAZEDNS_LISTEN_ADDRESS"); v != "" {
+		cfg.Listen.Address = v
+	}
+	if v := os.Getenv("MAZEDNS_API_ADDRESS"); v != "" {
+		cfg.API.Address = v
+	}
+	if v := os.Getenv("MAZEDNS_DB_PATH"); v != "" {
+		cfg.Database.Path = v
+	}
+	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {
+		cfg.Log.Level = v
+	}
 	if err := cfg.validate(); err != nil {
 		return cfg, err
 	}

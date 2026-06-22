@@ -108,6 +108,7 @@ func main() {
 				Name:      ev.Name,
 				QType:     ev.QType,
 				Action:    ev.Action,
+				Category:  ev.Category,
 				Rcode:     ev.Rcode,
 				ElapsedMS: ev.Elapsed.Milliseconds(),
 			})
@@ -119,7 +120,7 @@ func main() {
 		block := filter.New()
 		if cfg.Filter.Enabled {
 			for _, path := range cfg.Filter.BlocklistFiles {
-				if n, lerr := block.LoadHostsFile(path); lerr != nil {
+				if n, lerr := block.LoadHostsFile(path, "custom"); lerr != nil {
 					slog.Warn("blocklist load failed", "file", path, "err", lerr)
 				} else {
 					slog.Info("blocklist loaded", "file", path, "domains", n)
@@ -136,9 +137,9 @@ func main() {
 				continue
 			}
 			if rule.Action == "deny" {
-				block.Add(rule.Domain)
+				block.Add(rule.Domain, rule.Category)
 			} else {
-				allow.Add(rule.Domain)
+				allow.Add(rule.Domain, "")
 			}
 		}
 		rewrites := map[string][]resolver.RewriteRR{}

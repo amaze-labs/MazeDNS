@@ -38,7 +38,10 @@ Single-node first; the data model is designed so clustering is additive.
       - [x] Rule import (AdGuard / Pi-hole / hosts) + rule categories
             (ads / trackers / malware / custom). Verified: mixed list imported,
             path/wildcard rules rejected, blocked live.
-      - [ ] Dashboard time-series charts (queries / blocked / by-category).
+      - [x] Dashboard time-series charts: queries vs blocked over 24h + blocked
+            by category (donut) + a Malicious (malware) card. Block category is
+            attributed in the query log; verified via the timeseries/categories
+            endpoints.
       - [ ] Per-node API keys + guided node enrollment.
       - [ ] Cluster metrics on the dashboard.
       - [ ] Settings managed in the web UI (operational config in the DB).

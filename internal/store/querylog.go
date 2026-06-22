@@ -13,6 +13,7 @@ type QueryLogEntry struct {
 	Name      string `json:"name"`
 	QType     string `json:"qtype"`
 	Action    string `json:"action"`
+	Category  string `json:"category"`
 	Rcode     string `json:"rcode"`
 	ElapsedMS int64  `json:"elapsed_ms"`
 }
@@ -27,14 +28,14 @@ func (s *Store) InsertQueryLogBatch(entries []QueryLogEntry) error {
 		return err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO query_log(ts, client, name, qtype, action, rcode, elapsed_ms) VALUES(?,?,?,?,?,?,?)`)
+		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms) VALUES(?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Rcode, e.ElapsedMS); err != nil {
+		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -48,7 +49,7 @@ func (s *Store) RecentQueryLog(limit int) ([]QueryLogEntry, error) {
 		limit = 100
 	}
 	rows, err := s.db.Query(
-		`SELECT id, ts, client, name, qtype, action, rcode, elapsed_ms
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms
 		 FROM query_log ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -57,7 +58,7 @@ func (s *Store) RecentQueryLog(limit int) ([]QueryLogEntry, error) {
 	var out []QueryLogEntry
 	for rows.Next() {
 		var e QueryLogEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Rcode, &e.ElapsedMS); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

@@ -1,4 +1,4 @@
-// Package filter matches DNS query names against blocklists.
+// Package filter matches DNS query names against categorized blocklists.
 package filter
 
 import (
@@ -9,38 +9,43 @@ import (
 	"sync"
 )
 
-// Engine holds a set of blocked domains. Blocking a domain also blocks all of
-// its subdomains.
+// Engine holds blocked domains, each tagged with a category. Blocking a domain
+// also blocks all of its subdomains.
 type Engine struct {
 	mu      sync.RWMutex
-	blocked map[string]struct{}
+	blocked map[string]string // normalized domain -> category
 }
 
 // New returns an empty Engine.
 func New() *Engine {
-	return &Engine{blocked: make(map[string]struct{})}
+	return &Engine{blocked: make(map[string]string)}
 }
 
-// Add inserts a single domain into the blocklist.
-func (e *Engine) Add(domain string) {
+// Add inserts a single domain with a category ("" becomes "custom").
+func (e *Engine) Add(domain, category string) {
 	d := normalize(domain)
 	if d == "" {
 		return
 	}
+	if category == "" {
+		category = "custom"
+	}
 	e.mu.Lock()
-	e.blocked[d] = struct{}{}
+	e.blocked[d] = category
 	e.mu.Unlock()
 }
 
-// LoadHostsFile parses a hosts-format or plain domain-list file and returns the
-// number of new domains added. Lines may be "0.0.0.0 domain", "127.0.0.1 domain",
-// or just "domain"; "#" starts a comment.
-func (e *Engine) LoadHostsFile(path string) (int, error) {
+// LoadHostsFile parses a hosts-format or plain domain-list file, tagging entries
+// with category, and returns the number of new domains added.
+func (e *Engine) LoadHostsFile(path, category string) (int, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer f.Close()
+	if category == "" {
+		category = "custom"
+	}
 
 	count := 0
 	e.mu.Lock()
@@ -67,34 +72,41 @@ func (e *Engine) LoadHostsFile(path string) (int, error) {
 			continue
 		}
 		if _, exists := e.blocked[domain]; !exists {
-			e.blocked[domain] = struct{}{}
+			e.blocked[domain] = category
 			count++
 		}
 	}
 	return count, sc.Err()
 }
 
-// IsBlocked reports whether name, or any of its parent domains, is blocked.
-func (e *Engine) IsBlocked(name string) bool {
+// Match returns the category of the matching (sub)domain and true if name, or
+// any of its parent domains, is blocked.
+func (e *Engine) Match(name string) (string, bool) {
 	name = normalize(name)
 	if name == "" {
-		return false
+		return "", false
 	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	if len(e.blocked) == 0 {
-		return false
+		return "", false
 	}
 	for {
-		if _, ok := e.blocked[name]; ok {
-			return true
+		if cat, ok := e.blocked[name]; ok {
+			return cat, true
 		}
 		i := strings.IndexByte(name, '.')
 		if i < 0 {
-			return false
+			return "", false
 		}
 		name = name[i+1:]
 	}
+}
+
+// IsBlocked reports whether name, or any parent domain, is blocked.
+func (e *Engine) IsBlocked(name string) bool {
+	_, ok := e.Match(name)
+	return ok
 }
 
 // Len returns the number of blocked domains.

@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS query_log (
 	name TEXT NOT NULL,
 	qtype TEXT NOT NULL,
 	action TEXT NOT NULL,
+	category TEXT NOT NULL DEFAULT '',
 	rcode TEXT NOT NULL,
 	elapsed_ms INTEGER NOT NULL
 );
@@ -126,6 +127,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 	// Additive column migrations for databases created before a column existed.
 	for _, alter := range []string{
 		`ALTER TABLE rules ADD COLUMN category TEXT NOT NULL DEFAULT 'custom'`,
+		`ALTER TABLE query_log ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

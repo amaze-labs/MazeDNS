@@ -60,6 +60,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// Data endpoints (protected: readonly may GET, admin may mutate).
 		mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
+		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.getTimeSeries))
+		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.getCategories))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
@@ -281,6 +283,49 @@ func (s *Server) getStats(w http.ResponseWriter, _ *http.Request) {
 		"cache_size": s.res.CacheLen(),
 		"log_count":  logged,
 	})
+}
+
+func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
+	hours := clampHours(r.URL.Query().Get("hours"))
+	step := hours * 3600 / 48
+	if step < 60 {
+		step = 60
+	}
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	points, err := s.store.QueryTimeSeries(since, step)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if points == nil {
+		points = []store.SeriesPoint{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"step": step, "points": points})
+}
+
+func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
+	hours := clampHours(r.URL.Query().Get("hours"))
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	cats, err := s.store.BlockedByCategory(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cats == nil {
+		cats = []store.CategoryCount{}
+	}
+	writeJSON(w, http.StatusOK, cats)
+}
+
+func clampHours(s string) int {
+	h, _ := strconv.Atoi(s)
+	if h <= 0 {
+		h = 24
+	}
+	if h > 24*30 {
+		h = 24 * 30
+	}
+	return h
 }
 
 func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {

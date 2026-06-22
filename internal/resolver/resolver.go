@@ -35,13 +35,14 @@ type Policy struct {
 
 // QueryEvent is emitted for every handled query (for async logging).
 type QueryEvent struct {
-	TS      time.Time
-	Client  string
-	Name    string
-	QType   string
-	Action  string
-	Rcode   string
-	Elapsed time.Duration
+	TS       time.Time
+	Client   string
+	Name     string
+	QType    string
+	Action   string
+	Category string
+	Rcode    string
+	Elapsed  time.Duration
 }
 
 // ForwardGroup routes a domain suffix to a specific set of upstreams (split-horizon).
@@ -185,34 +186,35 @@ func (r *Resolver) CacheLen() int {
 func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 	client := clientIP(w.RemoteAddr())
-	resp, action := r.Resolve(req, client)
+	resp, action, category := r.Resolve(req, client)
 	_ = w.WriteMsg(resp)
-	r.record(req, resp, action, client, start)
+	r.record(req, resp, action, category, client, start)
 }
 
-// Resolve runs the full pipeline and returns the response and the action taken
-// ("authoritative", "rewrite", "blocked", "cache", "forward", "refused", "error").
-// It does not write or log — callers do that via record.
-func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
+// Resolve runs the full pipeline and returns the response, the action taken
+// ("authoritative", "rewrite", "blocked", "cache", "forward", "refused",
+// "error"), and the block category (only set for "blocked"). It does not write
+// or log — callers do that via record.
+func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, string) {
 	r.stats.Total.Add(1)
 	if len(req.Question) == 0 {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeFormatError)
-		return m, "error"
+		return m, "error", ""
 	}
 	q := req.Question[0]
 
 	if r.rate != nil && !r.rate.allow(client) {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeRefused)
-		return m, "refused"
+		return m, "refused", ""
 	}
 
 	name := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 
 	// 1. Authoritative zones we own (answered locally, never forwarded).
 	if z := r.zones.match(name); z != nil {
-		return z.answer(req, q, name), "authoritative"
+		return z.answer(req, q, name), "authoritative", ""
 	}
 
 	pol := r.pol.Load()
@@ -221,14 +223,14 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 	if rrs, ok := pol.Rewrites[name]; ok {
 		if resp := r.rewriteResponse(req, q, rrs); resp != nil {
 			r.stats.Rewritten.Add(1)
-			return resp, "rewrite"
+			return resp, "rewrite", ""
 		}
 	}
 
 	// 3. Block (unless explicitly allowed).
-	if pol.Block.IsBlocked(q.Name) && !pol.Allow.IsBlocked(q.Name) {
+	if cat, blocked := pol.Block.Match(q.Name); blocked && !pol.Allow.IsBlocked(q.Name) {
 		r.stats.Blocked.Add(1)
-		return r.blockedResponse(req, q), "blocked"
+		return r.blockedResponse(req, q), "blocked", cat
 	}
 
 	// 4. Cache.
@@ -236,7 +238,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 		if cached, ok := r.cache.Get(q); ok {
 			cached.Id = req.Id
 			r.stats.Cached.Add(1)
-			return cached, "cache"
+			return cached, "cache", ""
 		}
 	}
 
@@ -250,7 +252,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 		slog.Warn("forward failed", "name", q.Name, "err", err)
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeServerFailure)
-		return m, "error"
+		return m, "error", ""
 	}
 	r.stats.Forwarded.Add(1)
 	if r.metrics != nil {
@@ -260,10 +262,10 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 		r.cache.Set(q, resp)
 	}
 	resp.Id = req.Id
-	return resp, "forward"
+	return resp, "forward", ""
 }
 
-func (r *Resolver) record(req, resp *dns.Msg, action, client string, start time.Time) {
+func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, start time.Time) {
 	if len(req.Question) == 0 {
 		return
 	}
@@ -274,12 +276,12 @@ func (r *Resolver) record(req, resp *dns.Msg, action, client string, start time.
 	}
 	if r.queryLog {
 		slog.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype],
-			"action", action, "rcode", rcode, "client", client)
+			"action", action, "category", category, "rcode", rcode, "client", client)
 	}
 	if r.onQuery != nil {
 		r.onQuery(QueryEvent{
 			TS: start, Client: client, Name: q.Name, QType: dns.TypeToString[q.Qtype],
-			Action: action, Rcode: rcode, Elapsed: time.Since(start),
+			Action: action, Category: category, Rcode: rcode, Elapsed: time.Since(start),
 		})
 	}
 }

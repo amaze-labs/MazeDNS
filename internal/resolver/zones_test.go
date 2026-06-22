@@ -18,7 +18,8 @@ func TestAuthoritativeZone(t *testing.T) {
 	ask := func(qname string, qtype uint16) (*dns.Msg, string) {
 		m := new(dns.Msg)
 		m.SetQuestion(dns.Fqdn(qname), qtype)
-		return res.Resolve(m, "test")
+		resp, action, _ := res.Resolve(m, "test")
+		return resp, action
 	}
 
 	// apex A

@@ -104,7 +104,7 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		}
 		start := time.Now()
 		client := httpClientIP(req)
-		resp, action := r.Resolve(msg, client)
+		resp, action, category := r.Resolve(msg, client)
 		out, err := resp.Pack()
 		if err != nil {
 			http.Error(w, "pack error", http.StatusInternalServerError)
@@ -112,7 +112,7 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/dns-message")
 		_, _ = w.Write(out)
-		r.record(msg, resp, action, client, start)
+		r.record(msg, resp, action, category, client, start)
 	}
 }
 

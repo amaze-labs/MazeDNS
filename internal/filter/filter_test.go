@@ -8,8 +8,8 @@ import (
 
 func TestIsBlocked(t *testing.T) {
 	e := New()
-	e.Add("doubleclick.net")
-	e.Add("ads.example.com")
+	e.Add("doubleclick.net", "ads")
+	e.Add("ads.example.com", "trackers")
 
 	cases := map[string]bool{
 		"doubleclick.net.":    true,  // exact (FQDN form)
@@ -25,6 +25,10 @@ func TestIsBlocked(t *testing.T) {
 			t.Errorf("IsBlocked(%q) = %v, want %v", name, got, want)
 		}
 	}
+
+	if cat, ok := e.Match("ad.doubleclick.net"); !ok || cat != "ads" {
+		t.Errorf("Match category = %q,%v; want \"ads\",true", cat, ok)
+	}
 }
 
 func TestLoadHostsFile(t *testing.T) {
@@ -34,7 +38,7 @@ func TestLoadHostsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := New()
-	n, err := e.LoadHostsFile(path)
+	n, err := e.LoadHostsFile(path, "custom")
 	if err != nil {
 		t.Fatal(err)
 	}

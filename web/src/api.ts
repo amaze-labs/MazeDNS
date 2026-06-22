@@ -56,6 +56,19 @@ export interface AuthInfo {
   oidc_enabled: boolean
 }
 
+export interface SeriesPoint {
+  ts: number
+  total: number
+  blocked: number
+  forwarded: number
+  cached: number
+}
+
+export interface CategoryCount {
+  category: string
+  count: number
+}
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
     const body = await r.json().catch(() => ({}))
@@ -80,6 +93,9 @@ export const api = {
 
   // data
   stats: () => fetch('/api/stats').then(j<Stats>),
+  timeseries: (hours = 24) =>
+    fetch(`/api/stats/timeseries?hours=${hours}`).then(j<{ step: number; points: SeriesPoint[] }>),
+  categories: (hours = 24) => fetch(`/api/stats/categories?hours=${hours}`).then(j<CategoryCount[]>),
   queryLog: (limit = 100) => fetch(`/api/querylog?limit=${limit}`).then(j<QueryLogEntry[]>),
 
   rules: () => fetch('/api/rules').then(j<Rule[]>),

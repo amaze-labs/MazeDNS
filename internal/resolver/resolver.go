@@ -33,6 +33,34 @@ type Policy struct {
 	Block    *filter.Engine
 	Allow    *filter.Engine
 	Rewrites map[string][]RewriteRR
+	// Wildcards holds records for "*.suffix" rewrites, keyed by suffix (the part
+	// after "*."). They match any strict subdomain of the suffix; the most
+	// specific suffix wins. The suffix apex itself is not matched (add an exact
+	// rewrite for that).
+	Wildcards map[string][]RewriteRR
+}
+
+// lookupRewrite returns the rewrite records for name: an exact match first, then
+// the most specific wildcard ("*.suffix") whose suffix is a parent of name.
+func (p *Policy) lookupRewrite(name string) ([]RewriteRR, bool) {
+	if rrs, ok := p.Rewrites[name]; ok {
+		return rrs, true
+	}
+	if len(p.Wildcards) == 0 {
+		return nil, false
+	}
+	// Walk parent suffixes, most specific first: a.b.c -> b.c -> c.
+	for rest := name; ; {
+		i := strings.IndexByte(rest, '.')
+		if i < 0 {
+			break
+		}
+		rest = rest[i+1:]
+		if rrs, ok := p.Wildcards[rest]; ok {
+			return rrs, true
+		}
+	}
+	return nil, false
 }
 
 // QueryEvent is emitted for every handled query (for async logging).
@@ -194,6 +222,9 @@ func (r *Resolver) SetPolicy(p *Policy) {
 	if p.Rewrites == nil {
 		p.Rewrites = map[string][]RewriteRR{}
 	}
+	if p.Wildcards == nil {
+		p.Wildcards = map[string][]RewriteRR{}
+	}
 	r.pol.Store(p)
 }
 
@@ -247,8 +278,8 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 
 	pol := r.pol.Load()
 
-	// 2. Local rewrite.
-	if rrs, ok := pol.Rewrites[name]; ok {
+	// 2. Local rewrite (exact match, then "*.suffix" wildcard).
+	if rrs, ok := pol.lookupRewrite(name); ok {
 		if resp := r.rewriteResponse(req, q, rrs); resp != nil {
 			r.stats.Rewritten.Add(1)
 			return resp, "rewrite", ""

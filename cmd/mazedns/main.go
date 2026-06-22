@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -135,6 +136,7 @@ func main() {
 			}
 		}
 		rewrites := map[string][]resolver.RewriteRR{}
+		wildcards := map[string][]resolver.RewriteRR{}
 		rws, werr := st.ListRewrites()
 		if werr != nil {
 			return nil, werr
@@ -148,9 +150,14 @@ func main() {
 				continue
 			}
 			key := filter.Normalize(rw.Domain)
-			rewrites[key] = append(rewrites[key], resolver.RewriteRR{Type: t, Value: rw.Value})
+			rr := resolver.RewriteRR{Type: t, Value: rw.Value}
+			if base, isWild := strings.CutPrefix(key, "*."); isWild {
+				wildcards[base] = append(wildcards[base], rr)
+			} else {
+				rewrites[key] = append(rewrites[key], rr)
+			}
 		}
-		return &resolver.Policy{Block: block, Allow: allow, Rewrites: rewrites}, nil
+		return &resolver.Policy{Block: block, Allow: allow, Rewrites: rewrites, Wildcards: wildcards}, nil
 	}
 
 	reload := func() error {

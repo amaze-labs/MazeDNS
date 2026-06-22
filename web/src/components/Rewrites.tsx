@@ -35,9 +35,13 @@ export default function Rewrites() {
   return (
     <div>
       <h2>Local DNS rewrites</h2>
+      <p className="muted">
+        Use <code>*.example.com</code> to match every subdomain. The wildcard does not cover the bare
+        <code> example.com</code> — add a separate entry for the apex if you need it.
+      </p>
       {err && <div className="error">{err}</div>}
       <form className="row" onSubmit={add}>
-        <input placeholder="domain (e.g. nas.lan)" value={domain} onChange={(e) => setDomain(e.target.value)} />
+        <input placeholder="domain (e.g. nas.lan or *.lab.lan)" value={domain} onChange={(e) => setDomain(e.target.value)} />
         <select value={rrtype} onChange={(e) => setRrtype(e.target.value)}>
           <option>A</option>
           <option>AAAA</option>

@@ -574,6 +574,11 @@ func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain and value required")
 		return
 	}
+	// Wildcards are allowed only as a single leading "*." label.
+	if strings.Contains(domain, "*") && (!strings.HasPrefix(domain, "*.") || strings.Contains(domain[2:], "*")) {
+		writeError(w, http.StatusBadRequest, "wildcards must be a single leading label, e.g. *.example.com")
+		return
+	}
 	id, err := s.store.AddRewrite(domain, in.RRType, in.Value)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

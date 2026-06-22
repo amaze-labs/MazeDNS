@@ -51,6 +51,7 @@ dig @127.0.0.1 -p 5300 doubleclick.net    # blocked (NXDOMAIN)
 # Control plane  (http://127.0.0.1:8080)
 curl -XPOST :8080/api/rules    -d '{"action":"deny","domain":"ads.example.com"}'
 curl -XPOST :8080/api/rewrites -d '{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}'
+curl -XPOST :8080/api/rewrites -d '{"domain":"*.lab.lan","rrtype":"A","value":"10.0.0.9"}'  # wildcard: every subdomain
 curl :8080/api/stats
 curl ':8080/api/querylog?limit=20'
 curl :8080/metrics              # Prometheus

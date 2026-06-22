@@ -1,9 +1,11 @@
-// Package resolver handles DNS queries: rewrite, then filter, then cache, then forward.
+// Package resolver handles DNS queries: rate-limit, rewrite, filter, cache, forward.
 package resolver
 
 import (
+	"errors"
 	"log/slog"
 	"net"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -15,6 +17,8 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 )
 
+var errNoUpstreams = errors.New("no upstreams available")
+
 // RewriteRR is a single local record override.
 type RewriteRR struct {
 	Type  uint16
@@ -23,9 +27,9 @@ type RewriteRR struct {
 
 // Policy is the live filtering/rewrite ruleset, swapped atomically on reload.
 type Policy struct {
-	Block    *filter.Engine         // domains to block (file lists + deny rules)
-	Allow    *filter.Engine         // allow overrides (wins over Block)
-	Rewrites map[string][]RewriteRR // normalized domain -> local records
+	Block    *filter.Engine
+	Allow    *filter.Engine
+	Rewrites map[string][]RewriteRR
 }
 
 // QueryEvent is emitted for every handled query (for async logging).
@@ -39,9 +43,17 @@ type QueryEvent struct {
 	Elapsed time.Duration
 }
 
+// ForwardGroup routes a domain suffix to a specific set of upstreams (split-horizon).
+type ForwardGroup struct {
+	Suffix    string
+	Upstreams []string
+}
+
 // Options configures a Resolver. Cache may be nil to disable caching.
 type Options struct {
 	Upstreams     []string
+	Forwarders    []ForwardGroup
+	RateLimitQPM  int
 	Cache         *cache.Cache
 	BlockResponse string // "nxdomain" | "zeroip"
 	QueryLog      bool
@@ -60,18 +72,23 @@ type Stats struct {
 	Errors    atomic.Uint64
 }
 
+type condForward struct {
+	suffix string
+	ups    []Upstream
+}
+
 // Resolver answers DNS queries.
 type Resolver struct {
-	upstreams []string
-	cache     *cache.Cache
-	blockMode string
-	queryLog  bool
-	metrics   *metrics.Metrics
-	onQuery   func(QueryEvent)
-	udp       *dns.Client
-	tcp       *dns.Client
-	stats     Stats
-	pol       atomic.Pointer[Policy]
+	defaultUpstreams []Upstream
+	conditional      []condForward
+	cache            *cache.Cache
+	blockMode        string
+	queryLog         bool
+	metrics          *metrics.Metrics
+	onQuery          func(QueryEvent)
+	rate             *rateLimiter
+	stats            Stats
+	pol              atomic.Pointer[Policy]
 }
 
 // New builds a Resolver. Call SetPolicy before serving to install filtering rules.
@@ -80,23 +97,48 @@ func New(opts Options) *Resolver {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	ups := make([]string, 0, len(opts.Upstreams))
-	for _, u := range opts.Upstreams {
-		ups = append(ups, ensurePort(u))
+	parseAll := func(specs []string) []Upstream {
+		out := make([]Upstream, 0, len(specs))
+		for _, s := range specs {
+			u, err := ParseUpstream(s, timeout)
+			if err != nil {
+				slog.Warn("invalid upstream", "spec", s, "err", err)
+				continue
+			}
+			out = append(out, u)
+		}
+		return out
 	}
+
+	cond := make([]condForward, 0, len(opts.Forwarders))
+	for _, f := range opts.Forwarders {
+		suffix := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(f.Suffix), "."))
+		if suffix == "" {
+			continue
+		}
+		cond = append(cond, condForward{suffix: suffix, ups: parseAll(f.Upstreams)})
+	}
+	// Most-specific (longest) suffix wins.
+	sort.Slice(cond, func(i, j int) bool { return len(cond[i].suffix) > len(cond[j].suffix) })
+
 	mode := opts.BlockResponse
 	if mode == "" {
 		mode = "nxdomain"
 	}
+	var rl *rateLimiter
+	if opts.RateLimitQPM > 0 {
+		rl = newRateLimiter(opts.RateLimitQPM)
+	}
+
 	r := &Resolver{
-		upstreams: ups,
-		cache:     opts.Cache,
-		blockMode: mode,
-		queryLog:  opts.QueryLog,
-		metrics:   opts.Metrics,
-		onQuery:   opts.OnQuery,
-		udp:       &dns.Client{Net: "udp", Timeout: timeout},
-		tcp:       &dns.Client{Net: "tcp", Timeout: timeout},
+		defaultUpstreams: parseAll(opts.Upstreams),
+		conditional:      cond,
+		cache:            opts.Cache,
+		blockMode:        mode,
+		queryLog:         opts.QueryLog,
+		metrics:          opts.Metrics,
+		onQuery:          opts.OnQuery,
+		rate:             rl,
 	}
 	r.pol.Store(&Policy{Block: filter.New(), Allow: filter.New(), Rewrites: map[string][]RewriteRR{}})
 	return r
@@ -145,6 +187,14 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 	q := req.Question[0]
 	client := clientIP(w.RemoteAddr())
+
+	if r.rate != nil && !r.rate.allow(client) {
+		m := new(dns.Msg)
+		m.SetRcode(req, dns.RcodeRefused)
+		r.finish(w, m, q, client, "refused", start)
+		return
+	}
+
 	pol := r.pol.Load()
 	name := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 
@@ -174,8 +224,8 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 		}
 	}
 
-	// 4. Forward upstream.
-	resp, rtt, err := r.forward(req)
+	// 4. Forward upstream (split-horizon aware).
+	resp, rtt, err := r.forward(req, r.upstreamsFor(name))
 	if err != nil || resp == nil {
 		r.stats.Errors.Add(1)
 		slog.Warn("forward failed", "name", q.Name, "err", err)
@@ -195,6 +245,31 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	r.finish(w, resp, q, client, "forward", start)
 }
 
+func (r *Resolver) upstreamsFor(name string) []Upstream {
+	for _, cf := range r.conditional {
+		if (name == cf.suffix || strings.HasSuffix(name, "."+cf.suffix)) && len(cf.ups) > 0 {
+			return cf.ups
+		}
+	}
+	return r.defaultUpstreams
+}
+
+func (r *Resolver) forward(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
+	if len(ups) == 0 {
+		return nil, 0, errNoUpstreams
+	}
+	var lastErr error
+	for _, u := range ups {
+		resp, rtt, err := u.Exchange(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return resp, rtt, nil
+	}
+	return nil, 0, lastErr
+}
+
 func (r *Resolver) finish(w dns.ResponseWriter, resp *dns.Msg, q dns.Question, client, action string, start time.Time) {
 	_ = w.WriteMsg(resp)
 	elapsed := time.Since(start)
@@ -212,25 +287,6 @@ func (r *Resolver) finish(w dns.ResponseWriter, resp *dns.Msg, q dns.Question, c
 			Action: action, Rcode: rcode, Elapsed: elapsed,
 		})
 	}
-}
-
-func (r *Resolver) forward(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	m := req.Copy()
-	var lastErr error
-	for _, up := range r.upstreams {
-		resp, rtt, err := r.udp.Exchange(m, up)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if resp != nil && resp.Truncated {
-			if tcpResp, trtt, terr := r.tcp.Exchange(m, up); terr == nil {
-				return tcpResp, trtt, nil
-			}
-		}
-		return resp, rtt, nil
-	}
-	return nil, 0, lastErr
 }
 
 func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR) *dns.Msg {
@@ -294,11 +350,4 @@ func clientIP(a net.Addr) string {
 		return host
 	}
 	return a.String()
-}
-
-func ensurePort(addr string) string {
-	if _, _, err := net.SplitHostPort(addr); err == nil {
-		return addr
-	}
-	return net.JoinHostPort(addr, "53")
 }

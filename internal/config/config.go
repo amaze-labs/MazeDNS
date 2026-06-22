@@ -32,20 +32,34 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 
 // Config is the full MazeDNS configuration.
 type Config struct {
-	Listen    Listen   `yaml:"listen"`
-	Upstreams []string `yaml:"upstreams"`
-	Cache     Cache    `yaml:"cache"`
-	Filter    Filter   `yaml:"filter"`
-	API       API      `yaml:"api"`
-	Auth      Auth     `yaml:"auth"`
-	Database  Database `yaml:"database"`
-	Log       Log      `yaml:"log"`
+	Listen     Listen      `yaml:"listen"`
+	Upstreams  []string    `yaml:"upstreams"`
+	Forwarders []Forwarder `yaml:"forwarders"`
+	RateLimit  RateLimit   `yaml:"rate_limit"`
+	Cache      Cache       `yaml:"cache"`
+	Filter     Filter      `yaml:"filter"`
+	API        API         `yaml:"api"`
+	Auth       Auth        `yaml:"auth"`
+	Database   Database    `yaml:"database"`
+	Log        Log         `yaml:"log"`
 }
 
 // Listen is the DNS listener address.
 type Listen struct {
 	Address string `yaml:"address"`
 	Port    int    `yaml:"port"`
+}
+
+// Forwarder routes a domain suffix to specific upstreams (split-horizon).
+type Forwarder struct {
+	Suffix    string   `yaml:"suffix"`
+	Upstreams []string `yaml:"upstreams"`
+}
+
+// RateLimit configures per-client query-rate limiting.
+type RateLimit struct {
+	Enabled bool `yaml:"enabled"`
+	QPM     int  `yaml:"qpm"` // max queries per minute per client IP
 }
 
 // Cache configures the response cache.
@@ -79,8 +93,7 @@ type Auth struct {
 }
 
 // AdminBootstrap seeds the first local admin (env overrides:
-// MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD). If no password is given, a
-// random one is generated and logged once on first start.
+// MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD).
 type AdminBootstrap struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`

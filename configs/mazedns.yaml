@@ -3,9 +3,18 @@ listen:
   address: "0.0.0.0"
   port: 5300              # non-privileged dev port (macOS reserves 5353 for mDNS); map host 53 -> 5300 in Docker
 
-upstreams:                # tried in order; first to answer wins
-  - "1.1.1.1:53"
+upstreams:                # default upstreams; tried in order, first to answer wins
+  - "1.1.1.1:53"          # plain UDP (TCP fallback)
   - "9.9.9.9:53"
+  # Encrypted upstreams are supported too:
+  # - "tls://1.1.1.1:853#cloudflare-dns.com"   # DNS-over-TLS (servername after #)
+  # - "https://dns.quad9.net/dns-query"         # DNS-over-HTTPS
+
+forwarders: []            # split-horizon: e.g. - { suffix: "corp.internal", upstreams: ["udp://10.0.0.53:53"] }
+
+rate_limit:
+  enabled: false
+  qpm: 600                # max queries per minute per client IP (REFUSED beyond)
 
 cache:
   enabled: true

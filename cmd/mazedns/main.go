@@ -82,6 +82,8 @@ func main() {
 
 	res := resolver.New(resolver.Options{
 		Upstreams:     cfg.Upstreams,
+		Forwarders:    toForwardGroups(cfg.Forwarders),
+		RateLimitQPM:  rateLimitQPM(cfg.RateLimit),
 		Cache:         c,
 		BlockResponse: cfg.Filter.BlockResponse,
 		QueryLog:      cfg.Log.QueryLog,
@@ -164,7 +166,7 @@ func main() {
 	dnsSrv := resolver.NewServer(dnsAddr, res)
 	go func() {
 		slog.Info("MazeDNS DNS starting", "addr", dnsAddr, "upstreams", cfg.Upstreams,
-			"cache", cfg.Cache.Enabled, "filter", cfg.Filter.Enabled)
+			"cache", cfg.Cache.Enabled, "filter", cfg.Filter.Enabled, "ratelimit", cfg.RateLimit.Enabled)
 		if serveErr := dnsSrv.ListenAndServe(); serveErr != nil {
 			slog.Error("dns server stopped", "err", serveErr)
 			os.Exit(1)
@@ -205,6 +207,21 @@ func main() {
 	if apiSrv != nil {
 		_ = apiSrv.Shutdown(ctx)
 	}
+}
+
+func toForwardGroups(fs []config.Forwarder) []resolver.ForwardGroup {
+	out := make([]resolver.ForwardGroup, 0, len(fs))
+	for _, f := range fs {
+		out = append(out, resolver.ForwardGroup{Suffix: f.Suffix, Upstreams: f.Upstreams})
+	}
+	return out
+}
+
+func rateLimitQPM(rl config.RateLimit) int {
+	if !rl.Enabled {
+		return 0
+	}
+	return rl.QPM
 }
 
 // bootstrapAdmin creates the first admin if no users exist. Username/password

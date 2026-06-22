@@ -16,6 +16,20 @@ rate_limit:
   enabled: false
   qpm: 600                # max queries per minute per client IP (REFUSED beyond)
 
+# Encrypted DNS endpoints for clients (uses a self-signed cert if tls.* is empty)
+dot:
+  enabled: false
+  address: "0.0.0.0"
+  port: 853               # DNS-over-TLS
+doh:
+  enabled: false
+  address: "0.0.0.0"
+  port: 8443              # DNS-over-HTTPS
+  path: "/dns-query"
+tls:
+  cert_file: ""           # PEM cert; empty -> self-signed generated on start
+  key_file: ""
+
 cache:
   enabled: true
   max_entries: 10000

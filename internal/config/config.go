@@ -36,6 +36,9 @@ type Config struct {
 	Upstreams  []string    `yaml:"upstreams"`
 	Forwarders []Forwarder `yaml:"forwarders"`
 	RateLimit  RateLimit   `yaml:"rate_limit"`
+	DoT        Endpoint    `yaml:"dot"`
+	DoH        DoHEndpoint `yaml:"doh"`
+	TLS        TLS         `yaml:"tls"`
 	Cache      Cache       `yaml:"cache"`
 	Filter     Filter      `yaml:"filter"`
 	API        API         `yaml:"api"`
@@ -60,6 +63,27 @@ type Forwarder struct {
 type RateLimit struct {
 	Enabled bool `yaml:"enabled"`
 	QPM     int  `yaml:"qpm"` // max queries per minute per client IP
+}
+
+// Endpoint is a generic enable/address/port listener (used for DoT).
+type Endpoint struct {
+	Enabled bool   `yaml:"enabled"`
+	Address string `yaml:"address"`
+	Port    int    `yaml:"port"`
+}
+
+// DoHEndpoint is the DNS-over-HTTPS listener.
+type DoHEndpoint struct {
+	Enabled bool   `yaml:"enabled"`
+	Address string `yaml:"address"`
+	Port    int    `yaml:"port"`
+	Path    string `yaml:"path"`
+}
+
+// TLS holds the certificate used by the encrypted DNS endpoints.
+type TLS struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
 }
 
 // Cache configures the response cache.
@@ -127,6 +151,8 @@ func Default() Config {
 	return Config{
 		Listen:    Listen{Address: "0.0.0.0", Port: 5300},
 		Upstreams: []string{"1.1.1.1:53", "9.9.9.9:53"},
+		DoT:       Endpoint{Enabled: false, Address: "0.0.0.0", Port: 853},
+		DoH:       DoHEndpoint{Enabled: false, Address: "0.0.0.0", Port: 8443, Path: "/dns-query"},
 		Cache: Cache{
 			Enabled:    true,
 			MaxEntries: 10000,
@@ -192,6 +218,9 @@ func (c Config) validate() error {
 		if c.Auth.OIDC.Issuer == "" || c.Auth.OIDC.ClientID == "" || c.Auth.OIDC.RedirectURL == "" {
 			return fmt.Errorf("auth.oidc requires issuer, client_id, and redirect_url when enabled")
 		}
+	}
+	if c.DoH.Enabled && c.DoH.Path == "" {
+		return fmt.Errorf("doh.path is required when doh is enabled")
 	}
 	return nil
 }

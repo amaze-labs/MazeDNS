@@ -175,64 +175,63 @@ func (r *Resolver) CacheLen() int {
 	return r.cache.Len()
 }
 
-// Handle implements dns.Handler.
+// Handle implements dns.Handler (UDP/TCP/DoT).
 func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
+	client := clientIP(w.RemoteAddr())
+	resp, action := r.Resolve(req, client)
+	_ = w.WriteMsg(resp)
+	r.record(req, resp, action, client, start)
+}
+
+// Resolve runs the full pipeline and returns the response message and the action
+// taken ("rewrite", "blocked", "cache", "forward", "refused", "error"). It does
+// not write or log — callers (UDP/TCP, DoH) do that via record.
+func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string) {
 	r.stats.Total.Add(1)
 	if len(req.Question) == 0 {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeFormatError)
-		_ = w.WriteMsg(m)
-		return
+		return m, "error"
 	}
 	q := req.Question[0]
-	client := clientIP(w.RemoteAddr())
 
 	if r.rate != nil && !r.rate.allow(client) {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeRefused)
-		r.finish(w, m, q, client, "refused", start)
-		return
+		return m, "refused"
 	}
 
 	pol := r.pol.Load()
 	name := strings.ToLower(strings.TrimSuffix(q.Name, "."))
 
-	// 1. Local rewrite.
 	if rrs, ok := pol.Rewrites[name]; ok {
 		if resp := r.rewriteResponse(req, q, rrs); resp != nil {
 			r.stats.Rewritten.Add(1)
-			r.finish(w, resp, q, client, "rewrite", start)
-			return
+			return resp, "rewrite"
 		}
 	}
 
-	// 2. Block (unless explicitly allowed).
 	if pol.Block.IsBlocked(q.Name) && !pol.Allow.IsBlocked(q.Name) {
 		r.stats.Blocked.Add(1)
-		r.finish(w, r.blockedResponse(req, q), q, client, "blocked", start)
-		return
+		return r.blockedResponse(req, q), "blocked"
 	}
 
-	// 3. Cache.
 	if r.cache != nil {
 		if cached, ok := r.cache.Get(q); ok {
 			cached.Id = req.Id
 			r.stats.Cached.Add(1)
-			r.finish(w, cached, q, client, "cache", start)
-			return
+			return cached, "cache"
 		}
 	}
 
-	// 4. Forward upstream (split-horizon aware).
 	resp, rtt, err := r.forward(req, r.upstreamsFor(name))
 	if err != nil || resp == nil {
 		r.stats.Errors.Add(1)
 		slog.Warn("forward failed", "name", q.Name, "err", err)
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeServerFailure)
-		r.finish(w, m, q, client, "error", start)
-		return
+		return m, "error"
 	}
 	r.stats.Forwarded.Add(1)
 	if r.metrics != nil {
@@ -242,7 +241,28 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 		r.cache.Set(q, resp)
 	}
 	resp.Id = req.Id
-	r.finish(w, resp, q, client, "forward", start)
+	return resp, "forward"
+}
+
+func (r *Resolver) record(req, resp *dns.Msg, action, client string, start time.Time) {
+	if len(req.Question) == 0 {
+		return
+	}
+	q := req.Question[0]
+	rcode := dns.RcodeToString[resp.Rcode]
+	if r.metrics != nil {
+		r.metrics.Queries.WithLabelValues(action).Inc()
+	}
+	if r.queryLog {
+		slog.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype],
+			"action", action, "rcode", rcode, "client", client)
+	}
+	if r.onQuery != nil {
+		r.onQuery(QueryEvent{
+			TS: start, Client: client, Name: q.Name, QType: dns.TypeToString[q.Qtype],
+			Action: action, Rcode: rcode, Elapsed: time.Since(start),
+		})
+	}
 }
 
 func (r *Resolver) upstreamsFor(name string) []Upstream {
@@ -268,25 +288,6 @@ func (r *Resolver) forward(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duratio
 		return resp, rtt, nil
 	}
 	return nil, 0, lastErr
-}
-
-func (r *Resolver) finish(w dns.ResponseWriter, resp *dns.Msg, q dns.Question, client, action string, start time.Time) {
-	_ = w.WriteMsg(resp)
-	elapsed := time.Since(start)
-	rcode := dns.RcodeToString[resp.Rcode]
-	if r.metrics != nil {
-		r.metrics.Queries.WithLabelValues(action).Inc()
-	}
-	if r.queryLog {
-		slog.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype],
-			"action", action, "rcode", rcode, "client", client)
-	}
-	if r.onQuery != nil {
-		r.onQuery(QueryEvent{
-			TS: start, Client: client, Name: q.Name, QType: dns.TypeToString[q.Qtype],
-			Action: action, Rcode: rcode, Elapsed: elapsed,
-		})
-	}
 }
 
 func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR) *dns.Msg {

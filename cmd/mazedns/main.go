@@ -161,7 +161,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// DNS server.
+	// DNS server (UDP/TCP).
 	dnsAddr := net.JoinHostPort(cfg.Listen.Address, strconv.Itoa(cfg.Listen.Port))
 	dnsSrv := resolver.NewServer(dnsAddr, res)
 	go func() {
@@ -172,6 +172,40 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	// Encrypted DNS endpoints (DoT/DoH).
+	var dotSrv *dns.Server
+	var dohSrv *http.Server
+	if cfg.DoT.Enabled || cfg.DoH.Enabled {
+		cert, selfSigned, cerr := resolver.TLSCert(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		if cerr != nil {
+			slog.Error("tls cert", "err", cerr)
+			os.Exit(1)
+		}
+		if selfSigned {
+			slog.Warn("using a self-signed TLS certificate for encrypted DNS")
+		}
+		if cfg.DoT.Enabled {
+			addr := net.JoinHostPort(cfg.DoT.Address, strconv.Itoa(cfg.DoT.Port))
+			dotSrv = resolver.NewDoTServer(addr, cert, res)
+			go func() {
+				slog.Info("MazeDNS DoT starting", "addr", addr)
+				if e := dotSrv.ListenAndServe(); e != nil {
+					slog.Error("dot server stopped", "err", e)
+				}
+			}()
+		}
+		if cfg.DoH.Enabled {
+			addr := net.JoinHostPort(cfg.DoH.Address, strconv.Itoa(cfg.DoH.Port))
+			dohSrv = resolver.NewDoHServer(addr, cfg.DoH.Path, cert, res)
+			go func() {
+				slog.Info("MazeDNS DoH starting", "addr", addr, "path", cfg.DoH.Path)
+				if e := dohSrv.ListenAndServeTLS("", ""); e != nil && e != http.ErrServerClosed {
+					slog.Error("doh server stopped", "err", e)
+				}
+			}()
+		}
+	}
 
 	// HTTP API + UI + metrics.
 	var apiSrv *api.Server
@@ -204,6 +238,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	dnsSrv.Shutdown(ctx)
+	if dotSrv != nil {
+		_ = dotSrv.ShutdownContext(ctx)
+	}
+	if dohSrv != nil {
+		_ = dohSrv.Shutdown(ctx)
+	}
 	if apiSrv != nil {
 		_ = apiSrv.Shutdown(ctx)
 	}

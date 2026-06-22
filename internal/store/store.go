@@ -89,6 +89,22 @@ CREATE TABLE IF NOT EXISTS query_log (
 	elapsed_ms INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(ts);
+CREATE TABLE IF NOT EXISTS users (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	username TEXT NOT NULL UNIQUE,
+	role TEXT NOT NULL DEFAULT 'readonly',
+	source TEXT NOT NULL DEFAULT 'local',
+	subject TEXT NOT NULL DEFAULT '',
+	password_hash TEXT NOT NULL DEFAULT '',
+	updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+	token TEXT PRIMARY KEY,
+	user_id INTEGER NOT NULL,
+	username TEXT NOT NULL,
+	role TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)

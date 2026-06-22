@@ -37,6 +37,7 @@ type Config struct {
 	Cache     Cache    `yaml:"cache"`
 	Filter    Filter   `yaml:"filter"`
 	API       API      `yaml:"api"`
+	Auth      Auth     `yaml:"auth"`
 	Database  Database `yaml:"database"`
 	Log       Log      `yaml:"log"`
 }
@@ -62,11 +63,39 @@ type Filter struct {
 	BlocklistFiles []string `yaml:"blocklist_files"`
 }
 
-// API configures the HTTP control-plane / metrics server.
+// API configures the HTTP control-plane / metrics / UI server.
 type API struct {
 	Enabled bool   `yaml:"enabled"`
 	Address string `yaml:"address"`
 	Port    int    `yaml:"port"`
+}
+
+// Auth configures authentication for the control plane and UI.
+type Auth struct {
+	Enabled    bool           `yaml:"enabled"`
+	SessionTTL Duration       `yaml:"session_ttl"`
+	Admin      AdminBootstrap `yaml:"admin"`
+	OIDC       OIDC           `yaml:"oidc"`
+}
+
+// AdminBootstrap seeds the first local admin (env overrides:
+// MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD). If no password is given, a
+// random one is generated and logged once on first start.
+type AdminBootstrap struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+}
+
+// OIDC configures Single Sign-On via an OpenID Connect provider (e.g. Authentik).
+type OIDC struct {
+	Enabled      bool     `yaml:"enabled"`
+	Issuer       string   `yaml:"issuer"`
+	ClientID     string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	RedirectURL  string   `yaml:"redirect_url"`
+	Scopes       []string `yaml:"scopes"`
+	GroupsClaim  string   `yaml:"groups_claim"`
+	AdminGroup   string   `yaml:"admin_group"`
 }
 
 // Database configures the SQLite datastore.
@@ -95,7 +124,11 @@ func Default() Config {
 			Enabled:       true,
 			BlockResponse: "nxdomain",
 		},
-		API:      API{Enabled: true, Address: "127.0.0.1", Port: 8080},
+		API: API{Enabled: true, Address: "127.0.0.1", Port: 8080},
+		Auth: Auth{
+			Enabled:    true,
+			SessionTTL: Duration(24 * time.Hour),
+		},
 		Database: Database{Path: "mazedns.db"},
 		Log:      Log{Level: "info", QueryLog: false},
 	}
@@ -141,6 +174,11 @@ func (c Config) validate() error {
 	}
 	if c.Database.Path == "" {
 		return fmt.Errorf("database.path is required")
+	}
+	if c.Auth.OIDC.Enabled {
+		if c.Auth.OIDC.Issuer == "" || c.Auth.OIDC.ClientID == "" || c.Auth.OIDC.RedirectURL == "" {
+			return fmt.Errorf("auth.oidc requires issuer, client_id, and redirect_url when enabled")
+		}
 	}
 	return nil
 }

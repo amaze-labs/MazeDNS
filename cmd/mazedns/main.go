@@ -16,6 +16,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/IPMaze/MazeDNS/internal/api"
+	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/cache"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/filter"
@@ -43,6 +44,29 @@ func main() {
 	}
 	defer st.Close()
 	slog.Info("store ready", "path", cfg.Database.Path)
+
+	// Auth: bootstrap admin + optional OIDC.
+	var authMgr *auth.Manager
+	if cfg.Auth.Enabled {
+		if err := bootstrapAdmin(st, cfg.Auth.Admin); err != nil {
+			slog.Error("bootstrap admin", "err", err)
+			os.Exit(1)
+		}
+		var oidcProvider *auth.OIDCProvider
+		if cfg.Auth.OIDC.Enabled {
+			p, oerr := auth.NewOIDC(context.Background(), cfg.Auth.OIDC)
+			if oerr != nil {
+				slog.Error("oidc init failed; continuing without SSO", "err", oerr)
+			} else {
+				oidcProvider = p
+				slog.Info("oidc enabled", "issuer", cfg.Auth.OIDC.Issuer)
+			}
+		}
+		authMgr = auth.NewManager(st, oidcProvider, cfg.Auth.SessionTTL.Std())
+		slog.Info("auth enabled", "oidc", oidcProvider != nil)
+	} else {
+		authMgr = auth.NewManager(st, nil, cfg.Auth.SessionTTL.Std())
+	}
 
 	mx := metrics.New()
 
@@ -147,13 +171,13 @@ func main() {
 		}
 	}()
 
-	// HTTP API + metrics.
+	// HTTP API + UI + metrics.
 	var apiSrv *api.Server
 	if cfg.API.Enabled {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
-		apiSrv = api.New(apiAddr, st, res, mx, reload)
+		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled)
 		go func() {
-			slog.Info("MazeDNS API starting", "addr", apiAddr)
+			slog.Info("MazeDNS API starting", "addr", apiAddr, "auth", cfg.Auth.Enabled)
 			if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
 				slog.Error("api server stopped", "err", serveErr)
 			}
@@ -181,6 +205,53 @@ func main() {
 	if apiSrv != nil {
 		_ = apiSrv.Shutdown(ctx)
 	}
+}
+
+// bootstrapAdmin creates the first admin if no users exist. Username/password
+// come from config or MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD; a missing
+// password is generated and logged once.
+func bootstrapAdmin(st *store.Store, a config.AdminBootstrap) error {
+	n, err := st.CountUsers()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	username := firstNonEmpty(a.Username, os.Getenv("MAZEDNS_ADMIN_USERNAME"), "admin")
+	password := firstNonEmpty(a.Password, os.Getenv("MAZEDNS_ADMIN_PASSWORD"))
+	generated := false
+	if password == "" {
+		tok, terr := auth.NewToken()
+		if terr != nil {
+			return terr
+		}
+		password = tok[:16]
+		generated = true
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	if _, err := st.CreateLocalUser(username, hash, "admin"); err != nil {
+		return err
+	}
+	if generated {
+		slog.Warn("bootstrap admin created with a GENERATED password — log in and change it",
+			"username", username, "password", password)
+	} else {
+		slog.Info("bootstrap admin created", "username", username)
+	}
+	return nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func rrType(s string) (uint16, bool) {

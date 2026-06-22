@@ -74,6 +74,17 @@ go run ./cmd/mazedns --config configs/mazedns.yaml   # API on :8080
 npm --prefix web run dev                              # UI on :5173
 ```
 
+### Auth
+
+The API and UI require login by default (`auth.enabled: true`). On first run an
+admin is created — configure it via `auth.admin` or `MAZEDNS_ADMIN_USERNAME` /
+`MAZEDNS_ADMIN_PASSWORD`; if no password is given, a random one is generated and
+logged once. Passwords are argon2id-hashed; sessions are server-side and
+revocable. Roles: `admin` (full) and `readonly` (GET only).
+
+For SSO, fill in `auth.oidc.*` (issuer, client_id, client_secret, redirect_url)
+for your Authentik provider — a "Sign in with SSO" button then appears.
+
 ## Security notes
 
 - Never expose the admin API / UI to the internet — management network / VPN only.

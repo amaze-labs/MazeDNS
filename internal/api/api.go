@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
@@ -16,29 +17,48 @@ import (
 	"github.com/IPMaze/MazeDNS/web"
 )
 
+const (
+	roleReadonly    = "readonly"
+	roleAdmin       = "admin"
+	oidcStateCookie = "mazedns_oidc_state"
+)
+
 // Server is the HTTP API server.
 type Server struct {
-	store  *store.Store
-	res    *resolver.Resolver
-	reload func() error
-	http   *http.Server
+	store       *store.Store
+	res         *resolver.Resolver
+	reload      func() error
+	auth        *auth.Manager
+	authEnabled bool
+	http        *http.Server
 }
 
 // New constructs the API server. reload rebuilds and installs the resolver policy
-// from the store; it is called after every mutation.
-func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error) *Server {
-	s := &Server{store: st, res: res, reload: reload}
+// from the store after every mutation. authMgr/authEnabled gate the data endpoints.
+func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled bool) *Server {
+	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", m.Handler())
-	mux.HandleFunc("GET /api/stats", s.getStats)
-	mux.HandleFunc("GET /api/querylog", s.getQueryLog)
-	mux.HandleFunc("GET /api/rules", s.listRules)
-	mux.HandleFunc("POST /api/rules", s.addRule)
-	mux.HandleFunc("DELETE /api/rules/{id}", s.deleteRule)
-	mux.HandleFunc("GET /api/rewrites", s.listRewrites)
-	mux.HandleFunc("POST /api/rewrites", s.addRewrite)
-	mux.HandleFunc("DELETE /api/rewrites/{id}", s.deleteRewrite)
+
+	// Auth endpoints (open).
+	mux.HandleFunc("GET /api/auth/info", s.authInfo)
+	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("GET /api/auth/me", s.me)
+	mux.HandleFunc("GET /api/auth/oidc/login", s.oidcLogin)
+	mux.HandleFunc("GET /api/auth/oidc/callback", s.oidcCallback)
+
+	// Data endpoints (protected: readonly may GET, admin may mutate).
+	mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
+	mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
+	mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
+	mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
+	mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
+	mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
+	mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
+	mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+
 	mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
 	s.http = &http.Server{
 		Addr:              addr,
@@ -53,6 +73,127 @@ func (s *Server) ListenAndServe() error { return s.http.ListenAndServe() }
 
 // Shutdown gracefully stops the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
+
+// requireRole wraps a handler with authentication and a minimum-role check.
+func (s *Server) requireRole(minRole string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.authEnabled {
+			h(w, r)
+			return
+		}
+		u, ok := s.auth.UserFromRequest(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if minRole == roleAdmin && u.Role != roleAdmin {
+			writeError(w, http.StatusForbidden, "admin role required")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// ---- auth handlers ----
+
+func (s *Server) authInfo(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auth_enabled": s.authEnabled,
+		"oidc_enabled": s.authEnabled && s.auth.OIDCEnabled(),
+	})
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.authEnabled {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "auth disabled"})
+		return
+	}
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	token, user, err := s.auth.Login(in.Username, in.Password)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	s.auth.SetCookie(w, token)
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if s.authEnabled {
+		s.auth.Logout(r)
+		s.auth.ClearCookie(w)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	if !s.authEnabled {
+		writeJSON(w, http.StatusOK, map[string]string{"username": "anonymous", "role": roleAdmin})
+		return
+	}
+	u, ok := s.auth.UserFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.authEnabled || !s.auth.OIDCEnabled() {
+		writeError(w, http.StatusNotFound, "oidc not enabled")
+		return
+	}
+	state, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "state error")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: oidcStateCookie, Value: state, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: 300,
+	})
+	http.Redirect(w, r, s.auth.OIDC().AuthCodeURL(state), http.StatusFound)
+}
+
+func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	if !s.authEnabled || !s.auth.OIDCEnabled() {
+		writeError(w, http.StatusNotFound, "oidc not enabled")
+		return
+	}
+	stateCookie, err := r.Cookie(oidcStateCookie)
+	if err != nil || stateCookie.Value == "" || stateCookie.Value != r.URL.Query().Get("state") {
+		writeError(w, http.StatusBadRequest, "invalid oauth state")
+		return
+	}
+	claims, err := s.auth.OIDC().Exchange(r.Context(), r.URL.Query().Get("code"))
+	if err != nil {
+		slog.Warn("oidc exchange failed", "err", err)
+		writeError(w, http.StatusUnauthorized, "oidc exchange failed")
+		return
+	}
+	user, err := s.store.UpsertOIDCUser(claims.Subject, claims.Username, claims.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "user provisioning failed")
+		return
+	}
+	token, _, err := s.auth.StartSession(user.ID, user.Username, user.Role)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "session error")
+		return
+	}
+	s.auth.SetCookie(w, token)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+// ---- data handlers ----
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

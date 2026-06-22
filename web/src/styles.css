@@ -214,3 +214,56 @@ button.del:hover {
   border-radius: 8px;
   margin-bottom: 16px;
 }
+
+.spacer {
+  flex: 1;
+}
+
+.user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px;
+  width: 320px;
+}
+
+.login-card h1 {
+  font-size: 22px;
+  margin: 0 0 20px;
+  text-align: center;
+}
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-card input {
+  width: 100%;
+}
+
+.login-card button {
+  margin-top: 4px;
+}
+
+.login-card .oidc {
+  display: block;
+  text-align: center;
+  margin-top: 14px;
+  color: var(--accent);
+  text-decoration: none;
+}

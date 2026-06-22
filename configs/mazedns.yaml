@@ -27,6 +27,22 @@ api:
 database:
   path: "mazedns.db"           # SQLite file (relative to the working directory)
 
+auth:
+  enabled: true                # require login for the API + UI (enforced by default)
+  session_ttl: "24h"
+  admin:                       # first-run bootstrap admin
+    username: "admin"          # or set MAZEDNS_ADMIN_USERNAME
+    password: ""               # or MAZEDNS_ADMIN_PASSWORD; empty -> random, logged once
+  oidc:                        # Authentik (or any OIDC provider) SSO
+    enabled: false
+    issuer: ""                 # e.g. https://authentik.example.com/application/o/mazedns/
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""           # e.g. http://127.0.0.1:8080/api/auth/oidc/callback
+    scopes: []
+    groups_claim: "groups"
+    admin_group: ""            # members of this group get the admin role
+
 log:
   level: "info"                # debug|info|warn|error
   query_log: false             # set true to log every query

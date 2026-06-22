@@ -16,11 +16,14 @@ Single-node first; the data model is designed so clustering is additive.
       log) and rules/rewrites config screens, served by the Go binary via
       `go:embed` (build `-tags embed_dist`). Verified: the binary serves
       index.html, hashed assets, SPA fallback, and the API together.
-- [ ] **Phase 4 — Auth.** Local users (argon2id, sessions) + OIDC via Authentik;
-      route guards + RBAC (admin / read-only). ← current focus
+- [x] **Phase 4 — Auth.** Local users (argon2id, server-side revocable sessions,
+      first-run admin bootstrap) + OIDC via Authentik (config-gated), enforced by
+      default; route guards + RBAC (admin mutates, read-only GETs); React login
+      gate. Verified: 401 → login → authed access → admin mutation → logout.
+      (OIDC needs your Authentik to test the live flow.)
 - [ ] **Phase 5 — Advanced DNS.** DoH/DoT/DoQ server endpoints + encrypted
       upstreams, DNSSEC validation, conditional / split-horizon forwarding,
-      authoritative zones, EDNS Client Subnet, rate limiting.
+      authoritative zones, EDNS Client Subnet, rate limiting. ← current focus
 - [ ] **Phase 6 — Clustering.** Master→agent config replication (row-versioned
       diffs), multisite over WireGuard, Docker + k3s manifests, HA.
 - [ ] **Phase 7 — Observability + DR.** Grafana dashboards, alerting, config

@@ -229,12 +229,13 @@ func main() {
 		}
 	}
 
-	// HTTP server: master serves API + UI + metrics (+ cluster snapshot when a
-	// cluster token is set); worker serves only /healthz + /metrics.
+	// HTTP server: master serves API + UI + metrics + the cluster control plane
+	// (node enrollment is always available so operators can add workers from the
+	// UI); worker serves only /healthz + /metrics.
 	var apiSrv *api.Server
 	if cfg.API.Enabled {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
-		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker, cfg.Cluster.Enabled && !worker)
+		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)
 			if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {

@@ -169,15 +169,16 @@ The master is the source of truth; each worker pulls its config (rules +
 rewrites) over a snapshot authenticated by a **per-node API key**, and applies
 it locally — no restart.
 
-- **Master:** `cluster.enabled: true`. Enroll workers in the UI's **Cluster** tab
-  (or `POST /api/cluster/nodes`); each enrollment returns a one-time key (stored
-  hashed). Revoke a node to cut it off.
-- **Worker:** `cluster.enabled: true` + `master_url` + `node_key` (+ `interval`).
-  It polls the master, re-applies on each config-version change, and reports its
-  address/version back (shown in the Cluster tab).
+- **Master:** nothing to enable — the control plane is always on. Enroll workers
+  in the UI's **Cluster** tab (or `POST /api/cluster/nodes`); each enrollment
+  returns a one-time key (stored hashed). Revoke a node to cut it off. Until a
+  node is enrolled, the snapshot endpoint rejects everyone (no valid keys exist).
+- **Worker:** set `master_url` + `node_key` (+ `interval`). It polls the master,
+  re-applies on each config-version change, and reports its address/version back
+  (shown in the Cluster tab).
 
-Env equivalents: `MAZEDNS_MASTER_URL` + `MAZEDNS_NODE_KEY` (worker, auto-enable),
-`MAZEDNS_CLUSTER_ENABLED=true` (master). `docker-compose.prod.yml` wires this up.
+Env equivalents: `MAZEDNS_MASTER_URL` + `MAZEDNS_NODE_KEY` start a worker's sync
+agent. `docker-compose.prod.yml` wires this up.
 
 > Multisite networking (a WireGuard mesh so workers reach the master privately)
 > and k3s manifests are left to the deploying operator.

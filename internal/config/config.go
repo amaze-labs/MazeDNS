@@ -45,6 +45,7 @@ type Config struct {
 	Filter     Filter      `yaml:"filter"`
 	API        API         `yaml:"api"`
 	Auth       Auth        `yaml:"auth"`
+	Cluster    Cluster     `yaml:"cluster"`
 	Database   Database    `yaml:"database"`
 	Log        Log         `yaml:"log"`
 }
@@ -156,6 +157,14 @@ type OIDC struct {
 	AdminGroup   string   `yaml:"admin_group"`
 }
 
+// Cluster configures master<->worker configuration replication.
+type Cluster struct {
+	Enabled   bool     `yaml:"enabled"`
+	Token     string   `yaml:"token"`      // shared secret between master and workers
+	MasterURL string   `yaml:"master_url"` // worker: master base URL, e.g. http://master:8080
+	Interval  Duration `yaml:"interval"`   // worker: snapshot poll interval
+}
+
 // Database configures the SQLite datastore.
 type Database struct {
 	Path string `yaml:"path"`
@@ -189,13 +198,15 @@ func Default() Config {
 			Enabled:    true,
 			SessionTTL: Duration(24 * time.Hour),
 		},
+		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
 		Log:      Log{Level: "info", QueryLog: false},
 	}
 }
 
 // Load reads YAML from path, overlays it onto defaults, resolves relative
-// blocklist paths against the config file's directory, and validates the result.
+// blocklist paths against the config file's directory, applies env overrides,
+// and validates the result.
 func Load(path string) (Config, error) {
 	cfg := Default()
 	data, err := os.ReadFile(path)
@@ -223,6 +234,14 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
+	}
+	if v := os.Getenv("MAZEDNS_CLUSTER_TOKEN"); v != "" {
+		cfg.Cluster.Token = v
+		cfg.Cluster.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_MASTER_URL"); v != "" {
+		cfg.Cluster.MasterURL = v
+		cfg.Cluster.Enabled = true
 	}
 	if err := cfg.validate(); err != nil {
 		return cfg, err

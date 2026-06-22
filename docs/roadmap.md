@@ -26,9 +26,11 @@ Single-node first; the data model is designed so clustering is additive.
       zones, and DNSSEC-transparent forwarding (force DO + surface AD). Verified
       end-to-end. (DoQ, EDNS Client Subnet, and a local validating resolver are
       future options.)
-- [ ] **Phase 6 — Clustering.** Master→agent config replication (row-versioned
-      diffs), multisite over WireGuard, Docker + k3s manifests, HA.
-      ← current focus
+- [ ] **Phase 6 — Clustering.** ← current focus
+      - [x] Master→worker config replication: token-authenticated snapshot pull,
+            version-gated, applies rules/rewrites + reloads policy. Verified
+            end-to-end (rule added on master → worker blocks, no restart).
+      - [ ] Multisite networking (WireGuard mesh) + per-site k3s manifests + HA.
 - [ ] **Phase 7 — Observability + DR.** Grafana dashboards, alerting, config
       backups, upgrade / runbooks.
 

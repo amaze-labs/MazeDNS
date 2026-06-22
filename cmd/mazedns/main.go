@@ -18,6 +18,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/api"
 	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/cache"
+	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
@@ -173,6 +174,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Worker: replicate config from the master.
+	var agentCancel context.CancelFunc
+	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" {
+		var agentCtx context.Context
+		agentCtx, agentCancel = context.WithCancel(context.Background())
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.Token, cfg.Cluster.Interval.Std(), st, reload)
+		go ag.Run(agentCtx)
+	}
+
 	// DNS server (UDP/TCP).
 	dnsAddr := net.JoinHostPort(cfg.Listen.Address, strconv.Itoa(cfg.Listen.Port))
 	dnsSrv := resolver.NewServer(dnsAddr, res)
@@ -219,11 +229,16 @@ func main() {
 		}
 	}
 
-	// HTTP server: master serves API + UI + metrics; worker serves only metrics/health.
+	// HTTP server: master serves API + UI + metrics (+ cluster snapshot when a
+	// cluster token is set); worker serves only /healthz + /metrics.
+	clusterToken := ""
+	if cfg.Cluster.Enabled {
+		clusterToken = cfg.Cluster.Token
+	}
 	var apiSrv *api.Server
 	if cfg.API.Enabled {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
-		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker)
+		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker, clusterToken)
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)
 			if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
@@ -247,6 +262,9 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	slog.Info("shutting down")
+	if agentCancel != nil {
+		agentCancel()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	dnsSrv.Shutdown(ctx)

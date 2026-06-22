@@ -136,6 +136,23 @@ Override the baked config without mounting a file:
 `sha-<short>`, `latest`, and the git tag on `v*`) on push to `main`, tags, or
 manual dispatch.
 
+### Clustering (master ↔ worker)
+
+The master is the source of truth; workers pull its config (rules + rewrites)
+over a token-authenticated snapshot and apply it locally — no restart.
+
+- **Master:** `cluster.enabled: true` + a shared `cluster.token`. It then serves
+  `GET /api/cluster/snapshot` (Bearer-token auth) and bumps a config version on
+  every change.
+- **Worker:** `cluster.enabled: true` + the same `token` + `master_url` (+
+  `interval`). It polls the master and re-applies whenever the version changes.
+
+Env equivalents: `MAZEDNS_CLUSTER_TOKEN` (both) and `MAZEDNS_MASTER_URL`
+(worker) — either auto-enables clustering. `docker-compose.prod.yml` wires this up.
+
+> Multisite networking (a WireGuard mesh so workers reach the master privately)
+> and k3s manifests are the remaining Phase 6 deployment pieces.
+
 ## Security notes
 
 - Never expose the admin API / UI to the internet — management network / VPN only.

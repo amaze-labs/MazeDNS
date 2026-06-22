@@ -1,11 +1,10 @@
 # Production compose: pulls the published image and runs a master (UI) plus a
-# worker (resolver + metrics). In a real multi-site deployment the worker runs on
-# a separate host/site; here both are shown on one host for illustration.
+# worker that replicates the master's config. In a real multi-site deployment the
+# worker runs on a separate host/site (reaching the master over your private
+# overlay); here both are shown on one host for illustration.
 #
-#   MAZEDNS_ADMIN_PASSWORD=... docker compose -f docker-compose.prod.yml up -d
-#
-# Note: config replication master->worker arrives in Phase 6 (clustering). For
-# now the worker is a standalone resolver using its own baked config.
+#   MAZEDNS_ADMIN_PASSWORD=... MAZEDNS_CLUSTER_TOKEN=... \
+#     docker compose -f docker-compose.prod.yml up -d
 
 name: mazedns
 
@@ -20,6 +19,7 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_ADMIN_USERNAME: "admin"
       MAZEDNS_ADMIN_PASSWORD: "${MAZEDNS_ADMIN_PASSWORD:?set a strong admin password}"
+      MAZEDNS_CLUSTER_TOKEN: "${MAZEDNS_CLUSTER_TOKEN:?set a shared cluster token}"
     ports:
       - "53:5300/udp"
       - "53:5300/tcp"
@@ -31,10 +31,13 @@ services:
     image: ghcr.io/ipmaze/mazedns:latest
     container_name: mazedns-worker
     restart: unless-stopped
+    depends_on: [master]
     environment:
       MAZEDNS_MODE: worker
-      MAZEDNS_API_ADDRESS: "0.0.0.0"   # worker exposes only /healthz + /metrics
+      MAZEDNS_API_ADDRESS: "0.0.0.0"      # worker exposes only /healthz + /metrics
       MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_CLUSTER_TOKEN: "${MAZEDNS_CLUSTER_TOKEN:?set a shared cluster token}"
+      MAZEDNS_MASTER_URL: "http://master:8080"   # pulls config snapshots from the master
     ports:
       - "5301:5300/udp"   # example second resolver on this host
       - "5301:5300/tcp"

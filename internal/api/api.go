@@ -3,13 +3,16 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/auth"
+	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
@@ -25,19 +28,21 @@ const (
 
 // Server is the HTTP API server.
 type Server struct {
-	store       *store.Store
-	res         *resolver.Resolver
-	reload      func() error
-	auth        *auth.Manager
-	authEnabled bool
-	http        *http.Server
+	store        *store.Store
+	res          *resolver.Resolver
+	reload       func() error
+	auth         *auth.Manager
+	authEnabled  bool
+	clusterToken string
+	http         *http.Server
 }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
-// served; in master mode the full control-plane API and web UI are mounted.
-// reload rebuilds the resolver policy after every mutation.
-func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled, worker bool) *Server {
-	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled}
+// served; in master mode the control-plane API and web UI are mounted, plus the
+// cluster snapshot endpoint when clusterToken is set. reload rebuilds the
+// resolver policy after every mutation.
+func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled, worker bool, clusterToken string) *Server {
+	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled, clusterToken: clusterToken}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", m.Handler())
@@ -60,6 +65,11 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+
+		// Cluster replication: workers pull the config snapshot (token-authenticated).
+		if clusterToken != "" {
+			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot)
+		}
 
 		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
 	}
@@ -96,6 +106,36 @@ func (s *Server) requireRole(minRole string, h http.HandlerFunc) http.HandlerFun
 		}
 		h(w, r)
 	}
+}
+
+// ---- cluster replication ----
+
+func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if s.clusterToken == "" || !strings.HasPrefix(h, prefix) ||
+		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(h, prefix)), []byte(s.clusterToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid cluster token")
+		return
+	}
+	rules, err := s.store.ListRules()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rewrites, err := s.store.ListRewrites()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	version, _ := s.store.GetConfigVersion()
+	if rules == nil {
+		rules = []store.Rule{}
+	}
+	if rewrites == nil {
+		rewrites = []store.Rewrite{}
+	}
+	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites})
 }
 
 // ---- auth handlers ----
@@ -343,7 +383,11 @@ func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// afterChange bumps the config version (so workers re-sync) and reloads the policy.
 func (s *Server) afterChange() {
+	if err := s.store.BumpConfigVersion(); err != nil {
+		slog.Warn("bump config version failed", "err", err)
+	}
 	if s.reload == nil {
 		return
 	}

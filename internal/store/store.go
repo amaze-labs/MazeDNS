@@ -105,6 +105,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 	role TEXT NOT NULL,
 	expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta (
+	key TEXT PRIMARY KEY,
+	value INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO meta(key, value) VALUES('config_version', 0);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)

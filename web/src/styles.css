@@ -833,6 +833,43 @@ input.search {
   position: relative;
   display: inline-block;
 }
+.nf-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 8px 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.nf-trigger:hover {
+  border-color: var(--accent);
+}
+.nf-trigger.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(78, 161, 255, 0.1);
+}
+.nf-label {
+  font-weight: 500;
+}
+.nf-caret {
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+.nf-trigger.open .nf-caret {
+  transform: rotate(180deg);
+}
+.nf-trigger.active .nf-caret {
+  color: var(--accent);
+}
+
 .nodefilter-backdrop {
   position: fixed;
   inset: 0;
@@ -841,32 +878,73 @@ input.search {
 .nodefilter-menu {
   position: absolute;
   right: 0;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   z-index: 11;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
-  min-width: 180px;
+  border-radius: 12px;
+  padding: 6px;
+  min-width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  gap: 2px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: nf-pop 0.12s ease-out;
 }
-.nodefilter-menu label {
+@keyframes nf-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.nf-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 6px 10px 4px;
+}
+.nf-opt {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
   font-size: 13px;
-  padding: 4px 6px;
-  border-radius: 6px;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 8px;
   cursor: pointer;
 }
-.nodefilter-menu label:hover {
+.nf-opt:hover {
   background: var(--bg);
 }
-.nodefilter-menu input {
-  width: auto;
+.nf-opt.sel {
+  background: rgba(78, 161, 255, 0.12);
+}
+.nf-check {
+  width: 14px;
   flex: none;
-  min-width: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+.nf-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+.nf-name {
+  flex: 1;
+}
+.nf-opt.sel .nf-name {
+  font-weight: 600;
+}
+.nf-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 6px;
 }

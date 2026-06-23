@@ -147,26 +147,36 @@ function Donut({ data, height = 180 }: { data: { name: string; value: number; fi
 // nodes. Empty selection = all nodes.
 function NodeFilter({ options, selected, onChange }: { options: string[]; selected: string[]; onChange: (s: string[]) => void }) {
   const [open, setOpen] = useState(false)
-  const label = selected.length === 0 ? 'All nodes' : `${selected.length} node${selected.length > 1 ? 's' : ''}`
+  const allActive = selected.length === 0
+  const label = allActive ? 'All nodes' : selected.length === 1 ? selected[0] : `${selected.length} nodes`
   const toggle = (n: string) =>
     onChange(selected.includes(n) ? selected.filter((x) => x !== n) : [...selected, n])
   return (
     <div className="nodefilter">
-      <button className={`btn ${selected.length ? 'primary' : ''}`} onClick={() => setOpen((o) => !o)}>
-        ▾ {label}
+      <button className={`nf-trigger ${open ? 'open' : ''} ${allActive ? '' : 'active'}`} onClick={() => setOpen((o) => !o)}>
+        <span className="nf-label">{label}</span>
+        <span className="nf-caret">▾</span>
       </button>
       {open && (
         <>
           <div className="nodefilter-backdrop" onClick={() => setOpen(false)} />
           <div className="nodefilter-menu">
-            <label>
-              <input type="checkbox" checked={selected.length === 0} onChange={() => onChange([])} /> All nodes
-            </label>
-            {options.map((o) => (
-              <label key={o}>
-                <input type="checkbox" checked={selected.includes(o)} onChange={() => toggle(o)} /> {o}
-              </label>
-            ))}
+            <div className="nf-head">Focus on nodes</div>
+            <button type="button" className={`nf-opt ${allActive ? 'sel' : ''}`} onClick={() => onChange([])}>
+              <span className="nf-check">{allActive ? '✓' : ''}</span>
+              <span className="nf-name">All nodes</span>
+            </button>
+            <div className="nf-divider" />
+            {options.map((o, i) => {
+              const sel = selected.includes(o)
+              return (
+                <button key={o} type="button" className={`nf-opt ${sel ? 'sel' : ''}`} onClick={() => toggle(o)}>
+                  <span className="nf-check">{sel ? '✓' : ''}</span>
+                  <span className="nf-swatch" style={{ background: NODE_PALETTE[i % NODE_PALETTE.length] }} />
+                  <span className="nf-name">{o}</span>
+                </button>
+              )
+            })}
           </div>
         </>
       )}

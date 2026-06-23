@@ -20,6 +20,7 @@ import {
   type SeriesPoint,
   type CategoryCount,
   type Insights,
+  type Node,
 } from '../api'
 
 const catColors: Record<string, string> = {
@@ -29,6 +30,14 @@ const catColors: Record<string, string> = {
   custom: '#8a93a0',
 }
 
+const sourceColors: Record<string, string> = {
+  Forwarded: '#4ea1ff',
+  Cached: '#3ecf8e',
+  Blocked: '#ff5d6c',
+  Rewritten: '#c48aff',
+}
+
+const ONLINE_WINDOW = 120 // seconds
 const qtypeColor = '#4ea1ff'
 const tooltipStyle = { background: '#171c23', border: '1px solid #262d36', borderRadius: 8 }
 
@@ -58,6 +67,7 @@ export default function Dashboard() {
   const [cats, setCats] = useState<CategoryCount[]>([])
   const [ins, setIns] = useState<Insights | null>(null)
   const [log, setLog] = useState<QueryLogEntry[]>([])
+  const [nodes, setNodes] = useState<Node[]>([])
   const [err, setErr] = useState('')
 
   const rangeLabel = RANGES.find((r) => r.hours === hours)?.label ?? `${hours}h`
@@ -81,6 +91,9 @@ export default function Dashboard() {
           setLog(l)
           setErr('')
         }
+        // Cluster nodes are best-effort: a non-clustered master still returns [].
+        const n = await api.clusterNodes().catch(() => [] as Node[])
+        if (alive) setNodes(n)
       } catch (e: any) {
         if (alive) setErr(e.message)
       }
@@ -101,6 +114,19 @@ export default function Dashboard() {
     forwarded: p.forwarded,
   }))
   const clientBars = (ins?.clients ?? []).map((c) => ({ client: c.client, total: c.total, blocked: c.blocked }))
+  const sourceData = stats
+    ? [
+        { name: 'Forwarded', value: stats.forwarded },
+        { name: 'Cached', value: stats.cached },
+        { name: 'Blocked', value: stats.blocked },
+        { name: 'Rewritten', value: stats.rewritten },
+      ].filter((d) => d.value > 0)
+    : []
+
+  const now = Date.now() / 1000
+  const onlineNodes = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
+  const clusterQ = nodes.reduce((sum, n) => sum + n.total, 0)
+  const clusterB = nodes.reduce((sum, n) => sum + n.blocked, 0)
 
   return (
     <div>
@@ -140,6 +166,15 @@ export default function Dashboard() {
         <Card label="Cache entries" value={fmt(stats?.cache_size)} />
         <Card label="Query types" value={fmt(ins?.qtypes.length)} />
       </KpiGroup>
+
+      {nodes.length > 0 && (
+        <KpiGroup label="Cluster">
+          <Card label="Worker nodes" value={fmt(nodes.length)} />
+          <Card label="Online" value={fmt(onlineNodes)} accent={onlineNodes < nodes.length ? 'danger' : ''} />
+          <Card label="Cluster queries" value={fmt(clusterQ)} />
+          <Card label="Cluster blocked" value={fmt(clusterB)} accent="danger" />
+        </KpiGroup>
+      )}
 
       <div className="charts">
         <div className="panel">
@@ -224,6 +259,35 @@ export default function Dashboard() {
         </div>
 
         <div className="panel">
+          <h2>Answer source</h2>
+          {sourceData.length === 0 ? (
+            <p className="muted">No queries yet</p>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie data={sourceData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={80} paddingAngle={2}>
+                    {sourceData.map((d) => (
+                      <Cell key={d.name} fill={sourceColors[d.name]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={tooltipStyle} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="legend">
+                {sourceData.map((d) => (
+                  <span key={d.name}>
+                    <i style={{ background: sourceColors[d.name] }} /> {d.name} ({d.value.toLocaleString()})
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="charts">
+        <div className="panel">
           <h2>Query types ({rangeLabel})</h2>
           {(ins?.qtypes.length ?? 0) === 0 ? (
             <p className="muted">No queries yet</p>
@@ -239,6 +303,25 @@ export default function Dashboard() {
             </ResponsiveContainer>
           )}
         </div>
+
+        {nodes.length > 0 && (
+          <div className="panel">
+            <h2>Cluster status</h2>
+            <table className="mini">
+              <tbody>
+                {nodes.map((n) => (
+                  <tr key={n.name}>
+                    <td className="name">
+                      <span className={`dot ${n.last_seen && now - n.last_seen < ONLINE_WINDOW ? 'on' : 'off'}`} />
+                      {n.name}
+                    </td>
+                    <td className="num">{n.version ? <code>{n.version}</code> : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="charts">

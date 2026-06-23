@@ -61,9 +61,8 @@ export default function App() {
         <div className="spacer" />
         {user && (
           <div className="user">
-            <span className="muted">
-              {user.username} · {user.role}
-            </span>
+            <span className="muted">{user.username}</span>
+            <span className={`role-badge ${user.role}`}>{user.role}</span>
             {info?.auth_enabled && (
               <button className="del" onClick={logout}>
                 logout

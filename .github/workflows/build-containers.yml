@@ -103,7 +103,11 @@ jobs:
         env:
           IMAGE: ${{ steps.repo.outputs.image_name }}
         run: |
-          TAGS=(-t "${IMAGE}:sha-${GITHUB_SHA:0:7}" -t "${IMAGE}:latest")
+          # `latest` is the primary tag GHCR surfaces on the package page, so it
+          # is the only floating tag we publish; releases also get their version
+          # tag. The source commit stays traceable via the baked VERSION
+          # (mazedns --version) and the image digest — no floating sha- tag.
+          TAGS=(-t "${IMAGE}:latest")
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             TAGS+=(-t "${IMAGE}:${GITHUB_REF_NAME}")
           fi

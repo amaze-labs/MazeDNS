@@ -64,6 +64,13 @@ export default function Settings() {
   const doImport = async (file: File) => {
     setErr('')
     setImportMsg('')
+    if (
+      importMode === 'replace' &&
+      !window.confirm('Replace mode clears all existing rules and rewrites before importing. Continue?')
+    ) {
+      if (fileRef.current) fileRef.current.value = ''
+      return
+    }
     try {
       const bundle = JSON.parse(await file.text())
       const res = await api.importConfig(bundle, importMode)
@@ -231,11 +238,12 @@ export default function Settings() {
         <span className="hint">Changes apply live — no restart.</span>
       </div>
 
-      <section className="settings-card">
-        <h3>Backup & restore</h3>
+      <section className="settings-card danger-zone">
+        <h3>⚠ Danger zone — backup &amp; restore</h3>
         <label className="muted">
           Export downloads settings, rules, and rewrites as one JSON file. Import restores it —
-          <em> merge</em> upserts on top of what's here; <em> replace</em> clears rules and rewrites first.
+          <em> merge</em> upserts on top of what's here; <em> replace</em> wipes all rules and rewrites first
+          (irreversible).
         </label>
         {importMsg && <div className="ok-msg">{importMsg}</div>}
         <div className="row">

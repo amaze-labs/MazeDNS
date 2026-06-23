@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Node } from '../api'
 
 const ONLINE_WINDOW = 120 // seconds
+const IMAGE = 'ghcr.io/ipmaze/mazedns:latest'
 
 function ago(unixSec: number): string {
   if (!unixSec) return 'never'
@@ -9,6 +10,30 @@ function ago(unixSec: number): string {
   if (s < 60) return `${s}s ago`
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   return `${Math.floor(s / 3600)}h ago`
+}
+
+function CodeBlock({ label, text }: { label: string; text: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  return (
+    <div className="codeblock">
+      <div className="codeblock-head">
+        <span className="muted">{label}</span>
+        <button className="btn ghost" onClick={copy}>
+          {copied ? 'Copied ✓' : 'Copy'}
+        </button>
+      </div>
+      <pre className="keybox">{text}</pre>
+    </div>
+  )
 }
 
 export default function Cluster() {
@@ -57,6 +82,30 @@ export default function Cluster() {
   const totalQ = nodes.reduce((sum, n) => sum + n.total, 0)
   const totalB = nodes.reduce((sum, n) => sum + n.blocked, 0)
 
+  const masterHost = window.location.hostname || '<master-host>'
+  const masterURL = `http://${masterHost}:8080`
+  const dockerRun = newKey
+    ? `docker run -d --name mazedns-${newKey.name} --restart unless-stopped \\
+  -e MAZEDNS_MODE=worker \\
+  -e MAZEDNS_MASTER_URL=${masterURL} \\
+  -e MAZEDNS_NODE_KEY=${newKey.key} \\
+  -p 53:5300/udp -p 53:5300/tcp \\
+  ${IMAGE}`
+    : ''
+  const dockerCompose = newKey
+    ? `services:
+  mazedns-${newKey.name}:
+    image: ${IMAGE}
+    restart: unless-stopped
+    environment:
+      MAZEDNS_MODE: worker
+      MAZEDNS_MASTER_URL: "${masterURL}"
+      MAZEDNS_NODE_KEY: "${newKey.key}"
+    ports:
+      - "53:5300/udp"
+      - "53:5300/tcp"`
+    : ''
+
   return (
     <div>
       <h2>Cluster metrics</h2>
@@ -69,21 +118,30 @@ export default function Cluster() {
         <Card label="Cluster blocked" value={totalB} accent="danger" />
       </div>
 
+      <h2>Add a worker node</h2>
+      <p className="muted">
+        Enroll a node to get a one-time key, then run the worker from the prebuilt image <code>{IMAGE}</code>.
+      </p>
       <form className="row" onSubmit={add}>
         <input placeholder="new node name (e.g. site-b)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="submit">Add node</button>
+        <button type="submit" className="btn primary">
+          Add node
+        </button>
       </form>
 
       {newKey && (
-        <div className="ok-msg">
-          <strong>Node “{newKey.name}” enrolled.</strong> Copy its key now — it is stored hashed and won’t be shown again.
-          Configure the worker with:
-          <pre className="keybox">{`MAZEDNS_MODE=worker
-MAZEDNS_MASTER_URL=http://<this-master>:8080
-MAZEDNS_NODE_KEY=${newKey.key}`}</pre>
+        <div className="enroll">
+          <div className="ok-msg">
+            <strong>Node “{newKey.name}” enrolled.</strong> The key is shown once (stored hashed). Run one of the
+            following on the new host — adjust <code>{masterURL}</code> if the worker reaches the master at a different
+            address.
+          </div>
+          <CodeBlock label="Option A — docker run" text={dockerRun} />
+          <CodeBlock label="Option B — docker compose (add to your compose file)" text={dockerCompose} />
         </div>
       )}
 
+      <h2>Nodes</h2>
       <table>
         <thead>
           <tr>
@@ -105,9 +163,9 @@ MAZEDNS_NODE_KEY=${newKey.key}`}</pre>
                 <code>{n.key_prefix}…</code>
               </td>
               <td>{n.address || '—'}</td>
-              <td>{n.total}</td>
-              <td>{n.blocked}</td>
-              <td>{n.version}</td>
+              <td>{n.total.toLocaleString()}</td>
+              <td>{n.blocked.toLocaleString()}</td>
+              <td>{n.version ? <code>{n.version}</code> : <span className="muted">pending</span>}</td>
               <td>{ago(n.last_seen)}</td>
               <td>
                 <button className="del" onClick={() => del(n.name)}>
@@ -132,7 +190,7 @@ MAZEDNS_NODE_KEY=${newKey.key}`}</pre>
 function Card({ label, value, accent }: { label: string; value: number; accent?: string }) {
   return (
     <div className={`card ${accent || ''}`}>
-      <div className="card-value">{value}</div>
+      <div className="card-value">{value.toLocaleString()}</div>
       <div className="card-label">{label}</div>
     </div>
   )

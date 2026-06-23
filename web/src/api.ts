@@ -42,7 +42,7 @@ export interface Node {
   name: string
   key_prefix: string
   address: string
-  version: number
+  version: string
   last_seen: number
   created_at: number
   total: number

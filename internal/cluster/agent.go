@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -65,11 +64,11 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		slog.Warn("cluster sync failed", "err", err)
 		return
 	}
-	cur, _ := a.store.GetConfigVersion()
+	cur, _ := a.store.ConfigVersion()
 	if snap.Version == cur {
 		return // already up to date
 	}
-	if err := a.store.ApplySnapshot(snap.Version, snap.Rules, snap.Rewrites); err != nil {
+	if err := a.store.ApplySnapshot(snap.Rules, snap.Rewrites); err != nil {
 		slog.Warn("cluster apply failed", "err", err)
 		return
 	}
@@ -85,8 +84,8 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
-	ver, _ := a.store.GetConfigVersion()
-	req.Header.Set("X-MazeDNS-Node-Version", strconv.FormatInt(ver, 10))
+	ver, _ := a.store.ConfigVersion()
+	req.Header.Set("X-MazeDNS-Node-Version", ver)
 	if a.stats != nil {
 		if b, err := json.Marshal(a.stats()); err == nil {
 			req.Header.Set("X-MazeDNS-Stats", string(b))

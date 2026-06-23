@@ -130,6 +130,13 @@ make compose-dev   # docker compose up --build (master, UI on :8080)
 
 ### One image, two modes
 
+The prebuilt multi-arch image (`linux/amd64` + `linux/arm64`) is published to
+the GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/ipmaze/mazedns:latest
+```
+
 A single container image runs either role, selected by `MAZEDNS_MODE`:
 
 | Mode | Serves | Use |
@@ -137,8 +144,9 @@ A single container image runs either role, selected by `MAZEDNS_MODE`:
 | `master` (default) | DNS + control-plane API + **web UI** + `/metrics` | the node you manage |
 | `worker` | DNS + `/healthz` + `/metrics` only | replica resolver nodes |
 
-(The worker is a standalone resolver today; master→worker config replication
-arrives in Phase 6.)
+Workers replicate the master's rules/rewrites over an authenticated snapshot;
+the **Cluster** tab generates the exact `docker run` / `docker compose` command
+(with the node key) for each new worker.
 
 ### Container env overrides
 
@@ -182,9 +190,10 @@ per-client stats collapse to one client. To preserve real client IPs:
 ### CI
 
 `.github/workflows/build-containers.yml` builds a **multi-arch** image
-(`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/ipmaze/mazedns` (tags
-`sha-<short>`, `latest`, and the git tag on `v*`) on push to `main`, tags, or
-manual dispatch.
+(`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/ipmaze/mazedns:latest` (plus
+the version tag on `v*` releases) on push to `main`, tags, or manual dispatch.
+`latest` is the only floating tag, so it's what GHCR shows on the package page;
+the source commit is baked into the binary (`mazedns --version`).
 
 ### Clustering (master ↔ worker)
 

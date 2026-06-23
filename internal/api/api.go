@@ -150,7 +150,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid node key")
 		return
 	}
-	ver, _ := strconv.ParseInt(r.Header.Get("X-MazeDNS-Node-Version"), 10, 64)
+	ver := r.Header.Get("X-MazeDNS-Node-Version")
 	addr := r.RemoteAddr
 	if host, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
 		addr = host
@@ -171,7 +171,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	version, _ := s.store.GetConfigVersion()
+	version, _ := s.store.ConfigVersion()
 	if rules == nil {
 		rules = []store.Rule{}
 	}
@@ -663,11 +663,10 @@ func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// afterChange bumps the config version (so workers re-sync) and reloads the policy.
+// afterChange reloads the local policy after a config mutation. The cluster
+// version is a content hash (store.ConfigVersion), so workers detect the change
+// on their next poll without an explicit bump.
 func (s *Server) afterChange() {
-	if err := s.store.BumpConfigVersion(); err != nil {
-		slog.Warn("bump config version failed", "err", err)
-	}
 	if s.reload == nil {
 		return
 	}

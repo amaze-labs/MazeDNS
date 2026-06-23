@@ -1,31 +1,44 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
-// GetConfigVersion returns the monotonic config version, bumped on each mutation.
-func (s *Store) GetConfigVersion() (int64, error) {
-	var v int64
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='config_version'`).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+// ConfigVersion returns a short content hash of the replicated config (rules +
+// rewrites). It changes only when that content changes and is identical on any
+// node holding the same config, so a worker detects drift by comparing its own
+// hash to the master's — no monotonic counter needed.
+func (s *Store) ConfigVersion() (string, error) {
+	rules, err := s.ListRules()
+	if err != nil {
+		return "", err
 	}
-	return v, err
+	rewrites, err := s.ListRewrites()
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, len(rules)+len(rewrites))
+	for _, r := range rules {
+		lines = append(lines, fmt.Sprintf("R|%s|%s|%s|%t", r.Action, r.Domain, r.Category, r.Enabled))
+	}
+	for _, rw := range rewrites {
+		lines = append(lines, fmt.Sprintf("W|%s|%s|%s|%t", rw.Domain, rw.RRType, rw.Value, rw.Enabled))
+	}
+	sort.Strings(lines) // order-independent: same content -> same hash on every node
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:])[:12], nil
 }
 
-// BumpConfigVersion increments the config version. Call after every mutation so
-// worker nodes can detect that they need to re-sync.
-func (s *Store) BumpConfigVersion() error {
-	_, err := s.db.Exec(`UPDATE meta SET value = value + 1 WHERE key='config_version'`)
-	return err
-}
-
-// ApplySnapshot replaces all rules and rewrites with the given set and records
-// the master's config version. Used by worker nodes during replication.
-func (s *Store) ApplySnapshot(version int64, rules []Rule, rewrites []Rewrite) error {
+// ApplySnapshot replaces all rules and rewrites with the given set. Used by
+// worker nodes during replication.
+func (s *Store) ApplySnapshot(rules []Rule, rewrites []Rewrite) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -60,10 +73,6 @@ func (s *Store) ApplySnapshot(version int64, rules []Rule, rewrites []Rewrite) e
 			return err
 		}
 	}
-	if err := exec(`UPDATE meta SET value=? WHERE key='config_version'`, version); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
 	return tx.Commit()
 }
 
@@ -83,7 +92,7 @@ type Node struct {
 	Name      string `json:"name"`
 	KeyPrefix string `json:"key_prefix"`
 	Address   string `json:"address"`
-	Version   int64  `json:"version"`
+	Version   string `json:"version"` // short content hash the node last reported
 	LastSeen  int64  `json:"last_seen"`
 	CreatedAt int64  `json:"created_at"`
 	NodeStats
@@ -93,7 +102,7 @@ type Node struct {
 func (s *Store) CreateNode(name, keyHash, keyPrefix string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO nodes(name, key_hash, key_prefix, address, version, last_seen, created_at)
-		 VALUES(?,?,?,'',0,0,?)`,
+		 VALUES(?,?,?,'','',0,?)`,
 		name, keyHash, keyPrefix, time.Now().Unix())
 	return err
 }
@@ -104,7 +113,7 @@ func (s *Store) CreateNode(name, keyHash, keyPrefix string) error {
 func (s *Store) EnsureNode(name, keyHash, keyPrefix string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO nodes(name, key_hash, key_prefix, address, version, last_seen, created_at)
-		 VALUES(?,?,?,'',0,0,?)
+		 VALUES(?,?,?,'','',0,?)
 		 ON CONFLICT(name) DO UPDATE SET key_hash=excluded.key_hash, key_prefix=excluded.key_prefix`,
 		name, keyHash, keyPrefix, time.Now().Unix())
 	return err
@@ -130,7 +139,7 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 }
 
 // TouchNode refreshes a node's last-seen address, config version, and stats.
-func (s *Store) TouchNode(name, address string, version int64, st NodeStats) error {
+func (s *Store) TouchNode(name, address, version string, st NodeStats) error {
 	_, err := s.db.Exec(
 		`UPDATE nodes SET address=?, version=?, last_seen=?,
 		   q_total=?, q_blocked=?, q_cached=?, q_forwarded=?, q_rewritten=?, q_errors=?

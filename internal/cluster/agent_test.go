@@ -14,7 +14,7 @@ import (
 
 func TestAgentSync(t *testing.T) {
 	snap := Snapshot{
-		Version:  7,
+		Version:  "pending", // any value != the worker's empty-config hash triggers the first apply
 		Rules:    []store.Rule{{Action: "deny", Domain: "ads.test", Enabled: true, UpdatedAt: 1}},
 		Rewrites: []store.Rewrite{{Domain: "nas.lan", RRType: "A", Value: "10.0.0.5", Enabled: true, UpdatedAt: 1}},
 	}
@@ -45,14 +45,16 @@ func TestAgentSync(t *testing.T) {
 	if len(rws) != 1 || rws[0].Value != "10.0.0.5" {
 		t.Fatalf("rewrites not applied: %+v", rws)
 	}
-	if v, _ := st.GetConfigVersion(); v != 7 {
-		t.Fatalf("config version = %d, want 7", v)
-	}
 	if !reloaded {
 		t.Fatal("reload was not called after a change")
 	}
+	applied, _ := st.ConfigVersion()
+	if applied == "" {
+		t.Fatal("config version should be a non-empty content hash")
+	}
 
-	// Same version again -> no-op (reload must not fire).
+	// Master now advertises the version the worker already holds -> no-op.
+	snap.Version = applied
 	reloaded = false
 	ag.syncOnce(context.Background())
 	if reloaded {

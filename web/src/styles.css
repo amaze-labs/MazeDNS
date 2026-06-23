@@ -616,3 +616,73 @@ table.mini td.num {
   background: var(--accent);
   border-color: var(--accent);
 }
+
+/* Guided node enrollment code blocks */
+.enroll {
+  margin-bottom: 16px;
+}
+
+.codeblock {
+  margin-top: 10px;
+}
+
+.codeblock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.codeblock .keybox {
+  margin: 0;
+}
+
+/* Role badge in the top bar */
+.role-badge {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.role-badge.admin {
+  background: rgba(78, 161, 255, 0.18);
+  color: var(--accent);
+  border: 1px solid rgba(78, 161, 255, 0.35);
+}
+
+.role-badge.readonly {
+  background: rgba(138, 147, 160, 0.15);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+/* Danger zone (destructive settings) */
+.settings-card.danger-zone {
+  border-color: rgba(255, 93, 108, 0.4);
+  background: rgba(255, 93, 108, 0.05);
+}
+
+.settings-card.danger-zone > h3 {
+  color: var(--danger);
+}
+
+/* Online/offline dot for cluster status */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.dot.on {
+  background: var(--ok);
+}
+
+.dot.off {
+  background: var(--muted);
+}

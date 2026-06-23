@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, type Rule } from '../api'
 
 const categories = ['custom', 'ads', 'trackers', 'malware']
@@ -12,6 +12,8 @@ export default function Rules() {
   const [importCategory, setImportCategory] = useState('ads')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
+  const [importing, setImporting] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => api.rules().then(setRules).catch((e) => setErr(e.message))
   useEffect(() => {
@@ -47,6 +49,27 @@ export default function Rules() {
     }
   }
 
+  const importFiles = async (files: FileList) => {
+    setErr('')
+    setMsg('')
+    setImporting(true)
+    try {
+      let total = 0
+      for (const f of Array.from(files)) {
+        const r = await api.importRules(await f.text(), importCategory)
+        total += r.imported
+      }
+      setMsg(`Imported ${total} rules from ${files.length} file${files.length > 1 ? 's' : ''} as “${importCategory}”`)
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+      setMsg('')
+    } finally {
+      setImporting(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
   const del = async (id: number) => {
     await api.deleteRule(id)
     load()
@@ -75,6 +98,7 @@ export default function Rules() {
       </form>
 
       <h2>Import list (AdGuard / Pi-hole / hosts)</h2>
+      <p className="muted">Paste a list or upload one or more files. Everything is imported under the chosen category.</p>
       <form onSubmit={doImport}>
         <textarea
           className="import"
@@ -91,7 +115,22 @@ export default function Rules() {
               </option>
             ))}
           </select>
-          <button type="submit">Import</button>
+          <button type="submit" className="btn primary" disabled={importing}>
+            Import pasted
+          </button>
+          <span className="import-group">
+            <button type="button" className="btn" disabled={importing} onClick={() => fileRef.current?.click()}>
+              {importing ? 'Importing…' : '⬆ Import file(s)…'}
+            </button>
+          </span>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".txt,.hosts,.list,.conf,text/plain"
+            multiple
+            hidden
+            onChange={(e) => e.target.files?.length && importFiles(e.target.files)}
+          />
         </div>
       </form>
 

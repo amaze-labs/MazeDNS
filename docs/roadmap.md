@@ -35,9 +35,11 @@ Single-node first; the data model is designed so clustering is additive.
       - [ ] Infrastructure (WireGuard mesh, k3s manifests, HA) — deliberately
             left to the deploying operator.
 - [x] **Phase 7 — Product enhancements.**
-      - [x] Rule import (AdGuard / Pi-hole / hosts) + rule categories
-            (ads / trackers / malware / custom). Verified: mixed list imported,
-            path/wildcard rules rejected, blocked live.
+      - [x] Rule import (AdGuard / Pi-hole / hosts) by paste or file upload
+            (multiple files at once) + rule categories (ads / trackers / malware
+            / custom). Verified: mixed list imported, path/wildcard rules
+            rejected, blocked live; multi-file upload imports each under the
+            chosen category.
       - [x] Dashboard time-series charts: queries vs blocked over 24h + blocked
             by category (donut) + a Malicious (malware) card. Block category is
             attributed in the query log; verified via the timeseries/categories

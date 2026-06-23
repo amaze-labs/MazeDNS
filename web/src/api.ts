@@ -115,6 +115,14 @@ export interface CacheSettings {
   max_ttl_sec: number
 }
 
+export interface User {
+  id: number
+  username: string
+  role: string
+  source: string
+  updated_at: number
+}
+
 export interface Settings {
   upstreams: string[]
   forwarders: ForwardGroup[]
@@ -132,6 +140,14 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>
 }
 
+// ok handles empty-body (204) responses, throwing the API error message on failure.
+async function ok(r: Response): Promise<void> {
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}))
+    throw new Error(body.error || r.statusText)
+  }
+}
+
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
 export const api = {
@@ -145,6 +161,24 @@ export const api = {
   login: (username: string, password: string) =>
     fetch('/api/auth/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username, password }) }).then(j<SessionUser>),
   logout: () => fetch('/api/auth/logout', { method: 'POST' }),
+  changePassword: (current_password: string, new_password: string) =>
+    fetch('/api/auth/password', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ current_password, new_password }),
+    }).then(ok),
+
+  // user management (admin)
+  users: () => fetch('/api/users').then(j<User[]>),
+  createUser: (username: string, password: string, role: string) =>
+    fetch('/api/users', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username, password, role }) }).then(
+      j<User>,
+    ),
+  setUserRole: (id: number, role: string) =>
+    fetch(`/api/users/${id}/role`, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ role }) }).then(ok),
+  resetUserPassword: (id: number, password: string) =>
+    fetch(`/api/users/${id}/password`, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ password }) }).then(ok),
+  deleteUser: (id: number) => fetch(`/api/users/${id}`, { method: 'DELETE' }).then(ok),
 
   // data
   stats: () => fetch('/api/stats').then(j<Stats>),

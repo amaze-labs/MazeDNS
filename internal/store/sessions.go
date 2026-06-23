@@ -48,6 +48,13 @@ func (s *Store) DeleteSession(token string) error {
 	return err
 }
 
+// DeleteSessionsForUser revokes all of a user's sessions (e.g. on delete, role
+// change, or admin password reset).
+func (s *Store) DeleteSessionsForUser(userID int64) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE user_id=?`, userID)
+	return err
+}
+
 // DeleteExpiredSessions purges expired sessions.
 func (s *Store) DeleteExpiredSessions() error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, time.Now().Unix())

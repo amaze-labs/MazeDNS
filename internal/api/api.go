@@ -80,6 +80,14 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/config/export", s.requireRole(roleAdmin, s.exportConfig))
 		mux.HandleFunc("POST /api/config/import", s.requireRole(roleAdmin, s.importConfig))
 
+		// Account (self) + user management (admin).
+		mux.HandleFunc("POST /api/auth/password", s.requireRole(roleReadonly, s.changePassword))
+		mux.HandleFunc("GET /api/users", s.requireRole(roleAdmin, s.listUsers))
+		mux.HandleFunc("POST /api/users", s.requireRole(roleAdmin, s.createUser))
+		mux.HandleFunc("PUT /api/users/{id}/role", s.requireRole(roleAdmin, s.setUserRole))
+		mux.HandleFunc("PUT /api/users/{id}/password", s.requireRole(roleAdmin, s.resetUserPassword))
+		mux.HandleFunc("DELETE /api/users/{id}", s.requireRole(roleAdmin, s.deleteUser))
+
 		// Cluster control plane (master only).
 		if clusterEnabled {
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))

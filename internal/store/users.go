@@ -36,6 +36,65 @@ func (s *Store) CreateLocalUser(username, passwordHash, role string) (int64, err
 	return res.LastInsertId()
 }
 
+// ListUsers returns all users ordered by username.
+func (s *Store) ListUsers() ([]User, error) {
+	rows, err := s.db.Query(
+		`SELECT id, username, role, source, updated_at FROM users ORDER BY username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// CountAdmins returns the number of admin users (used to protect the last admin).
+func (s *Store) CountAdmins() (int64, error) {
+	var n int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n)
+	return n, err
+}
+
+// GetUserByID returns the user, or (nil, nil) if not found.
+func (s *Store) GetUserByID(id int64) (*User, error) {
+	u := &User{}
+	err := s.db.QueryRow(
+		`SELECT id, username, role, source, subject, password_hash, updated_at FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// UpdateUserRole changes a user's role.
+func (s *Store) UpdateUserRole(id int64, role string) error {
+	_, err := s.db.Exec(`UPDATE users SET role=?, updated_at=? WHERE id=?`, role, time.Now().Unix(), id)
+	return err
+}
+
+// UpdateUserPassword sets a user's password hash.
+func (s *Store) UpdateUserPassword(id int64, passwordHash string) error {
+	_, err := s.db.Exec(`UPDATE users SET password_hash=?, updated_at=? WHERE id=?`, passwordHash, time.Now().Unix(), id)
+	return err
+}
+
+// DeleteUser removes a user.
+func (s *Store) DeleteUser(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM users WHERE id=?`, id)
+	return err
+}
+
 // GetUserByUsername returns the user, or (nil, nil) if not found.
 func (s *Store) GetUserByUsername(username string) (*User, error) {
 	u := &User{}

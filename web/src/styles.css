@@ -686,3 +686,14 @@ table.mini td.num {
 .dot.off {
   background: var(--muted);
 }
+
+/* Account / user management */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings .field input[type='password'] {
+  max-width: 320px;
+}

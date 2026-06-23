@@ -32,10 +32,27 @@ const catColors: Record<string, string> = {
 const qtypeColor = '#4ea1ff'
 const tooltipStyle = { background: '#171c23', border: '1px solid #262d36', borderRadius: 8 }
 
+const RANGES = [
+  { label: '1h', hours: 1 },
+  { label: '24h', hours: 24 },
+  { label: '7d', hours: 24 * 7 },
+  { label: '30d', hours: 24 * 30 },
+  { label: '90d', hours: 24 * 90 },
+]
+
 const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
 const pct = (num?: number, den?: number) => (den && num != null ? `${Math.round((num / den) * 100)}%` : '—')
 
+// For short ranges label buckets by time, for longer ones by date.
+const bucketLabel = (ts: number, hours: number) => {
+  const d = new Date(ts * 1000)
+  return hours <= 48
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
 export default function Dashboard() {
+  const [hours, setHours] = useState(24)
   const [stats, setStats] = useState<Stats | null>(null)
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [cats, setCats] = useState<CategoryCount[]>([])
@@ -43,15 +60,17 @@ export default function Dashboard() {
   const [log, setLog] = useState<QueryLogEntry[]>([])
   const [err, setErr] = useState('')
 
+  const rangeLabel = RANGES.find((r) => r.hours === hours)?.label ?? `${hours}h`
+
   useEffect(() => {
     let alive = true
     const tick = async () => {
       try {
         const [s, ts, c, i, l] = await Promise.all([
           api.stats(),
-          api.timeseries(24),
-          api.categories(24),
-          api.insights(24),
+          api.timeseries(hours),
+          api.categories(hours),
+          api.insights(hours),
           api.queryLog(50),
         ])
         if (alive) {
@@ -72,11 +91,11 @@ export default function Dashboard() {
       alive = false
       clearInterval(id)
     }
-  }, [])
+  }, [hours])
 
   const malicious = cats.find((c) => c.category === 'malware')?.count ?? 0
   const chartData = series.map((p) => ({
-    time: new Date(p.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    time: bucketLabel(p.ts, hours),
     blocked: p.blocked,
     cached: p.cached,
     forwarded: p.forwarded,
@@ -86,6 +105,15 @@ export default function Dashboard() {
   return (
     <div>
       {err && <div className="error">{err}</div>}
+
+      <div className="range-tabs">
+        <span className="muted">Window</span>
+        {RANGES.map((r) => (
+          <button key={r.hours} className={hours === r.hours ? 'active' : ''} onClick={() => setHours(r.hours)}>
+            {r.label}
+          </button>
+        ))}
+      </div>
 
       <KpiGroup label="Traffic (since start)">
         <Card label="Total queries" value={fmt(stats?.total)} />
@@ -101,12 +129,12 @@ export default function Dashboard() {
           accent="danger"
           sub={`${pct(stats?.blocked, stats?.total)} of total`}
         />
-        <Card label="Malicious (24h)" value={fmt(malicious)} accent={malicious ? 'danger' : ''} />
+        <Card label={`Malicious (${rangeLabel})`} value={fmt(malicious)} accent={malicious ? 'danger' : ''} />
         <Card label="Rewritten" value={fmt(stats?.rewritten)} />
         <Card label="Logged queries" value={fmt(stats?.log_count)} />
       </KpiGroup>
 
-      <KpiGroup label="Performance (24h)">
+      <KpiGroup label={`Performance (${rangeLabel})`}>
         <Card label="Unique clients" value={fmt(ins?.unique_clients)} />
         <Card label="Avg latency" value={ins ? `${ins.avg_latency_ms.toFixed(1)} ms` : '—'} />
         <Card label="Cache entries" value={fmt(stats?.cache_size)} />
@@ -115,7 +143,7 @@ export default function Dashboard() {
 
       <div className="charts">
         <div className="panel">
-          <h2>Queries (24h)</h2>
+          <h2>Queries ({rangeLabel})</h2>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
               <defs>
@@ -178,7 +206,7 @@ export default function Dashboard() {
 
       <div className="charts">
         <div className="panel">
-          <h2>Top clients (24h)</h2>
+          <h2>Top clients ({rangeLabel})</h2>
           {clientBars.length === 0 ? (
             <p className="muted">No traffic yet</p>
           ) : (
@@ -196,7 +224,7 @@ export default function Dashboard() {
         </div>
 
         <div className="panel">
-          <h2>Query types (24h)</h2>
+          <h2>Query types ({rangeLabel})</h2>
           {(ins?.qtypes.length ?? 0) === 0 ? (
             <p className="muted">No queries yet</p>
           ) : (
@@ -214,8 +242,8 @@ export default function Dashboard() {
       </div>
 
       <div className="charts">
-        <DomainTable title="Top blocked domains (24h)" rows={ins?.top_blocked} />
-        <DomainTable title="Most queried domains (24h)" rows={ins?.top_queried} />
+        <DomainTable title={`Top blocked domains (${rangeLabel})`} rows={ins?.top_blocked} />
+        <DomainTable title={`Most queried domains (${rangeLabel})`} rows={ins?.top_queried} />
       </div>
 
       <h2>Recent queries</h2>

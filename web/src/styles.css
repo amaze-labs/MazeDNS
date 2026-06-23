@@ -448,3 +448,36 @@ table.mini td.num {
   white-space: nowrap;
   width: 1%;
 }
+
+/* Dashboard time-range selector */
+.range-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.range-tabs > span {
+  margin-right: 4px;
+  font-size: 12px;
+}
+
+.range-tabs button {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 4px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.range-tabs button:hover {
+  color: var(--fg);
+}
+
+.range-tabs button.active {
+  color: var(--fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}

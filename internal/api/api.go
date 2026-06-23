@@ -450,8 +450,8 @@ func clampHours(s string) int {
 	if h <= 0 {
 		h = 24
 	}
-	if h > 24*30 {
-		h = 24 * 30
+	if h > 24*90 {
+		h = 24 * 90
 	}
 	return h
 }

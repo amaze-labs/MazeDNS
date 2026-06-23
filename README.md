@@ -16,8 +16,8 @@ multi-site **clustering**.
 - **Advanced DNS:** DoH / DoT / DoQ (server + upstream), DNSSEC validation,
   conditional / split-horizon forwarding, authoritative zones, rate limiting.
 - **Web UI:** React SPA — grouped KPI dashboard (traffic / protection /
-  performance, per-client & per-type breakdowns, top domains), live query log,
-  and all configuration.
+  performance, per-client & per-type breakdowns, top domains) with a selectable
+  time window (1h → 90d), live query log, and all configuration.
 - **Auth:** pluggable — local users (SQLite) by default, or **OIDC SSO via
   Authentik**.
 - **Clustering:** master holds config; agents replicate it; multisite HA on

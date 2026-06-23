@@ -81,6 +81,12 @@ export interface NodeQueries {
   blocked: number
 }
 
+export interface LatencyPoint {
+  ts: number
+  overall: number
+  by_node: Record<string, number>
+}
+
 export interface CategoryCount {
   category: string
   count: number
@@ -220,6 +226,10 @@ export const api = {
     fetch(`/api/stats/categories?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
   insights: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/insights?hours=${hours}${nodesParam(nodes)}`).then(j<Insights>),
+  latency: (hours = 24, nodes?: string[]) =>
+    fetch(`/api/stats/latency?hours=${hours}${nodesParam(nodes)}`).then(
+      j<{ step: number; nodes: string[]; points: LatencyPoint[] }>,
+    ),
   queryLog: (opts: { limit?: number; offset?: number; search?: string; nodes?: string[] } = {}) => {
     const p = new URLSearchParams({ limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) })
     if (opts.search) p.set('search', opts.search)

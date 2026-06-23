@@ -66,6 +66,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.getTimeSeries))
 		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.getCategories))
 		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.getInsights))
+		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.getLatency))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
@@ -429,6 +430,29 @@ func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
 		points = []store.SeriesPoint{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"step": step, "points": points})
+}
+
+// getLatency returns mean latency over time, overall and per node, for the
+// latency chart (honours the node focus filter).
+func (s *Server) getLatency(w http.ResponseWriter, r *http.Request) {
+	hours := clampHours(r.URL.Query().Get("hours"))
+	step := hours * 3600 / 48
+	if step < 60 {
+		step = 60
+	}
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	points, names, err := s.store.LatencyTimeSeries(since, step, parseNodes(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if points == nil {
+		points = []store.LatencyPoint{}
+	}
+	if names == nil {
+		names = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"step": step, "nodes": names, "points": points})
 }
 
 func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"sort"
 	"strings"
 	"time"
 )
@@ -174,6 +175,85 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int, nodes []string) ([]S
 		}
 	}
 	return out, nil
+}
+
+// LatencyPoint is mean latency (ms) in a time bucket: overall plus per node.
+type LatencyPoint struct {
+	TS      int64              `json:"ts"`
+	Overall float64            `json:"overall"`
+	ByNode  map[string]float64 `json:"by_node"`
+}
+
+// LatencyTimeSeries returns mean latency per bucket, both overall and split by
+// node ("" => "master"), honouring the node filter. The second return is the
+// sorted set of node names that appear, for the caller to draw a line each.
+func (s *Store) LatencyTimeSeries(sinceMs int64, stepSec int, nodes []string) ([]LatencyPoint, []string, error) {
+	if stepSec <= 0 {
+		stepSec = 3600
+	}
+	step := int64(stepSec)
+	nf, nargs := nodeFilterSQL(nodes)
+	rows, err := s.db.Query(
+		`SELECT (ts/1000/?)*? AS bucket, CASE WHEN node='' THEN 'master' ELSE node END AS n,
+		        COUNT(*), COALESCE(SUM(elapsed_ms),0)
+		 FROM query_log WHERE ts >= ?`+nf+` GROUP BY bucket, n`,
+		append([]any{step, step, sinceMs}, nargs...)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	type agg struct {
+		cnt int64
+		sum float64
+	}
+	byBucket := map[int64]map[string]*agg{}
+	overall := map[int64]*agg{}
+	nodeSet := map[string]struct{}{}
+	for rows.Next() {
+		var bucket, cnt int64
+		var n string
+		var sum float64
+		if err := rows.Scan(&bucket, &n, &cnt, &sum); err != nil {
+			return nil, nil, err
+		}
+		nodeSet[n] = struct{}{}
+		if byBucket[bucket] == nil {
+			byBucket[bucket] = map[string]*agg{}
+		}
+		byBucket[bucket][n] = &agg{cnt, sum}
+		o := overall[bucket]
+		if o == nil {
+			o = &agg{}
+			overall[bucket] = o
+		}
+		o.cnt += cnt
+		o.sum += sum
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	names := make([]string, 0, len(nodeSet))
+	for n := range nodeSet {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	start := (sinceMs / 1000 / step) * step
+	end := (time.Now().Unix() / step) * step
+	out := make([]LatencyPoint, 0, (end-start)/step+1)
+	for b := start; b <= end; b += step {
+		p := LatencyPoint{TS: b, ByNode: map[string]float64{}}
+		if o := overall[b]; o != nil && o.cnt > 0 {
+			p.Overall = o.sum / float64(o.cnt)
+		}
+		for n, a := range byBucket[b] {
+			if a.cnt > 0 {
+				p.ByNode[n] = a.sum / float64(a.cnt)
+			}
+		}
+		out = append(out, p)
+	}
+	return out, names, nil
 }
 
 // BlockedByCategory returns blocked-query counts grouped by category since sinceMs.

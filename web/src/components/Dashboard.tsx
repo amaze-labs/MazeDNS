@@ -23,6 +23,7 @@ import {
   type CategoryCount,
   type Insights,
   type Node,
+  type LatencyPoint,
 } from '../api'
 
 const catColors: Record<string, string> = {
@@ -180,6 +181,7 @@ export default function Dashboard() {
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [cats, setCats] = useState<CategoryCount[]>([])
   const [ins, setIns] = useState<Insights | null>(null)
+  const [lat, setLat] = useState<{ nodes: string[]; points: LatencyPoint[] } | null>(null)
   const [nodes, setNodes] = useState<Node[]>([])
   const [err, setErr] = useState('')
 
@@ -203,17 +205,19 @@ export default function Dashboard() {
     let alive = true
     const tick = async () => {
       try {
-        const [s, ts, c, i] = await Promise.all([
+        const [s, ts, c, i, l] = await Promise.all([
           api.stats(),
           api.timeseries(hours, focus),
           api.categories(hours, focus),
           api.insights(hours, focus),
+          api.latency(hours, focus),
         ])
         if (!alive) return
         setStats(s)
         setSeries(ts.points)
         setCats(c)
         setIns(i)
+        setLat(l)
         setErr('')
         const n = await api.clusterNodes().catch(() => [] as Node[])
         if (alive) setNodes(n)
@@ -265,7 +269,13 @@ export default function Dashboard() {
     cached: p.cached,
     forwarded: p.forwarded,
   }))
-  const latData = series.map((p) => ({ time: bucketLabel(p.ts, hours), ms: Math.round(p.avg_latency_ms * 100) / 100 }))
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const latNodes = lat?.nodes ?? []
+  const latData = (lat?.points ?? []).map((p) => {
+    const row: Record<string, number | string | null> = { time: bucketLabel(p.ts, hours), overall: round2(p.overall) }
+    for (const n of latNodes) row[n] = p.by_node[n] != null ? round2(p.by_node[n]) : null
+    return row
+  })
   const catData = cats.map((c) => ({ name: c.category, value: c.count, fill: catColors[c.category] || '#8a93a0' }))
   const sourceData = stats
     ? [
@@ -393,9 +403,29 @@ export default function Dashboard() {
                 <XAxis dataKey="time" stroke="#8a93a0" fontSize={11} tickLine={false} minTickGap={32} />
                 <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Line type="monotone" dataKey="ms" stroke="#ffb454" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="overall" name="overall" stroke="#e6e9ee" strokeWidth={2.5} dot={false} connectNulls />
+                {latNodes.map((n, i) => (
+                  <Line
+                    key={n}
+                    type="monotone"
+                    dataKey={n}
+                    name={n}
+                    stroke={NODE_PALETTE[i % NODE_PALETTE.length]}
+                    strokeWidth={1.5}
+                    dot={false}
+                    connectNulls
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
+            <div className="legend">
+              <span><i style={{ background: '#e6e9ee' }} /> overall</span>
+              {latNodes.map((n, i) => (
+                <span key={n}>
+                  <i style={{ background: NODE_PALETTE[i % NODE_PALETTE.length] }} /> {n}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </Section>

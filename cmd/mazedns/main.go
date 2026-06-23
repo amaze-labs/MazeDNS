@@ -24,6 +24,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/filter"
+	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -109,6 +110,10 @@ func main() {
 	// Operational settings: the DB is the source of truth, seeded from the config
 	// file on first run, then managed live from the UI.
 	res.ApplySettings(loadOrSeedSettings(st, cfg))
+	// Restore any active block-pause across restarts.
+	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {
+		res.SetBlockPausedUntil(ts)
+	}
 
 	// Build the filtering/rewrite policy from file blocklists + DB rules/rewrites.
 	buildPolicy := func() (*resolver.Policy, error) {
@@ -123,7 +128,7 @@ func main() {
 			}
 		}
 		allow := filter.New()
-		rules, rerr := st.ListRules()
+		rules, rerr := st.ActiveRules()
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -194,8 +199,14 @@ func main() {
 				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 			}
 		}
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil)
 		go ag.Run(agentCtx)
+	}
+
+	// Master: auto-refresh URL-backed rule lists on their schedule.
+	refresher := lists.NewRefresher(st, reload)
+	if !worker {
+		go refresher.Run(context.Background())
 	}
 
 	// DNS server (UDP/TCP).
@@ -250,7 +261,7 @@ func main() {
 	var apiSrv *api.Server
 	if cfg.API.Enabled {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
-		apiSrv = api.New(apiAddr, st, res, mx, reload, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
+		apiSrv = api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)
 			if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {

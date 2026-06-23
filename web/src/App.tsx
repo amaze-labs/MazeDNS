@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Dashboard from './components/Dashboard'
 import Rules from './components/Rules'
+import Lists from './components/Lists'
 import Rewrites from './components/Rewrites'
 import Cluster from './components/Cluster'
 import Settings from './components/Settings'
@@ -8,7 +9,7 @@ import Account from './components/Account'
 import Login from './components/Login'
 import { api, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'dashboard' | 'rules' | 'rewrites' | 'cluster' | 'settings' | 'account'
+type Tab = 'dashboard' | 'rules' | 'lists' | 'rewrites' | 'cluster' | 'settings' | 'account'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -44,7 +45,7 @@ export default function App() {
     return <Login oidc={!!info.oidc_enabled} onLogin={() => refresh()} />
   }
 
-  const tabs: Tab[] = ['dashboard', 'rules', 'rewrites']
+  const tabs: Tab[] = ['dashboard', 'rules', 'lists', 'rewrites']
   if (info?.cluster_enabled) tabs.push('cluster')
   tabs.push('settings')
   if (info?.auth_enabled) tabs.push('account')
@@ -76,6 +77,7 @@ export default function App() {
       <main>
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'rules' && <Rules />}
+        {tab === 'lists' && <Lists />}
         {tab === 'rewrites' && <Rewrites />}
         {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
         {tab === 'settings' && <Settings />}

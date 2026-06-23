@@ -697,3 +697,66 @@ table.mini td.num {
 .settings .field input[type='password'] {
   max-width: 320px;
 }
+
+/* Protection (block-pause) card */
+.settings-card.protection {
+  margin: 0 0 8px;
+  padding: 14px 18px;
+}
+.settings-card.protection.paused {
+  border-color: rgba(255, 93, 108, 0.4);
+  background: rgba(255, 93, 108, 0.05);
+}
+.protection-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Lists table */
+.badge.src {
+  background: rgba(138, 147, 160, 0.15);
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+button.linklike {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  padding: 0;
+}
+button.linklike:hover {
+  color: var(--accent);
+}
+.list-err {
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 4px;
+  word-break: break-all;
+}
+tr.expand td {
+  background: var(--bg);
+}
+.rule-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.rule-chip {
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.rule-chip.allow {
+  border-color: rgba(62, 207, 142, 0.4);
+  color: var(--ok);
+}

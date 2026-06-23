@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Rule } from '../api'
 
 const categories = ['custom', 'ads', 'trackers', 'malware']
@@ -8,12 +8,7 @@ export default function Rules() {
   const [action, setAction] = useState('deny')
   const [domain, setDomain] = useState('')
   const [category, setCategory] = useState('custom')
-  const [importText, setImportText] = useState('')
-  const [importCategory, setImportCategory] = useState('ads')
-  const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const [importing, setImporting] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = () => api.rules().then(setRules).catch((e) => setErr(e.message))
   useEffect(() => {
@@ -27,46 +22,9 @@ export default function Rules() {
       await api.addRule(action, domain.trim(), category)
       setDomain('')
       setErr('')
-      setMsg('')
       load()
     } catch (e: any) {
       setErr(e.message)
-    }
-  }
-
-  const doImport = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!importText.trim()) return
-    try {
-      const r = await api.importRules(importText, importCategory)
-      setImportText('')
-      setErr('')
-      setMsg(`Imported ${r.imported} rules`)
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-      setMsg('')
-    }
-  }
-
-  const importFiles = async (files: FileList) => {
-    setErr('')
-    setMsg('')
-    setImporting(true)
-    try {
-      let total = 0
-      for (const f of Array.from(files)) {
-        const r = await api.importRules(await f.text(), importCategory)
-        total += r.imported
-      }
-      setMsg(`Imported ${total} rules from ${files.length} file${files.length > 1 ? 's' : ''} as “${importCategory}”`)
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-      setMsg('')
-    } finally {
-      setImporting(false)
-      if (fileRef.current) fileRef.current.value = ''
     }
   }
 
@@ -77,9 +35,11 @@ export default function Rules() {
 
   return (
     <div>
-      <h2>Block / allow rules</h2>
+      <h2>Manual rules</h2>
+      <p className="muted">
+        Individual allow/deny entries. Imported blocklists live under <strong>Lists</strong>.
+      </p>
       {err && <div className="error">{err}</div>}
-      {msg && <div className="ok-msg">{msg}</div>}
 
       <form className="row" onSubmit={add}>
         <select value={action} onChange={(e) => setAction(e.target.value)}>
@@ -94,44 +54,9 @@ export default function Rules() {
             </option>
           ))}
         </select>
-        <button type="submit">Add</button>
-      </form>
-
-      <h2>Import list (AdGuard / Pi-hole / hosts)</h2>
-      <p className="muted">Paste a list or upload one or more files. Everything is imported under the chosen category.</p>
-      <form onSubmit={doImport}>
-        <textarea
-          className="import"
-          rows={6}
-          placeholder={'Paste a blocklist…\n||ads.example.com^\n0.0.0.0 tracker.example.com\nplain-domain.example'}
-          value={importText}
-          onChange={(e) => setImportText(e.target.value)}
-        />
-        <div className="row">
-          <select value={importCategory} onChange={(e) => setImportCategory(e.target.value)}>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <button type="submit" className="btn primary" disabled={importing}>
-            Import pasted
-          </button>
-          <span className="import-group">
-            <button type="button" className="btn" disabled={importing} onClick={() => fileRef.current?.click()}>
-              {importing ? 'Importing…' : '⬆ Import file(s)…'}
-            </button>
-          </span>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".txt,.hosts,.list,.conf,text/plain"
-            multiple
-            hidden
-            onChange={(e) => e.target.files?.length && importFiles(e.target.files)}
-          />
-        </div>
+        <button type="submit" className="btn primary">
+          Add
+        </button>
       </form>
 
       <table>
@@ -161,7 +86,7 @@ export default function Rules() {
           {rules.length === 0 && (
             <tr>
               <td colSpan={4} className="muted">
-                No rules
+                No manual rules
               </td>
             </tr>
           )}

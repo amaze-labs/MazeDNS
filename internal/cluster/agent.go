@@ -22,12 +22,14 @@ type Agent struct {
 	store     *store.Store
 	reload    func() error
 	stats     func() store.NodeStats
+	setPause  func(int64)
 	client    *http.Client
 }
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
-// the master; stats (may be nil) reports this node's query counters each poll.
-func NewAgent(masterURL, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats) *Agent {
+// the master; stats (may be nil) reports this node's query counters each poll;
+// setPause (may be nil) applies the cluster-wide block-pause deadline.
+func NewAgent(masterURL, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, setPause func(int64)) *Agent {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -38,6 +40,7 @@ func NewAgent(masterURL, nodeKey string, interval time.Duration, st *store.Store
 		store:     st,
 		reload:    reload,
 		stats:     stats,
+		setPause:  setPause,
 		client:    &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -64,9 +67,13 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		slog.Warn("cluster sync failed", "err", err)
 		return
 	}
+	// The block pause is applied every poll (it isn't part of the version hash).
+	if a.setPause != nil {
+		a.setPause(snap.PausedUntil)
+	}
 	cur, _ := a.store.ConfigVersion()
 	if snap.Version == cur {
-		return // already up to date
+		return // rules already up to date
 	}
 	if err := a.store.ApplySnapshot(snap.Rules, snap.Rewrites); err != nil {
 		slog.Warn("cluster apply failed", "err", err)

@@ -11,8 +11,10 @@ multi-site **clustering**.
 ## What it does (target)
 
 - **Filtering resolver:** forward + cache + block (ads / trackers / malware) via
-  blocklists (hosts / AdGuard-syntax / regex), allow/deny rules, per-client
-  policies, custom local records & rewrites (incl. `*.wildcard` records).
+  managed block lists (file / paste / remote URL with scheduled auto-refresh,
+  individually enable/disable, view & remove), allow/deny rules, custom local
+  records & rewrites (incl. `*.wildcard`), and a one-click "pause blocking for N"
+  control.
 - **Advanced DNS:** DoH / DoT / DoQ (server + upstream), DNSSEC validation,
   conditional / split-horizon forwarding, authoritative zones, rate limiting.
 - **Web UI:** React SPA — grouped KPI dashboard (traffic / protection /

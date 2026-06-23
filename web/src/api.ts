@@ -123,6 +123,26 @@ export interface User {
   updated_at: number
 }
 
+export interface List {
+  id: number
+  name: string
+  source: string // "file" | "paste" | "url"
+  url: string
+  category: string
+  enabled: boolean
+  interval_sec: number
+  last_fetch: number
+  last_error: string
+  rule_count: number
+  updated_at: number
+}
+
+export interface Protection {
+  paused: boolean
+  paused_until: number
+  seconds_left: number
+}
+
 export interface Settings {
   upstreams: string[]
   forwarders: ForwardGroup[]
@@ -211,6 +231,34 @@ export const api = {
     fetch(`/api/config/import?mode=${mode}`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify(bundle) }).then(
       j<{ mode: string; rules: number; rewrites: number; settings: boolean }>,
     ),
+
+  // managed lists
+  lists: () => fetch('/api/lists').then(j<List[]>),
+  listRules: (id: number) => fetch(`/api/lists/${id}/rules`).then(j<Rule[]>),
+  importList: (name: string, category: string, text: string, source: 'file' | 'paste') =>
+    fetch('/api/lists/import', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, category, text, source }),
+    }).then(j<{ id: number; name: string; imported: number }>),
+  addUrlList: (name: string, url: string, category: string, interval_minutes: number) =>
+    fetch('/api/lists/url', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, url, category, interval_minutes }),
+    }).then(j<List>),
+  refreshList: (id: number) => fetch(`/api/lists/${id}/refresh`, { method: 'POST' }).then(j<List>),
+  updateList: (id: number, patch: { enabled?: boolean; interval_minutes?: number }) =>
+    fetch(`/api/lists/${id}`, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(patch) }).then(j<List>),
+  deleteList: (id: number) => fetch(`/api/lists/${id}`, { method: 'DELETE' }).then(ok),
+
+  // protection (global block pause)
+  protection: () => fetch('/api/protection').then(j<Protection>),
+  disableProtection: (seconds: number) =>
+    fetch('/api/protection/disable', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ seconds }) }).then(
+      j<Protection>,
+    ),
+  enableProtection: () => fetch('/api/protection/enable', { method: 'POST' }).then(j<Protection>),
 
   rewrites: () => fetch('/api/rewrites').then(j<Rewrite[]>),
   addRewrite: (domain: string, rrtype: string, value: string) =>

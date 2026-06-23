@@ -22,6 +22,7 @@ type Rule struct {
 	Domain    string `json:"domain"`
 	Category  string `json:"category"` // "ads" | "trackers" | "malware" | "custom"
 	Enabled   bool   `json:"enabled"`
+	ListID    int64  `json:"list_id"` // 0 = manual rule; otherwise the owning list
 	UpdatedAt int64  `json:"updated_at"`
 }
 
@@ -114,6 +115,19 @@ CREATE TABLE IF NOT EXISTS meta (
 	value INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO meta(key, value) VALUES('config_version', 0);
+INSERT OR IGNORE INTO meta(key, value) VALUES('block_paused_until', 0);
+CREATE TABLE IF NOT EXISTS lists (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	source TEXT NOT NULL DEFAULT 'file',
+	url TEXT NOT NULL DEFAULT '',
+	category TEXT NOT NULL DEFAULT 'custom',
+	enabled INTEGER NOT NULL DEFAULT 1,
+	interval_sec INTEGER NOT NULL DEFAULT 0,
+	last_fetch INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT NOT NULL DEFAULT '',
+	updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nodes (
 	name TEXT PRIMARY KEY,
 	key_hash TEXT NOT NULL DEFAULT '',
@@ -140,6 +154,7 @@ CREATE TABLE IF NOT EXISTS settings (
 	// Additive column migrations for databases created before a column existed.
 	for _, alter := range []string{
 		`ALTER TABLE rules ADD COLUMN category TEXT NOT NULL DEFAULT 'custom'`,
+		`ALTER TABLE rules ADD COLUMN list_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE query_log ADD COLUMN category TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN key_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN key_prefix TEXT NOT NULL DEFAULT ''`,
@@ -160,7 +175,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 // ListRules returns all rules ordered by domain.
 func (s *Store) ListRules() ([]Rule, error) {
-	rows, err := s.db.Query(`SELECT id, action, domain, category, enabled, updated_at FROM rules ORDER BY domain`)
+	rows, err := s.db.Query(`SELECT id, action, domain, category, enabled, list_id, updated_at FROM rules ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +183,7 @@ func (s *Store) ListRules() ([]Rule, error) {
 	var out []Rule
 	for rows.Next() {
 		var r Rule
-		if err := rows.Scan(&r.ID, &r.Action, &r.Domain, &r.Category, &r.Enabled, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Action, &r.Domain, &r.Category, &r.Enabled, &r.ListID, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

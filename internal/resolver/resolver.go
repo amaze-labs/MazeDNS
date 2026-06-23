@@ -143,7 +143,16 @@ type Resolver struct {
 	stats    Stats
 	rt       atomic.Pointer[runtime]
 	pol      atomic.Pointer[Policy]
+	// pauseUntil is the unix time until which blocking is suspended (0 = active).
+	pauseUntil atomic.Int64
 }
+
+// SetBlockPausedUntil suspends block enforcement until ts (unix seconds); 0
+// resumes immediately. Allow/rewrite/cache/forward are unaffected.
+func (r *Resolver) SetBlockPausedUntil(ts int64) { r.pauseUntil.Store(ts) }
+
+// BlockPaused reports whether block enforcement is currently suspended.
+func (r *Resolver) BlockPaused() bool { return r.pauseUntil.Load() > time.Now().Unix() }
 
 // New builds a Resolver with empty operational settings — call ApplySettings to
 // install upstreams/cache/etc., and SetPolicy to install filtering rules.
@@ -286,10 +295,12 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		}
 	}
 
-	// 3. Block (unless explicitly allowed).
-	if cat, blocked := pol.Block.Match(q.Name); blocked && !pol.Allow.IsBlocked(q.Name) {
-		r.stats.Blocked.Add(1)
-		return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
+	// 3. Block (unless explicitly allowed, or block enforcement is paused).
+	if !r.BlockPaused() {
+		if cat, blocked := pol.Block.Match(q.Name); blocked && !pol.Allow.IsBlocked(q.Name) {
+			r.stats.Blocked.Add(1)
+			return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
+		}
 	}
 
 	// 4. Cache.

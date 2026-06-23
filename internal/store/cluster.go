@@ -16,7 +16,7 @@ import (
 // node holding the same config, so a worker detects drift by comparing its own
 // hash to the master's — no monotonic counter needed.
 func (s *Store) ConfigVersion() (string, error) {
-	rules, err := s.ListRules()
+	rules, err := s.ActiveRules()
 	if err != nil {
 		return "", err
 	}

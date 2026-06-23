@@ -16,6 +16,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/filter"
+	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/ruleimport"
@@ -34,6 +35,7 @@ type Server struct {
 	store          *store.Store
 	res            *resolver.Resolver
 	reload         func() error
+	refresher      *lists.Refresher
 	auth           *auth.Manager
 	authEnabled    bool
 	clusterEnabled bool
@@ -44,8 +46,8 @@ type Server struct {
 // served; in master mode the control-plane API and web UI are mounted, plus the
 // cluster endpoints when clusterEnabled. reload rebuilds the resolver policy
 // after every mutation.
-func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
-	s := &Server{store: st, res: res, reload: reload, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled}
+func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, refresher *lists.Refresher, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
+	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", m.Handler())
@@ -72,6 +74,18 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+
+		// Managed lists + global block-pause ("protection").
+		mux.HandleFunc("GET /api/lists", s.requireRole(roleReadonly, s.listLists))
+		mux.HandleFunc("POST /api/lists/import", s.requireRole(roleAdmin, s.importList))
+		mux.HandleFunc("POST /api/lists/url", s.requireRole(roleAdmin, s.addURLList))
+		mux.HandleFunc("GET /api/lists/{id}/rules", s.requireRole(roleReadonly, s.listRulesForList))
+		mux.HandleFunc("POST /api/lists/{id}/refresh", s.requireRole(roleAdmin, s.refreshList))
+		mux.HandleFunc("PUT /api/lists/{id}", s.requireRole(roleAdmin, s.updateList))
+		mux.HandleFunc("DELETE /api/lists/{id}", s.requireRole(roleAdmin, s.deleteList))
+		mux.HandleFunc("GET /api/protection", s.requireRole(roleReadonly, s.getProtection))
+		mux.HandleFunc("POST /api/protection/disable", s.requireRole(roleAdmin, s.disableProtection))
+		mux.HandleFunc("POST /api/protection/enable", s.requireRole(roleAdmin, s.enableProtection))
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
@@ -169,7 +183,9 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.TouchNode(node.Name, addr, ver, st)
 
-	rules, err := s.store.ListRules()
+	// Workers receive the effective (active) rule set so list enable/disable and
+	// refreshes propagate without the worker needing the lists table.
+	rules, err := s.store.ActiveRules()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -180,13 +196,14 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	version, _ := s.store.ConfigVersion()
+	pausedUntil, _ := s.store.GetBlockPausedUntil()
 	if rules == nil {
 		rules = []store.Rule{}
 	}
 	if rewrites == nil {
 		rewrites = []store.Rewrite{}
 	}
-	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites})
+	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, PausedUntil: pausedUntil})
 }
 
 func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
@@ -527,8 +544,10 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// listRules returns manual (non-list) rules; list-owned rules are viewed per
+// list via GET /api/lists/{id}/rules.
 func (s *Server) listRules(w http.ResponseWriter, _ *http.Request) {
-	rules, err := s.store.ListRules()
+	rules, err := s.store.ManualRules()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

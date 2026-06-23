@@ -143,7 +143,9 @@ export default function Settings() {
             </button>
           </div>
         ))}
-        <button onClick={addFwd}>+ Add forwarder</button>
+        <button className="btn ghost" onClick={addFwd}>
+          + Add forwarder
+        </button>
       </section>
 
       <section className="settings-card">
@@ -165,9 +167,12 @@ export default function Settings() {
           />
         </div>
         <div className="field">
-          <label>
-            <input type="checkbox" checked={s.dnssec} onChange={(e) => patch({ dnssec: e.target.checked })} />{' '}
-            Request DNSSEC validation (set DO bit, surface AD)
+          <label className="toggle">
+            <input type="checkbox" checked={s.dnssec} onChange={(e) => patch({ dnssec: e.target.checked })} />
+            <span className="track">
+              <span className="thumb" />
+            </span>
+            <span className="toggle-label">Request DNSSEC validation (set DO bit, surface AD)</span>
           </label>
         </div>
       </section>
@@ -175,13 +180,16 @@ export default function Settings() {
       <section className="settings-card">
         <h3>Cache</h3>
         <div className="field">
-          <label>
+          <label className="toggle">
             <input
               type="checkbox"
               checked={s.cache.enabled}
               onChange={(e) => patchCache({ enabled: e.target.checked })}
-            />{' '}
-            Enable response cache
+            />
+            <span className="track">
+              <span className="thumb" />
+            </span>
+            <span className="toggle-label">Enable response cache</span>
           </label>
         </div>
         <div className="field">
@@ -213,13 +221,14 @@ export default function Settings() {
         </div>
       </section>
 
-      <div className="row">
-        <button onClick={save} disabled={saving}>
+      <div className="settings-actions">
+        <button className="btn primary" onClick={save} disabled={saving}>
           {saving ? 'Saving…' : 'Save & apply'}
         </button>
-        <button className="del" onClick={load} disabled={saving}>
+        <button className="btn ghost-danger" onClick={load} disabled={saving}>
           Reset
         </button>
+        <span className="hint">Changes apply live — no restart.</span>
       </div>
 
       <section className="settings-card">
@@ -230,15 +239,23 @@ export default function Settings() {
         </label>
         {importMsg && <div className="ok-msg">{importMsg}</div>}
         <div className="row">
-          <button onClick={doExport}>Export config</button>
-          <select value={importMode} onChange={(e) => setImportMode(e.target.value as 'merge' | 'replace')}>
-            <option value="merge">Merge</option>
-            <option value="replace">Replace</option>
-          </select>
+          <button className="btn" onClick={doExport}>
+            ⬇ Export config
+          </button>
+          <span className="import-group">
+            <select value={importMode} onChange={(e) => setImportMode(e.target.value as 'merge' | 'replace')}>
+              <option value="merge">Merge</option>
+              <option value="replace">Replace</option>
+            </select>
+            <button className="btn" onClick={() => fileRef.current?.click()}>
+              ⬆ Import file…
+            </button>
+          </span>
           <input
             ref={fileRef}
             type="file"
             accept="application/json,.json"
+            hidden
             onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])}
           />
         </div>

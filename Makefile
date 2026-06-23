@@ -59,8 +59,12 @@ docker: ## build the container image (single image, master/worker via MAZEDNS_MO
 	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
 
 .PHONY: compose-dev
-compose-dev: ## build + run the dev compose (master, UI on :8080)
+compose-dev: ## build + run the dev compose (master only, UI on :8080)
 	docker compose up --build
+
+.PHONY: compose-cluster
+compose-cluster: ## build + run dev master + 2 pre-enrolled workers (clustering)
+	docker compose --profile cluster up --build
 
 .PHONY: compose-prod
 compose-prod: ## run the production compose (master + worker, pulls the image)

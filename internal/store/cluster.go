@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -147,6 +148,34 @@ func (s *Store) TouchNode(name, address, version string, st NodeStats) error {
 		address, version, time.Now().Unix(),
 		st.Total, st.Blocked, st.Cached, st.Forwarded, st.Rewritten, st.Errors, name)
 	return err
+}
+
+// SetNodeInsights stores a node's latest reported insights (JSON).
+func (s *Store) SetNodeInsights(name, data string) error {
+	_, err := s.db.Exec(`UPDATE nodes SET insights=? WHERE name=?`, data, name)
+	return err
+}
+
+// AllNodeInsights returns the latest insights reported by each node, keyed by
+// node name (skipping nodes that haven't reported any).
+func (s *Store) AllNodeInsights() (map[string]Insights, error) {
+	rows, err := s.db.Query(`SELECT name, insights FROM nodes WHERE insights <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Insights{}
+	for rows.Next() {
+		var name, data string
+		if err := rows.Scan(&name, &data); err != nil {
+			return nil, err
+		}
+		var in Insights
+		if json.Unmarshal([]byte(data), &in) == nil {
+			out[name] = in
+		}
+	}
+	return out, rows.Err()
 }
 
 // ListNodes returns all enrolled nodes (with their latest stats) ordered by name.

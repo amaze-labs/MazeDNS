@@ -141,7 +141,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 	q_cached INTEGER NOT NULL DEFAULT 0,
 	q_forwarded INTEGER NOT NULL DEFAULT 0,
 	q_rewritten INTEGER NOT NULL DEFAULT 0,
-	q_errors INTEGER NOT NULL DEFAULT 0
+	q_errors INTEGER NOT NULL DEFAULT 0,
+	insights TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -165,6 +166,7 @@ CREATE TABLE IF NOT EXISTS settings (
 		`ALTER TABLE nodes ADD COLUMN q_forwarded INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN q_rewritten INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN q_errors INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN insights TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

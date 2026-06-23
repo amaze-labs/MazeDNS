@@ -24,13 +24,63 @@ type TypeStat struct {
 	Count int64  `json:"count"`
 }
 
-// SeriesPoint is a time bucket with per-action query counts.
+// SeriesPoint is a time bucket with per-action query counts and mean latency.
 type SeriesPoint struct {
-	TS        int64 `json:"ts"` // bucket start, unix seconds
-	Total     int64 `json:"total"`
-	Blocked   int64 `json:"blocked"`
-	Forwarded int64 `json:"forwarded"`
-	Cached    int64 `json:"cached"`
+	TS           int64   `json:"ts"` // bucket start, unix seconds
+	Total        int64   `json:"total"`
+	Blocked      int64   `json:"blocked"`
+	Forwarded    int64   `json:"forwarded"`
+	Cached       int64   `json:"cached"`
+	AvgLatencyMS float64 `json:"avg_latency_ms"`
+}
+
+// Insights bundles the windowed dashboard breakdowns so they can be computed on
+// any node and merged cluster-wide.
+type Insights struct {
+	UniqueClients int64        `json:"unique_clients"`
+	AvgLatencyMS  float64      `json:"avg_latency_ms"`
+	Clients       []ClientStat `json:"clients"`
+	TopQueried    []DomainStat `json:"top_queried"`
+	TopBlocked    []DomainStat `json:"top_blocked"`
+	QTypes        []TypeStat   `json:"qtypes"`
+}
+
+// ComputeInsights gathers all windowed breakdowns since sinceMs (top `limit`
+// clients/domains). Slices are never nil.
+func (s *Store) ComputeInsights(sinceMs int64, limit int) (Insights, error) {
+	var in Insights
+	var err error
+	if in.Clients, err = s.QueriesByClient(sinceMs, limit); err != nil {
+		return in, err
+	}
+	if in.TopQueried, err = s.TopDomains(sinceMs, limit, false); err != nil {
+		return in, err
+	}
+	if in.TopBlocked, err = s.TopDomains(sinceMs, limit, true); err != nil {
+		return in, err
+	}
+	if in.QTypes, err = s.QueryTypeBreakdown(sinceMs); err != nil {
+		return in, err
+	}
+	if in.UniqueClients, err = s.ClientCount(sinceMs); err != nil {
+		return in, err
+	}
+	if in.AvgLatencyMS, err = s.AvgLatencyMS(sinceMs); err != nil {
+		return in, err
+	}
+	if in.Clients == nil {
+		in.Clients = []ClientStat{}
+	}
+	if in.TopQueried == nil {
+		in.TopQueried = []DomainStat{}
+	}
+	if in.TopBlocked == nil {
+		in.TopBlocked = []DomainStat{}
+	}
+	if in.QTypes == nil {
+		in.QTypes = []TypeStat{}
+	}
+	return in, nil
 }
 
 // CategoryCount is a blocked-query count for a category.
@@ -48,17 +98,18 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int) ([]SeriesPoint, erro
 	}
 	step := int64(stepSec)
 	rows, err := s.db.Query(
-		`SELECT (ts/1000/?)*? AS bucket, action, COUNT(*)
+		`SELECT (ts/1000/?)*? AS bucket, action, COUNT(*), COALESCE(SUM(elapsed_ms),0)
 		 FROM query_log WHERE ts >= ? GROUP BY bucket, action`, step, step, sinceMs)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	m := map[int64]*SeriesPoint{}
+	elapsed := map[int64]int64{} // bucket -> summed latency, for the mean
 	for rows.Next() {
-		var bucket, count int64
+		var bucket, count, sumElapsed int64
 		var action string
-		if err := rows.Scan(&bucket, &action, &count); err != nil {
+		if err := rows.Scan(&bucket, &action, &count, &sumElapsed); err != nil {
 			return nil, err
 		}
 		p := m[bucket]
@@ -67,6 +118,7 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int) ([]SeriesPoint, erro
 			m[bucket] = p
 		}
 		p.Total += count
+		elapsed[bucket] += sumElapsed
 		switch action {
 		case "blocked":
 			p.Blocked += count
@@ -78,6 +130,11 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int) ([]SeriesPoint, erro
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	for b, p := range m {
+		if p.Total > 0 {
+			p.AvgLatencyMS = float64(elapsed[b]) / float64(p.Total)
+		}
 	}
 	start := (sinceMs / 1000 / step) * step
 	end := (time.Now().Unix() / step) * step

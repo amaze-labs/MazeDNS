@@ -199,7 +199,14 @@ func main() {
 				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 			}
 		}
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil)
+		// Report this worker's recent breakdowns so the master can show
+		// cluster-wide per-client/domain/type stats.
+		insightsFn := func() store.Insights {
+			since := time.Now().Add(-24 * time.Hour).UnixMilli()
+			in, _ := st.ComputeInsights(since, 25)
+			return in
+		}
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, insightsFn, res.SetBlockPausedUntil)
 		go ag.Run(agentCtx)
 	}
 

@@ -182,6 +182,9 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(raw), &st)
 	}
 	_ = s.store.TouchNode(node.Name, addr, ver, st)
+	if raw := r.Header.Get("X-MazeDNS-Insights"); raw != "" {
+		_ = s.store.SetNodeInsights(node.Name, raw)
+	}
 
 	// Workers receive the effective (active) rule set so list enable/disable and
 	// refreshes propagate without the worker needing the lists table.
@@ -410,63 +413,30 @@ func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, cats)
 }
 
-// getInsights returns windowed KPIs for the dashboard in one round trip: top
-// clients, top queried/blocked domains, query-type breakdown, distinct client
-// count, and average latency.
+// getInsights returns windowed KPIs for the dashboard in one round trip,
+// merged cluster-wide: this node's breakdowns plus each worker's latest reported
+// insights, plus a per-node query distribution (the master is a resolver too).
 func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
 
-	clients, err := s.store.QueriesByClient(since, 10)
+	local, err := s.store.ComputeInsights(since, 25)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	topQueried, err := s.store.TopDomains(since, 10, false)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	topBlocked, err := s.store.TopDomains(since, 10, true)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	qtypes, err := s.store.QueryTypeBreakdown(since)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	unique, err := s.store.ClientCount(since)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	avg, err := s.store.AvgLatencyMS(since)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	nodeIns, _ := s.store.AllNodeInsights()
+	merged := mergeInsights(local, nodeIns, 12)
+	byNode := byNodeQueries(local, nodeIns)
 
-	if clients == nil {
-		clients = []store.ClientStat{}
-	}
-	if topQueried == nil {
-		topQueried = []store.DomainStat{}
-	}
-	if topBlocked == nil {
-		topBlocked = []store.DomainStat{}
-	}
-	if qtypes == nil {
-		qtypes = []store.TypeStat{}
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"unique_clients": unique,
-		"avg_latency_ms": avg,
-		"clients":        clients,
-		"top_queried":    topQueried,
-		"top_blocked":    topBlocked,
-		"qtypes":         qtypes,
+		"unique_clients": merged.UniqueClients,
+		"avg_latency_ms": merged.AvgLatencyMS,
+		"clients":        merged.Clients,
+		"top_queried":    merged.TopQueried,
+		"top_blocked":    merged.TopBlocked,
+		"qtypes":         merged.QTypes,
+		"by_node":        byNode,
 	})
 }
 
@@ -528,12 +498,16 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, in)
 }
 
+// getQueryLog returns a page of this node's query log, newest first, with an
+// optional substring search (?search=) on name/client and ?limit/?offset.
 func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit == 0 {
-		limit = 100
+	if limit <= 0 {
+		limit = 50
 	}
-	entries, err := s.store.RecentQueryLog(limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	entries, total, err := s.store.SearchQueryLog(search, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -541,7 +515,7 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []store.QueryLogEntry{}
 	}
-	writeJSON(w, http.StatusOK, entries)
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "total": total})
 }
 
 // listRules returns manual (non-list) rules; list-owned rules are viewed per

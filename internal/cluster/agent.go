@@ -22,14 +22,17 @@ type Agent struct {
 	store     *store.Store
 	reload    func() error
 	stats     func() store.NodeStats
+	insights  func() store.Insights
 	setPause  func(int64)
 	client    *http.Client
 }
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
 // the master; stats (may be nil) reports this node's query counters each poll;
-// setPause (may be nil) applies the cluster-wide block-pause deadline.
-func NewAgent(masterURL, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, setPause func(int64)) *Agent {
+// insights (may be nil) reports this node's windowed breakdowns so the master
+// can show cluster-wide stats; setPause (may be nil) applies the cluster-wide
+// block-pause deadline.
+func NewAgent(masterURL, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, insights func() store.Insights, setPause func(int64)) *Agent {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -40,6 +43,7 @@ func NewAgent(masterURL, nodeKey string, interval time.Duration, st *store.Store
 		store:     st,
 		reload:    reload,
 		stats:     stats,
+		insights:  insights,
 		setPause:  setPause,
 		client:    &http.Client{Timeout: 10 * time.Second},
 	}
@@ -93,6 +97,11 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
 	ver, _ := a.store.ConfigVersion()
 	req.Header.Set("X-MazeDNS-Node-Version", ver)
+	if a.insights != nil {
+		if b, err := json.Marshal(a.insights()); err == nil {
+			req.Header.Set("X-MazeDNS-Insights", string(b))
+		}
+	}
 	if a.stats != nil {
 		if b, err := json.Marshal(a.stats()); err == nil {
 			req.Header.Set("X-MazeDNS-Stats", string(b))

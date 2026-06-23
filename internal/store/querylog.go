@@ -73,6 +73,45 @@ func (s *Store) CountQueryLog() (int64, error) {
 	return n, err
 }
 
+// SearchQueryLog returns a page of query-log entries (newest first), optionally
+// filtered by a substring match on name or client, plus the total match count.
+func (s *Store) SearchQueryLog(search string, limit, offset int) ([]QueryLogEntry, int64, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where := ""
+	var args []any
+	if search != "" {
+		where = " WHERE name LIKE ? OR client LIKE ?"
+		like := "%" + search + "%"
+		args = append(args, like, like)
+	}
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM query_log`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.Query(
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms
+		 FROM query_log`+where+` ORDER BY id DESC LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var out []QueryLogEntry
+	for rows.Next() {
+		var e QueryLogEntry
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
 // QueryLogWriter batches query-log entries and writes them asynchronously so the
 // DNS hot path never blocks on the database.
 type QueryLogWriter struct {

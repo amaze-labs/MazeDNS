@@ -71,6 +71,13 @@ export interface SeriesPoint {
   blocked: number
   forwarded: number
   cached: number
+  avg_latency_ms: number
+}
+
+export interface NodeQueries {
+  node: string
+  total: number
+  blocked: number
 }
 
 export interface CategoryCount {
@@ -101,6 +108,7 @@ export interface Insights {
   top_queried: DomainStat[]
   top_blocked: DomainStat[]
   qtypes: TypeStat[]
+  by_node: NodeQueries[]
 }
 
 export interface ForwardGroup {
@@ -206,7 +214,11 @@ export const api = {
     fetch(`/api/stats/timeseries?hours=${hours}`).then(j<{ step: number; points: SeriesPoint[] }>),
   categories: (hours = 24) => fetch(`/api/stats/categories?hours=${hours}`).then(j<CategoryCount[]>),
   insights: (hours = 24) => fetch(`/api/stats/insights?hours=${hours}`).then(j<Insights>),
-  queryLog: (limit = 100) => fetch(`/api/querylog?limit=${limit}`).then(j<QueryLogEntry[]>),
+  queryLog: (opts: { limit?: number; offset?: number; search?: string } = {}) => {
+    const p = new URLSearchParams({ limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) })
+    if (opts.search) p.set('search', opts.search)
+    return fetch(`/api/querylog?${p.toString()}`).then(j<{ entries: QueryLogEntry[]; total: number }>)
+  },
 
   rules: () => fetch('/api/rules').then(j<Rule[]>),
   addRule: (action: string, domain: string, category: string) =>

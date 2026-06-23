@@ -760,3 +760,70 @@ tr.expand td {
   border-color: rgba(62, 207, 142, 0.4);
   color: var(--ok);
 }
+
+/* Collapsible dashboard sections */
+.dash-section {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  background: var(--panel);
+}
+.dash-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 14px;
+}
+.dash-toggle {
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dash-toggle .caret {
+  color: var(--muted);
+  font-size: 12px;
+}
+.dash-body {
+  padding: 4px 16px 16px;
+}
+/* Inside a section the panels shouldn't double-border */
+.dash-body .charts {
+  margin-top: 4px;
+}
+.dash-body h2 {
+  margin-top: 8px;
+}
+
+/* Recent-queries search + pager */
+input.search {
+  min-width: 220px;
+  flex: none;
+}
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Client distribution bar */
+.cbar {
+  background: var(--bg);
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+.cbar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}

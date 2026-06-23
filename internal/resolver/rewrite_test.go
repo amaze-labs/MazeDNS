@@ -10,8 +10,9 @@ func TestLookupRewrite(t *testing.T) {
 	a := func(v string) []RewriteRR { return []RewriteRR{{Type: dns.TypeA, Value: v}} }
 	pol := &Policy{
 		Rewrites: map[string][]RewriteRR{
-			"azzate.ferrario.dev": a("10.9.9.9"), // exact apex
-			"nas.lan":             a("192.168.1.10"),
+			"azzate.ferrario.dev":      a("10.9.9.9"), // exact apex
+			"mail.azzate.ferrario.dev": a("10.0.0.7"), // exact subdomain the wildcard also covers
+			"nas.lan":                  a("192.168.1.10"),
 		},
 		Wildcards: map[string][]RewriteRR{
 			"azzate.ferrario.dev":     a("10.1.2.3"), // *.azzate.ferrario.dev
@@ -26,6 +27,7 @@ func TestLookupRewrite(t *testing.T) {
 		wantValue string
 	}{
 		{"exact apex beats wildcard", "azzate.ferrario.dev", true, "10.9.9.9"},
+		{"exact subdomain beats wildcard", "mail.azzate.ferrario.dev", true, "10.0.0.7"},
 		{"plain exact", "nas.lan", true, "192.168.1.10"},
 		{"single-label subdomain", "foo.azzate.ferrario.dev", true, "10.1.2.3"},
 		{"multi-label subdomain", "a.b.azzate.ferrario.dev", true, "10.1.2.3"},

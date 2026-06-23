@@ -98,6 +98,18 @@ func (s *Store) CreateNode(name, keyHash, keyPrefix string) error {
 	return err
 }
 
+// EnsureNode creates a node or, if the name already exists, updates its key.
+// Used to pre-provision nodes from configuration (the key is authoritative);
+// existing stats are preserved. Idempotent across restarts.
+func (s *Store) EnsureNode(name, keyHash, keyPrefix string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO nodes(name, key_hash, key_prefix, address, version, last_seen, created_at)
+		 VALUES(?,?,?,'',0,0,?)
+		 ON CONFLICT(name) DO UPDATE SET key_hash=excluded.key_hash, key_prefix=excluded.key_prefix`,
+		name, keyHash, keyPrefix, time.Now().Unix())
+	return err
+}
+
 // NodeByKeyHash returns the node whose key hash matches, or (nil, nil) if none.
 func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 	if keyHash == "" {

@@ -63,6 +63,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
 		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.getTimeSeries))
 		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.getCategories))
+		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.getInsights))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
@@ -382,6 +383,66 @@ func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 		cats = []store.CategoryCount{}
 	}
 	writeJSON(w, http.StatusOK, cats)
+}
+
+// getInsights returns windowed KPIs for the dashboard in one round trip: top
+// clients, top queried/blocked domains, query-type breakdown, distinct client
+// count, and average latency.
+func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
+	hours := clampHours(r.URL.Query().Get("hours"))
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+
+	clients, err := s.store.QueriesByClient(since, 10)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	topQueried, err := s.store.TopDomains(since, 10, false)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	topBlocked, err := s.store.TopDomains(since, 10, true)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	qtypes, err := s.store.QueryTypeBreakdown(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	unique, err := s.store.ClientCount(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	avg, err := s.store.AvgLatencyMS(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if clients == nil {
+		clients = []store.ClientStat{}
+	}
+	if topQueried == nil {
+		topQueried = []store.DomainStat{}
+	}
+	if topBlocked == nil {
+		topBlocked = []store.DomainStat{}
+	}
+	if qtypes == nil {
+		qtypes = []store.TypeStat{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"unique_clients": unique,
+		"avg_latency_ms": avg,
+		"clients":        clients,
+		"top_queried":    topQueried,
+		"top_blocked":    topBlocked,
+		"qtypes":         qtypes,
+	})
 }
 
 func clampHours(s string) int {

@@ -78,6 +78,31 @@ export interface CategoryCount {
   count: number
 }
 
+export interface ClientStat {
+  client: string
+  total: number
+  blocked: number
+}
+
+export interface DomainStat {
+  name: string
+  count: number
+}
+
+export interface TypeStat {
+  qtype: string
+  count: number
+}
+
+export interface Insights {
+  unique_clients: number
+  avg_latency_ms: number
+  clients: ClientStat[]
+  top_queried: DomainStat[]
+  top_blocked: DomainStat[]
+  qtypes: TypeStat[]
+}
+
 export interface ForwardGroup {
   suffix: string
   upstreams: string[]
@@ -126,6 +151,7 @@ export const api = {
   timeseries: (hours = 24) =>
     fetch(`/api/stats/timeseries?hours=${hours}`).then(j<{ step: number; points: SeriesPoint[] }>),
   categories: (hours = 24) => fetch(`/api/stats/categories?hours=${hours}`).then(j<CategoryCount[]>),
+  insights: (hours = 24) => fetch(`/api/stats/insights?hours=${hours}`).then(j<Insights>),
   queryLog: (limit = 100) => fetch(`/api/querylog?limit=${limit}`).then(j<QueryLogEntry[]>),
 
   rules: () => fetch('/api/rules').then(j<Rule[]>),

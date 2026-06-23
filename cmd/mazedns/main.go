@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"log/slog"
@@ -174,6 +176,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Master: optionally pre-provision cluster nodes with fixed keys (handy for
+	// dev/automated clustering). Format: "name1=key1,name2=key2".
+	if !worker {
+		bootstrapNodes(st, os.Getenv("MAZEDNS_CLUSTER_BOOTSTRAP_NODES"))
+	}
+
 	// Worker: replicate config from the master.
 	var agentCancel context.CancelFunc
 	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" && cfg.Cluster.NodeKey != "" {
@@ -308,6 +316,34 @@ func toZoneSpecs(zs []config.Zone) []resolver.ZoneSpec {
 		out = append(out, resolver.ZoneSpec{Name: z.Name, Records: recs})
 	}
 	return out
+}
+
+// bootstrapNodes pre-provisions cluster nodes from a "name=key,name=key" spec
+// so workers can be wired up without manual UI enrollment (e.g. in dev compose).
+// Keys are stored hashed, exactly like UI-issued ones.
+func bootstrapNodes(st *store.Store, spec string) {
+	for _, pair := range strings.Split(spec, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		name, key, ok := strings.Cut(pair, "=")
+		name, key = strings.TrimSpace(name), strings.TrimSpace(key)
+		if !ok || name == "" || key == "" {
+			slog.Warn("ignoring malformed bootstrap node (want name=key)", "entry", pair)
+			continue
+		}
+		sum := sha256.Sum256([]byte(key))
+		prefix := key
+		if len(prefix) > 8 {
+			prefix = prefix[:8]
+		}
+		if err := st.EnsureNode(name, hex.EncodeToString(sum[:]), prefix); err != nil {
+			slog.Warn("bootstrap node failed", "name", name, "err", err)
+			continue
+		}
+		slog.Info("cluster node provisioned", "name", name)
+	}
 }
 
 func settingsFromConfig(cfg config.Config) resolver.Settings {

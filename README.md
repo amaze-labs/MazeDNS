@@ -12,10 +12,12 @@ multi-site **clustering**.
 
 - **Filtering resolver:** forward + cache + block (ads / trackers / malware) via
   blocklists (hosts / AdGuard-syntax / regex), allow/deny rules, per-client
-  policies, custom local records & rewrites.
+  policies, custom local records & rewrites (incl. `*.wildcard` records).
 - **Advanced DNS:** DoH / DoT / DoQ (server + upstream), DNSSEC validation,
   conditional / split-horizon forwarding, authoritative zones, rate limiting.
-- **Web UI:** React SPA — live stats, query log, and all configuration.
+- **Web UI:** React SPA — grouped KPI dashboard (traffic / protection /
+  performance, per-client & per-type breakdowns, top domains), live query log,
+  and all configuration.
 - **Auth:** pluggable — local users (SQLite) by default, or **OIDC SSO via
   Authentik**.
 - **Clustering:** master holds config; agents replicate it; multisite HA on
@@ -150,10 +152,30 @@ Override the baked config without mounting a file:
 | `MAZEDNS_DB_PATH` | SQLite path (e.g. `/data/mazedns.db`) |
 | `MAZEDNS_ADMIN_USERNAME` / `MAZEDNS_ADMIN_PASSWORD` | first-run admin |
 | `MAZEDNS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
+| `MAZEDNS_MASTER_URL` / `MAZEDNS_NODE_KEY` | worker: master URL + its node key |
+| `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` | master: pre-enroll nodes, `name=key,name=key` |
+
+### Seeing real client IPs
+
+The resolver reports each query's source IP as seen on the wire. When you publish
+the DNS port through Docker's NAT (`-p 53:53`), the source is rewritten to the
+Docker gateway — on Docker Desktop you'll see everything as `192.168.65.1`, so
+per-client stats collapse to one client. To preserve real client IPs:
+
+- **Linux:** run the resolver with `network_mode: host` (or a host-port without
+  the userland proxy).
+- **k3s:** give the DNS pod `hostNetwork: true`, or expose it via a Service with
+  `externalTrafficPolicy: Local`.
+- **Local dev on macOS/Windows:** run the binary natively (`make run-ui`) — Docker
+  Desktop cannot pass the original client IP through its VM.
 
 ### Compose
 
 - **Dev:** `docker compose up --build` (`docker-compose.yml`) — master + UI on `:8080`.
+- **Dev clustering:** `docker compose --profile cluster up --build` adds two
+  workers (`worker-a`, `worker-b`) that the master pre-enrolls via
+  `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` — they appear in the Cluster tab with no
+  manual key exchange (resolvers on `:5311` / `:5312`, metrics on `:9091` / `:9092`).
 - **Prod:** `MAZEDNS_ADMIN_PASSWORD=… docker compose -f docker-compose.prod.yml up -d`
   — pulls `ghcr.io/ipmaze/mazedns:latest` and runs a master + a worker.
 
@@ -179,7 +201,10 @@ it locally — no restart.
   (shown in the Cluster tab).
 
 Env equivalents: `MAZEDNS_MASTER_URL` + `MAZEDNS_NODE_KEY` start a worker's sync
-agent. `docker-compose.prod.yml` wires this up.
+agent. `docker-compose.prod.yml` wires this up. For automation, the master can
+pre-enroll nodes with fixed keys via `MAZEDNS_CLUSTER_BOOTSTRAP_NODES`
+(`name=key,name=key`) — used by the dev `--profile cluster` stack so workers join
+with no manual step. Use generated keys (not the dev placeholders) in production.
 
 > Multisite networking (a WireGuard mesh so workers reach the master privately)
 > and k3s manifests are left to the deploying operator.

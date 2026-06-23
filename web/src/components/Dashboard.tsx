@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   Pie,
@@ -11,7 +13,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { api, type Stats, type QueryLogEntry, type SeriesPoint, type CategoryCount } from '../api'
+import {
+  api,
+  type Stats,
+  type QueryLogEntry,
+  type SeriesPoint,
+  type CategoryCount,
+  type Insights,
+} from '../api'
 
 const catColors: Record<string, string> = {
   ads: '#4ea1ff',
@@ -20,12 +29,17 @@ const catColors: Record<string, string> = {
   custom: '#8a93a0',
 }
 
+const qtypeColor = '#4ea1ff'
 const tooltipStyle = { background: '#171c23', border: '1px solid #262d36', borderRadius: 8 }
+
+const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
+const pct = (num?: number, den?: number) => (den && num != null ? `${Math.round((num / den) * 100)}%` : '—')
 
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [cats, setCats] = useState<CategoryCount[]>([])
+  const [ins, setIns] = useState<Insights | null>(null)
   const [log, setLog] = useState<QueryLogEntry[]>([])
   const [err, setErr] = useState('')
 
@@ -33,16 +47,18 @@ export default function Dashboard() {
     let alive = true
     const tick = async () => {
       try {
-        const [s, ts, c, l] = await Promise.all([
+        const [s, ts, c, i, l] = await Promise.all([
           api.stats(),
           api.timeseries(24),
           api.categories(24),
+          api.insights(24),
           api.queryLog(50),
         ])
         if (alive) {
           setStats(s)
           setSeries(ts.points)
           setCats(c)
+          setIns(i)
           setLog(l)
           setErr('')
         }
@@ -61,21 +77,41 @@ export default function Dashboard() {
   const malicious = cats.find((c) => c.category === 'malware')?.count ?? 0
   const chartData = series.map((p) => ({
     time: new Date(p.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    total: p.total,
     blocked: p.blocked,
+    cached: p.cached,
+    forwarded: p.forwarded,
   }))
+  const clientBars = (ins?.clients ?? []).map((c) => ({ client: c.client, total: c.total, blocked: c.blocked }))
 
   return (
     <div>
       {err && <div className="error">{err}</div>}
-      <div className="cards">
-        <Card label="Total" value={stats?.total} />
-        <Card label="Blocked" value={stats?.blocked} accent="danger" />
-        <Card label="Malicious" value={malicious} accent="danger" />
-        <Card label="Rewritten" value={stats?.rewritten} />
-        <Card label="Cache size" value={stats?.cache_size} />
-        <Card label="Logged" value={stats?.log_count} />
-      </div>
+
+      <KpiGroup label="Traffic (since start)">
+        <Card label="Total queries" value={fmt(stats?.total)} />
+        <Card label="Forwarded" value={fmt(stats?.forwarded)} />
+        <Card label="Cached" value={fmt(stats?.cached)} sub={`${pct(stats?.cached, stats?.total)} hit rate`} />
+        <Card label="Errors" value={fmt(stats?.errors)} accent={stats?.errors ? 'danger' : ''} />
+      </KpiGroup>
+
+      <KpiGroup label="Protection">
+        <Card
+          label="Blocked"
+          value={fmt(stats?.blocked)}
+          accent="danger"
+          sub={`${pct(stats?.blocked, stats?.total)} of total`}
+        />
+        <Card label="Malicious (24h)" value={fmt(malicious)} accent={malicious ? 'danger' : ''} />
+        <Card label="Rewritten" value={fmt(stats?.rewritten)} />
+        <Card label="Logged queries" value={fmt(stats?.log_count)} />
+      </KpiGroup>
+
+      <KpiGroup label="Performance (24h)">
+        <Card label="Unique clients" value={fmt(ins?.unique_clients)} />
+        <Card label="Avg latency" value={ins ? `${ins.avg_latency_ms.toFixed(1)} ms` : '—'} />
+        <Card label="Cache entries" value={fmt(stats?.cache_size)} />
+        <Card label="Query types" value={fmt(ins?.qtypes.length)} />
+      </KpiGroup>
 
       <div className="charts">
         <div className="panel">
@@ -83,9 +119,13 @@ export default function Dashboard() {
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
               <defs>
-                <linearGradient id="gTotal" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="gForwarded" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#4ea1ff" stopOpacity={0.5} />
                   <stop offset="100%" stopColor="#4ea1ff" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gCached" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#3ecf8e" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#3ecf8e" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gBlocked" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#ff5d6c" stopOpacity={0.5} />
@@ -96,10 +136,16 @@ export default function Dashboard() {
               <XAxis dataKey="time" stroke="#8a93a0" fontSize={11} tickLine={false} minTickGap={32} />
               <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
               <Tooltip contentStyle={tooltipStyle} />
-              <Area type="monotone" dataKey="total" stroke="#4ea1ff" fill="url(#gTotal)" strokeWidth={2} />
-              <Area type="monotone" dataKey="blocked" stroke="#ff5d6c" fill="url(#gBlocked)" strokeWidth={2} />
+              <Area type="monotone" dataKey="forwarded" stackId="1" stroke="#4ea1ff" fill="url(#gForwarded)" strokeWidth={2} />
+              <Area type="monotone" dataKey="cached" stackId="1" stroke="#3ecf8e" fill="url(#gCached)" strokeWidth={2} />
+              <Area type="monotone" dataKey="blocked" stackId="1" stroke="#ff5d6c" fill="url(#gBlocked)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
+          <div className="legend">
+            <span><i style={{ background: '#ff5d6c' }} /> blocked</span>
+            <span><i style={{ background: '#3ecf8e' }} /> cached</span>
+            <span><i style={{ background: '#4ea1ff' }} /> forwarded</span>
+          </div>
         </div>
 
         <div className="panel">
@@ -128,6 +174,48 @@ export default function Dashboard() {
             </>
           )}
         </div>
+      </div>
+
+      <div className="charts">
+        <div className="panel">
+          <h2>Top clients (24h)</h2>
+          {clientBars.length === 0 ? (
+            <p className="muted">No traffic yet</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(140, clientBars.length * 28)}>
+              <BarChart data={clientBars} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
+                <CartesianGrid stroke="#262d36" horizontal={false} />
+                <XAxis type="number" stroke="#8a93a0" fontSize={11} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="client" stroke="#8a93a0" fontSize={11} width={120} tickLine={false} />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: '#ffffff08' }} />
+                <Bar dataKey="total" fill="#4ea1ff" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="blocked" fill="#ff5d6c" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="panel">
+          <h2>Query types (24h)</h2>
+          {(ins?.qtypes.length ?? 0) === 0 ? (
+            <p className="muted">No queries yet</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={Math.max(140, (ins?.qtypes.length ?? 0) * 28)}>
+              <BarChart data={ins?.qtypes} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
+                <CartesianGrid stroke="#262d36" horizontal={false} />
+                <XAxis type="number" stroke="#8a93a0" fontSize={11} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="qtype" stroke="#8a93a0" fontSize={11} width={60} tickLine={false} />
+                <Tooltip contentStyle={tooltipStyle} cursor={{ fill: '#ffffff08' }} />
+                <Bar dataKey="count" fill={qtypeColor} radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+
+      <div className="charts">
+        <DomainTable title="Top blocked domains (24h)" rows={ins?.top_blocked} />
+        <DomainTable title="Most queried domains (24h)" rows={ins?.top_queried} />
       </div>
 
       <h2>Recent queries</h2>
@@ -170,11 +258,44 @@ export default function Dashboard() {
   )
 }
 
-function Card({ label, value, accent }: { label: string; value?: number; accent?: string }) {
+function KpiGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section className="kpi-section">
+      <h3>{label}</h3>
+      <div className="cards">{children}</div>
+    </section>
+  )
+}
+
+function Card({ label, value, accent, sub }: { label: string; value?: string | number; accent?: string; sub?: string }) {
   return (
     <div className={`card ${accent || ''}`}>
       <div className="card-value">{value ?? '—'}</div>
       <div className="card-label">{label}</div>
+      {sub && <div className="card-sub">{sub}</div>}
+    </div>
+  )
+}
+
+function DomainTable({ title, rows }: { title: string; rows?: { name: string; count: number }[] }) {
+  return (
+    <div className="panel">
+      <h2>{title}</h2>
+      <table className="mini">
+        <tbody>
+          {(rows ?? []).map((d) => (
+            <tr key={d.name}>
+              <td className="name">{d.name}</td>
+              <td className="num">{d.count.toLocaleString()}</td>
+            </tr>
+          ))}
+          {(rows?.length ?? 0) === 0 && (
+            <tr>
+              <td className="muted">Nothing yet</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
     </div>
   )
 }

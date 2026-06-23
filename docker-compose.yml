@@ -1,7 +1,12 @@
-# Dev compose: builds the image locally and runs MazeDNS in master mode
-# (resolver + API + web UI). UI: http://127.0.0.1:8080
+# Dev compose: builds the image locally and runs MazeDNS.
 #
-#   make compose-dev      # or: docker compose up --build
+#   make compose-dev                              # master only (resolver + API + UI on :8080)
+#   docker compose --profile cluster up --build   # master + 2 workers, pre-enrolled
+#
+# The two workers are wired to the master automatically: the master pre-provisions
+# their node keys via MAZEDNS_CLUSTER_BOOTSTRAP_NODES and each worker presents the
+# matching MAZEDNS_NODE_KEY, so they appear in the Cluster tab with no manual
+# enrollment. The dev keys below are NOT secret — local testing only.
 
 name: mazedns
 
@@ -17,6 +22,8 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_ADMIN_USERNAME: "admin"
       MAZEDNS_ADMIN_PASSWORD: "change-me-please"
+      # Pre-enroll the dev workers so clustering works out of the box:
+      MAZEDNS_CLUSTER_BOOTSTRAP_NODES: "worker-a=dev-key-worker-a,worker-b=dev-key-worker-b"
     ports:
       - "53:5300/udp"   # DNS
       - "53:5300/tcp"
@@ -26,5 +33,47 @@ services:
     volumes:
       - mazedns-data:/data
 
+  worker-a:
+    build: .
+    image: mazedns:dev
+    container_name: mazedns-worker-a
+    restart: unless-stopped
+    profiles: ["cluster"]
+    depends_on: [mazedns]
+    environment:
+      MAZEDNS_MODE: worker
+      MAZEDNS_API_ADDRESS: "0.0.0.0"          # worker exposes only /healthz + /metrics
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_MASTER_URL: "http://mazedns:8080"
+      MAZEDNS_NODE_KEY: "dev-key-worker-a"
+    ports:
+      - "5311:5300/udp"   # worker-a resolver
+      - "5311:5300/tcp"
+      - "9091:8080"       # worker-a /metrics + /healthz
+    volumes:
+      - worker-a-data:/data
+
+  worker-b:
+    build: .
+    image: mazedns:dev
+    container_name: mazedns-worker-b
+    restart: unless-stopped
+    profiles: ["cluster"]
+    depends_on: [mazedns]
+    environment:
+      MAZEDNS_MODE: worker
+      MAZEDNS_API_ADDRESS: "0.0.0.0"
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_MASTER_URL: "http://mazedns:8080"
+      MAZEDNS_NODE_KEY: "dev-key-worker-b"
+    ports:
+      - "5312:5300/udp"   # worker-b resolver
+      - "5312:5300/tcp"
+      - "9092:8080"       # worker-b /metrics + /healthz
+    volumes:
+      - worker-b-data:/data
+
 volumes:
   mazedns-data:
+  worker-a-data:
+  worker-b-data:

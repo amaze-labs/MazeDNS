@@ -1,12 +1,14 @@
-# Dev compose: builds the image locally and runs MazeDNS.
+# Dev compose: builds the image locally and runs a full cluster — a master
+# (resolver + API + UI on :8080) plus two workers.
 #
-#   make compose-dev                              # master only (resolver + API + UI on :8080)
-#   docker compose --profile cluster up --build   # master + 2 workers, pre-enrolled
+#   make compose-dev            # or: docker compose up --build
 #
-# The two workers are wired to the master automatically: the master pre-provisions
+# The workers are wired to the master automatically: the master pre-provisions
 # their node keys via MAZEDNS_CLUSTER_BOOTSTRAP_NODES and each worker presents the
 # matching MAZEDNS_NODE_KEY, so they appear in the Cluster tab with no manual
 # enrollment. The dev keys below are NOT secret — local testing only.
+#
+# Want just the master? `docker compose up mazedns --build`.
 
 name: mazedns
 
@@ -38,7 +40,6 @@ services:
     image: mazedns:dev
     container_name: mazedns-worker-a
     restart: unless-stopped
-    profiles: ["cluster"]
     depends_on: [mazedns]
     environment:
       MAZEDNS_MODE: worker
@@ -58,7 +59,6 @@ services:
     image: mazedns:dev
     container_name: mazedns-worker-b
     restart: unless-stopped
-    profiles: ["cluster"]
     depends_on: [mazedns]
     environment:
       MAZEDNS_MODE: worker

@@ -948,3 +948,110 @@ input.search {
   background: var(--line);
   margin: 4px 6px;
 }
+
+/* Account avatar + dropdown (top bar) */
+.acct {
+  position: relative;
+}
+.acct-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--accent);
+  color: #001022;
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+.acct-avatar:hover {
+  box-shadow: 0 0 0 3px rgba(78, 161, 255, 0.25);
+}
+.acct-avatar.open {
+  box-shadow: 0 0 0 3px rgba(78, 161, 255, 0.35);
+}
+.acct-avatar.lg {
+  width: 40px;
+  height: 40px;
+  font-size: 17px;
+  cursor: default;
+}
+.acct-avatar.lg:hover {
+  box-shadow: none;
+}
+.acct-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.acct-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 21;
+  min-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: nf-pop 0.12s ease-out;
+}
+.acct-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.acct-id {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.acct-name {
+  font-weight: 600;
+  word-break: break-all;
+}
+.acct-id .role-badge {
+  align-self: flex-start;
+}
+.acct-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 6px;
+}
+.acct-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.acct-item:hover {
+  background: var(--bg);
+}
+.acct-item.danger:hover {
+  color: var(--danger);
+}
+.acct-ic {
+  width: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.acct-item.danger:hover .acct-ic {
+  color: var(--danger);
+}

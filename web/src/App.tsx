@@ -6,6 +6,7 @@ import Rewrites from './components/Rewrites'
 import Cluster from './components/Cluster'
 import Settings from './components/Settings'
 import Account from './components/Account'
+import AccountMenu from './components/AccountMenu'
 import Login from './components/Login'
 import { api, type SessionUser, type AuthInfo } from './api'
 
@@ -45,10 +46,10 @@ export default function App() {
     return <Login oidc={!!info.oidc_enabled} onLogin={() => refresh()} />
   }
 
+  // 'account' is reached from the avatar menu, not the nav.
   const tabs: Tab[] = ['dashboard', 'rules', 'lists', 'rewrites']
   if (info?.cluster_enabled) tabs.push('cluster')
   tabs.push('settings')
-  if (info?.auth_enabled) tabs.push('account')
 
   return (
     <div className="app">
@@ -63,15 +64,12 @@ export default function App() {
         </nav>
         <div className="spacer" />
         {user && (
-          <div className="user">
-            <span className="muted">{user.username}</span>
-            <span className={`role-badge ${user.role}`}>{user.role}</span>
-            {info?.auth_enabled && (
-              <button className="del" onClick={logout}>
-                logout
-              </button>
-            )}
-          </div>
+          <AccountMenu
+            user={user}
+            authEnabled={!!info?.auth_enabled}
+            onSettings={() => setTab('account')}
+            onLogout={logout}
+          />
         )}
       </header>
       <main>

@@ -29,6 +29,8 @@ const catColors: Record<string, string> = {
   ads: '#4ea1ff',
   trackers: '#c48aff',
   malware: '#ff5d6c',
+  phishing: '#ffb454',
+  'not-found': '#56d4dd',
   custom: '#8a93a0',
 }
 const sourceColors: Record<string, string> = {
@@ -52,6 +54,20 @@ const RANGES = [
 
 const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
 const pct = (num?: number, den?: number) => (den && num != null ? `${Math.round((num / den) * 100)}%` : '—')
+
+// Persist dashboard view prefs (time window + node focus) in the browser.
+const loadHours = (): number => {
+  const v = Number(localStorage.getItem('mazedns.hours'))
+  return RANGES.some((r) => r.hours === v) ? v : 24
+}
+const loadFocus = (): string[] => {
+  try {
+    const v = JSON.parse(localStorage.getItem('mazedns.focusNodes') || '[]')
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
+}
 const bucketLabel = (ts: number, hours: number) => {
   const d = new Date(ts * 1000)
   return hours <= 48
@@ -126,8 +142,40 @@ function Donut({ data, height = 180 }: { data: { name: string; value: number; fi
   )
 }
 
+// NodeFilter is a multi-select dropdown to focus the dashboard on one or more
+// nodes. Empty selection = all nodes.
+function NodeFilter({ options, selected, onChange }: { options: string[]; selected: string[]; onChange: (s: string[]) => void }) {
+  const [open, setOpen] = useState(false)
+  const label = selected.length === 0 ? 'All nodes' : `${selected.length} node${selected.length > 1 ? 's' : ''}`
+  const toggle = (n: string) =>
+    onChange(selected.includes(n) ? selected.filter((x) => x !== n) : [...selected, n])
+  return (
+    <div className="nodefilter">
+      <button className={`btn ${selected.length ? 'primary' : ''}`} onClick={() => setOpen((o) => !o)}>
+        ▾ {label}
+      </button>
+      {open && (
+        <>
+          <div className="nodefilter-backdrop" onClick={() => setOpen(false)} />
+          <div className="nodefilter-menu">
+            <label>
+              <input type="checkbox" checked={selected.length === 0} onChange={() => onChange([])} /> All nodes
+            </label>
+            {options.map((o) => (
+              <label key={o}>
+                <input type="checkbox" checked={selected.includes(o)} onChange={() => toggle(o)} /> {o}
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function Dashboard() {
-  const [hours, setHours] = useState(24)
+  const [hours, setHours] = useState(loadHours)
+  const [focus, setFocus] = useState<string[]>(loadFocus)
   const [stats, setStats] = useState<Stats | null>(null)
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [cats, setCats] = useState<CategoryCount[]>([])
@@ -145,14 +193,21 @@ export default function Dashboard() {
   const rangeLabel = RANGES.find((r) => r.hours === hours)?.label ?? `${hours}h`
 
   useEffect(() => {
+    localStorage.setItem('mazedns.hours', String(hours))
+  }, [hours])
+  useEffect(() => {
+    localStorage.setItem('mazedns.focusNodes', JSON.stringify(focus))
+  }, [focus])
+
+  useEffect(() => {
     let alive = true
     const tick = async () => {
       try {
         const [s, ts, c, i] = await Promise.all([
           api.stats(),
-          api.timeseries(hours),
-          api.categories(hours),
-          api.insights(hours),
+          api.timeseries(hours, focus),
+          api.categories(hours, focus),
+          api.insights(hours, focus),
         ])
         if (!alive) return
         setStats(s)
@@ -172,7 +227,7 @@ export default function Dashboard() {
       alive = false
       clearInterval(id)
     }
-  }, [hours])
+  }, [hours, focus])
 
   // Debounce the search box.
   useEffect(() => {
@@ -187,7 +242,7 @@ export default function Dashboard() {
     let alive = true
     const fetchLog = () =>
       api
-        .queryLog({ limit: PAGE, offset: qlPage * PAGE, search: qlSearch })
+        .queryLog({ limit: PAGE, offset: qlPage * PAGE, search: qlSearch, nodes: focus })
         .then((r) => {
           if (alive) {
             setLog(r.entries)
@@ -201,7 +256,7 @@ export default function Dashboard() {
       alive = false
       clearInterval(id)
     }
-  }, [qlPage, qlSearch])
+  }, [qlPage, qlSearch, focus])
 
   const malicious = cats.find((c) => c.category === 'malware')?.count ?? 0
   const areaData = series.map((p) => ({
@@ -245,6 +300,13 @@ export default function Dashboard() {
             {r.label}
           </button>
         ))}
+        {nodes.length > 0 && (
+          <>
+            <div className="spacer" />
+            <span className="muted">Focus</span>
+            <NodeFilter options={['master', ...nodes.map((n) => n.name)]} selected={focus} onChange={setFocus} />
+          </>
+        )}
       </div>
 
       <Section title="Overview">
@@ -450,7 +512,7 @@ export default function Dashboard() {
                   <span className={`badge ${e.action}`}>{e.action}</span>
                 </td>
                 <td>{e.rcode}</td>
-                <td>{e.elapsed_ms}</td>
+                <td>{e.elapsed_ms.toFixed(2)}</td>
               </tr>
             ))}
             {log.length === 0 && (

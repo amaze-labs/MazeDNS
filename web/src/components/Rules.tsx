@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Rule } from '../api'
 
-const categories = ['custom', 'ads', 'trackers', 'malware']
+const categories = ['custom', 'ads', 'trackers', 'malware', 'phishing', 'not-found']
 
 export default function Rules() {
   const [rules, setRules] = useState<Rule[]>([])

@@ -51,7 +51,7 @@ func TestRulesRewritesAndLog(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	recent, total, err := s.SearchQueryLog("", 10, 0)
+	recent, total, err := s.SearchQueryLog("", 10, 0, nil)
 	if err != nil || total != 1 || len(recent) != 1 || recent[0].Action != "blocked" {
 		t.Fatalf("unexpected query log: %+v total=%d err=%v", recent, total, err)
 	}

@@ -179,6 +179,9 @@ async function ok(r: Response): Promise<void> {
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
+const nodesParam = (nodes?: string[]) =>
+  nodes && nodes.length ? `&nodes=${nodes.map(encodeURIComponent).join(',')}` : ''
+
 export const api = {
   // auth
   authInfo: () => fetch('/api/auth/info').then(j<AuthInfo>),
@@ -211,13 +214,16 @@ export const api = {
 
   // data
   stats: () => fetch('/api/stats').then(j<Stats>),
-  timeseries: (hours = 24) =>
-    fetch(`/api/stats/timeseries?hours=${hours}`).then(j<{ step: number; points: SeriesPoint[] }>),
-  categories: (hours = 24) => fetch(`/api/stats/categories?hours=${hours}`).then(j<CategoryCount[]>),
-  insights: (hours = 24) => fetch(`/api/stats/insights?hours=${hours}`).then(j<Insights>),
-  queryLog: (opts: { limit?: number; offset?: number; search?: string } = {}) => {
+  timeseries: (hours = 24, nodes?: string[]) =>
+    fetch(`/api/stats/timeseries?hours=${hours}${nodesParam(nodes)}`).then(j<{ step: number; points: SeriesPoint[] }>),
+  categories: (hours = 24, nodes?: string[]) =>
+    fetch(`/api/stats/categories?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
+  insights: (hours = 24, nodes?: string[]) =>
+    fetch(`/api/stats/insights?hours=${hours}${nodesParam(nodes)}`).then(j<Insights>),
+  queryLog: (opts: { limit?: number; offset?: number; search?: string; nodes?: string[] } = {}) => {
     const p = new URLSearchParams({ limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) })
     if (opts.search) p.set('search', opts.search)
+    if (opts.nodes && opts.nodes.length) p.set('nodes', opts.nodes.join(','))
     return fetch(`/api/querylog?${p.toString()}`).then(j<{ entries: QueryLogEntry[]; total: number }>)
   },
 

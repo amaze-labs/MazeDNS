@@ -2,6 +2,7 @@ package store
 
 import (
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -15,9 +16,9 @@ type QueryLogEntry struct {
 	QType     string `json:"qtype"`
 	Action    string `json:"action"`
 	Category  string `json:"category"`
-	Rcode     string `json:"rcode"`
-	ElapsedMS int64  `json:"elapsed_ms"`
-	Node      string `json:"node"`
+	Rcode     string  `json:"rcode"`
+	ElapsedMS float64 `json:"elapsed_ms"` // milliseconds, sub-ms precision
+	Node      string  `json:"node"`
 }
 
 // InsertQueryLogBatch writes multiple entries in a single transaction.
@@ -127,19 +128,31 @@ func (s *Store) CountQueryLog() (int64, error) {
 
 // SearchQueryLog returns a page of query-log entries (newest first), optionally
 // filtered by a substring match on name or client, plus the total match count.
-func (s *Store) SearchQueryLog(search string, limit, offset int) ([]QueryLogEntry, int64, error) {
+func (s *Store) SearchQueryLog(search string, limit, offset int, nodes []string) ([]QueryLogEntry, int64, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	where := ""
+	var conds []string
 	var args []any
 	if search != "" {
-		where = " WHERE name LIKE ? OR client LIKE ?"
+		conds = append(conds, "(name LIKE ? OR client LIKE ?)")
 		like := "%" + search + "%"
 		args = append(args, like, like)
+	}
+	if len(nodes) > 0 {
+		ph := make([]string, len(nodes))
+		for i, n := range nodes {
+			ph[i] = "?"
+			args = append(args, n)
+		}
+		conds = append(conds, "node IN ("+strings.Join(ph, ",")+")")
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	var total int64
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM query_log`+where, args...).Scan(&total); err != nil {

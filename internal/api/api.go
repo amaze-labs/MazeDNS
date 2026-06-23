@@ -420,7 +420,7 @@ func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
 		step = 60
 	}
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
-	points, err := s.store.QueryTimeSeries(since, step)
+	points, err := s.store.QueryTimeSeries(since, step, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -434,7 +434,7 @@ func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
-	cats, err := s.store.BlockedByCategory(since)
+	cats, err := s.store.BlockedByCategory(since, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -451,15 +451,16 @@ func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	nodes := parseNodes(r)
 
 	// Everything is computed from the unified query log (this node + entries
 	// shipped by workers), so it is cluster-wide and exactly windowed.
-	in, err := s.store.ComputeInsights(since, 12)
+	in, err := s.store.ComputeInsights(since, 12, nodes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	byNode, err := s.store.QueriesByNode(since)
+	byNode, err := s.store.QueriesByNode(since, nodes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -476,6 +477,27 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 		"qtypes":         in.QTypes,
 		"by_node":        byNode,
 	})
+}
+
+// parseNodes reads a ?nodes=master,worker-a filter into store node values
+// ("master" maps to "", the master's own entries). Empty = all nodes.
+func parseNodes(r *http.Request) []string {
+	raw := strings.TrimSpace(r.URL.Query().Get("nodes"))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p == "master" {
+			p = ""
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func clampHours(s string) int {
@@ -545,7 +567,7 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
-	entries, total, err := s.store.SearchQueryLog(search, limit, offset)
+	entries, total, err := s.store.SearchQueryLog(search, limit, offset, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -716,7 +738,7 @@ func (s *Server) afterChange() {
 
 func normalizeCategory(c string) string {
 	switch c {
-	case "ads", "trackers", "malware", "custom":
+	case "ads", "trackers", "malware", "phishing", "not-found", "custom":
 		return c
 	default:
 		return "custom"

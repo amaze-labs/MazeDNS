@@ -146,7 +146,6 @@ export default function Cluster() {
         <thead>
           <tr>
             <th>Node</th>
-            <th>Key</th>
             <th>Address</th>
             <th>Queries</th>
             <th>Blocked</th>
@@ -159,9 +158,6 @@ export default function Cluster() {
           {nodes.map((n) => (
             <tr key={n.name}>
               <td>{n.name}</td>
-              <td>
-                <code>{n.key_prefix}…</code>
-              </td>
               <td>{n.address || '—'}</td>
               <td>{n.total.toLocaleString()}</td>
               <td>{n.blocked.toLocaleString()}</td>
@@ -176,7 +172,7 @@ export default function Cluster() {
           ))}
           {nodes.length === 0 && (
             <tr>
-              <td colSpan={8} className="muted">
+              <td colSpan={7} className="muted">
                 No nodes enrolled — add one above
               </td>
             </tr>

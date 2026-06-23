@@ -56,9 +56,9 @@ func Parse(text string) []Rule {
 			fields := strings.Fields(line)
 			switch {
 			case len(fields) >= 2 && net.ParseIP(fields[0]) != nil: // hosts format
-				add("deny", fields[1])
-			case len(fields) == 1: // plain domain list
-				add("deny", fields[0])
+				add("deny", hostFromToken(fields[1]))
+			case len(fields) == 1: // plain domain or URL list
+				add("deny", hostFromToken(fields[0]))
 			}
 		}
 	}
@@ -80,6 +80,26 @@ func adguardDomain(body string) (string, bool) {
 		return "", false
 	}
 	return body, true
+}
+
+// hostFromToken extracts the bare host from a token that may be a full URL or a
+// host:port (e.g. "https://sub.example.com/path?x=1" -> "sub.example.com"), so
+// lists made of plain URLs import correctly. A bare domain passes through.
+func hostFromToken(tok string) string {
+	if i := strings.Index(tok, "://"); i >= 0 { // strip scheme
+		tok = tok[i+3:]
+	}
+	if i := strings.LastIndexByte(tok, '@'); i >= 0 { // strip userinfo
+		tok = tok[i+1:]
+	}
+	if i := strings.IndexAny(tok, "/?#"); i >= 0 { // strip path/query/fragment
+		tok = tok[:i]
+	}
+	// Strip a :port (but leave bare domains, which have no colon, untouched).
+	if i := strings.LastIndexByte(tok, ':'); i >= 0 && !strings.Contains(tok, "]") {
+		tok = tok[:i]
+	}
+	return tok
 }
 
 func normalize(domain string) string {

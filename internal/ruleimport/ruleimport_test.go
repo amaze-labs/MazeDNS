@@ -15,6 +15,9 @@ func TestParse(t *testing.T) {
 0.0.0.0 hosts-blocked.test
 127.0.0.1 localhost
 plain-domain.test
+https://urlblock.test/ads?x=1
+http://user:pass@auth.test/path
+host-with-port.test:8443
 # trailing comment
 `
 	got := map[string]string{} // domain -> action
@@ -28,6 +31,9 @@ plain-domain.test
 		"good.example.com":    "allow",
 		"hosts-blocked.test":  "deny",
 		"plain-domain.test":   "deny",
+		"urlblock.test":       "deny", // host extracted from a full URL
+		"auth.test":           "deny", // userinfo stripped
+		"host-with-port.test": "deny", // :port stripped
 	}
 	for d, a := range want {
 		if got[d] != a {

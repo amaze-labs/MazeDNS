@@ -103,7 +103,7 @@ func main() {
 				Action:    ev.Action,
 				Category:  ev.Category,
 				Rcode:     ev.Rcode,
-				ElapsedMS: ev.Elapsed.Milliseconds(),
+				ElapsedMS: float64(ev.Elapsed.Microseconds()) / 1000.0,
 			})
 		},
 	})

@@ -2,8 +2,25 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
+
+// nodeFilterSQL builds an " AND node IN (?,...)" clause for the given nodes
+// (empty = no filter). The master's entries are stored with node="", so pass ""
+// to select the master.
+func nodeFilterSQL(nodes []string) (string, []any) {
+	if len(nodes) == 0 {
+		return "", nil
+	}
+	ph := make([]string, len(nodes))
+	args := make([]any, len(nodes))
+	for i, n := range nodes {
+		ph[i] = "?"
+		args[i] = n
+	}
+	return " AND node IN (" + strings.Join(ph, ",") + ")", args
+}
 
 // ClientStat is per-client query volume.
 type ClientStat struct {
@@ -54,25 +71,25 @@ type Insights struct {
 
 // ComputeInsights gathers all windowed breakdowns since sinceMs (top `limit`
 // clients/domains). Slices are never nil.
-func (s *Store) ComputeInsights(sinceMs int64, limit int) (Insights, error) {
+func (s *Store) ComputeInsights(sinceMs int64, limit int, nodes []string) (Insights, error) {
 	var in Insights
 	var err error
-	if in.Clients, err = s.QueriesByClient(sinceMs, limit); err != nil {
+	if in.Clients, err = s.QueriesByClient(sinceMs, limit, nodes); err != nil {
 		return in, err
 	}
-	if in.TopQueried, err = s.TopDomains(sinceMs, limit, false); err != nil {
+	if in.TopQueried, err = s.TopDomains(sinceMs, limit, false, nodes); err != nil {
 		return in, err
 	}
-	if in.TopBlocked, err = s.TopDomains(sinceMs, limit, true); err != nil {
+	if in.TopBlocked, err = s.TopDomains(sinceMs, limit, true, nodes); err != nil {
 		return in, err
 	}
-	if in.QTypes, err = s.QueryTypeBreakdown(sinceMs); err != nil {
+	if in.QTypes, err = s.QueryTypeBreakdown(sinceMs, nodes); err != nil {
 		return in, err
 	}
-	if in.UniqueClients, err = s.ClientCount(sinceMs); err != nil {
+	if in.UniqueClients, err = s.ClientCount(sinceMs, nodes); err != nil {
 		return in, err
 	}
-	if in.AvgLatencyMS, err = s.AvgLatencyMS(sinceMs); err != nil {
+	if in.AvgLatencyMS, err = s.AvgLatencyMS(sinceMs, nodes); err != nil {
 		return in, err
 	}
 	if in.Clients == nil {
@@ -99,22 +116,25 @@ type CategoryCount struct {
 // QueryTimeSeries returns per-bucket query counts (bucket size = stepSec) from
 // sinceMs (unix millis) to now, with empty buckets filled in so the series is
 // continuous.
-func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int) ([]SeriesPoint, error) {
+func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int, nodes []string) ([]SeriesPoint, error) {
 	if stepSec <= 0 {
 		stepSec = 3600
 	}
 	step := int64(stepSec)
+	nf, nargs := nodeFilterSQL(nodes)
 	rows, err := s.db.Query(
 		`SELECT (ts/1000/?)*? AS bucket, action, COUNT(*), COALESCE(SUM(elapsed_ms),0)
-		 FROM query_log WHERE ts >= ? GROUP BY bucket, action`, step, step, sinceMs)
+		 FROM query_log WHERE ts >= ?`+nf+` GROUP BY bucket, action`,
+		append([]any{step, step, sinceMs}, nargs...)...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	m := map[int64]*SeriesPoint{}
-	elapsed := map[int64]int64{} // bucket -> summed latency, for the mean
+	elapsed := map[int64]float64{} // bucket -> summed latency, for the mean
 	for rows.Next() {
-		var bucket, count, sumElapsed int64
+		var bucket, count int64
+		var sumElapsed float64
 		var action string
 		if err := rows.Scan(&bucket, &action, &count, &sumElapsed); err != nil {
 			return nil, err
@@ -140,7 +160,7 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int) ([]SeriesPoint, erro
 	}
 	for b, p := range m {
 		if p.Total > 0 {
-			p.AvgLatencyMS = float64(elapsed[b]) / float64(p.Total)
+			p.AvgLatencyMS = elapsed[b] / float64(p.Total)
 		}
 	}
 	start := (sinceMs / 1000 / step) * step
@@ -157,10 +177,12 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int) ([]SeriesPoint, erro
 }
 
 // BlockedByCategory returns blocked-query counts grouped by category since sinceMs.
-func (s *Store) BlockedByCategory(sinceMs int64) ([]CategoryCount, error) {
+func (s *Store) BlockedByCategory(sinceMs int64, nodes []string) ([]CategoryCount, error) {
+	nf, nargs := nodeFilterSQL(nodes)
 	rows, err := s.db.Query(
 		`SELECT CASE WHEN category='' THEN 'custom' ELSE category END AS cat, COUNT(*)
-		 FROM query_log WHERE action='blocked' AND ts >= ? GROUP BY cat ORDER BY COUNT(*) DESC`, sinceMs)
+		 FROM query_log WHERE action='blocked' AND ts >= ?`+nf+` GROUP BY cat ORDER BY COUNT(*) DESC`,
+		append([]any{sinceMs}, nargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -178,16 +200,19 @@ func (s *Store) BlockedByCategory(sinceMs int64) ([]CategoryCount, error) {
 
 // QueriesByClient returns the top clients by query volume since sinceMs, with
 // how many of each client's queries were blocked.
-func (s *Store) QueriesByClient(sinceMs int64, limit int) ([]ClientStat, error) {
+func (s *Store) QueriesByClient(sinceMs int64, limit int, nodes []string) ([]ClientStat, error) {
 	if limit <= 0 {
 		limit = 10
 	}
+	nf, nargs := nodeFilterSQL(nodes)
+	args := append([]any{sinceMs}, nargs...)
+	args = append(args, limit)
 	rows, err := s.db.Query(
 		`SELECT client,
 		        COUNT(*) AS total,
 		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END) AS blocked
-		 FROM query_log WHERE ts >= ? AND client <> ''
-		 GROUP BY client ORDER BY total DESC LIMIT ?`, sinceMs, limit)
+		 FROM query_log WHERE ts >= ? AND client <> ''`+nf+`
+		 GROUP BY client ORDER BY total DESC LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -205,16 +230,19 @@ func (s *Store) QueriesByClient(sinceMs int64, limit int) ([]ClientStat, error) 
 
 // TopDomains returns the most-queried names since sinceMs; blockedOnly limits
 // the result to blocked queries.
-func (s *Store) TopDomains(sinceMs int64, limit int, blockedOnly bool) ([]DomainStat, error) {
+func (s *Store) TopDomains(sinceMs int64, limit int, blockedOnly bool, nodes []string) ([]DomainStat, error) {
 	if limit <= 0 {
 		limit = 10
 	}
+	nf, nargs := nodeFilterSQL(nodes)
 	q := `SELECT name, COUNT(*) c FROM query_log WHERE ts >= ?`
 	if blockedOnly {
 		q += ` AND action='blocked'`
 	}
-	q += ` GROUP BY name ORDER BY c DESC LIMIT ?`
-	rows, err := s.db.Query(q, sinceMs, limit)
+	q += nf + ` GROUP BY name ORDER BY c DESC LIMIT ?`
+	args := append([]any{sinceMs}, nargs...)
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -231,9 +259,11 @@ func (s *Store) TopDomains(sinceMs int64, limit int, blockedOnly bool) ([]Domain
 }
 
 // QueryTypeBreakdown returns query counts grouped by record type since sinceMs.
-func (s *Store) QueryTypeBreakdown(sinceMs int64) ([]TypeStat, error) {
+func (s *Store) QueryTypeBreakdown(sinceMs int64, nodes []string) ([]TypeStat, error) {
+	nf, nargs := nodeFilterSQL(nodes)
 	rows, err := s.db.Query(
-		`SELECT qtype, COUNT(*) c FROM query_log WHERE ts >= ? GROUP BY qtype ORDER BY c DESC`, sinceMs)
+		`SELECT qtype, COUNT(*) c FROM query_log WHERE ts >= ?`+nf+` GROUP BY qtype ORDER BY c DESC`,
+		append([]any{sinceMs}, nargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -251,12 +281,14 @@ func (s *Store) QueryTypeBreakdown(sinceMs int64) ([]TypeStat, error) {
 
 // QueriesByNode returns per-node query and blocked counts since sinceMs from the
 // unified log ("" node is reported as "master").
-func (s *Store) QueriesByNode(sinceMs int64) ([]NodeQueryCount, error) {
+func (s *Store) QueriesByNode(sinceMs int64, nodes []string) ([]NodeQueryCount, error) {
+	nf, nargs := nodeFilterSQL(nodes)
 	rows, err := s.db.Query(
 		`SELECT CASE WHEN node='' THEN 'master' ELSE node END AS n,
 		        COUNT(*),
 		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END)
-		 FROM query_log WHERE ts >= ? GROUP BY n ORDER BY COUNT(*) DESC`, sinceMs)
+		 FROM query_log WHERE ts >= ?`+nf+` GROUP BY n ORDER BY COUNT(*) DESC`,
+		append([]any{sinceMs}, nargs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -273,18 +305,22 @@ func (s *Store) QueriesByNode(sinceMs int64) ([]NodeQueryCount, error) {
 }
 
 // ClientCount returns the number of distinct clients seen since sinceMs.
-func (s *Store) ClientCount(sinceMs int64) (int64, error) {
+func (s *Store) ClientCount(sinceMs int64, nodes []string) (int64, error) {
+	nf, nargs := nodeFilterSQL(nodes)
 	var n int64
 	err := s.db.QueryRow(
-		`SELECT COUNT(DISTINCT client) FROM query_log WHERE ts >= ? AND client <> ''`, sinceMs).Scan(&n)
+		`SELECT COUNT(DISTINCT client) FROM query_log WHERE ts >= ? AND client <> ''`+nf,
+		append([]any{sinceMs}, nargs...)...).Scan(&n)
 	return n, err
 }
 
 // AvgLatencyMS returns the mean query latency (ms) since sinceMs (0 if no rows).
-func (s *Store) AvgLatencyMS(sinceMs int64) (float64, error) {
+func (s *Store) AvgLatencyMS(sinceMs int64, nodes []string) (float64, error) {
+	nf, nargs := nodeFilterSQL(nodes)
 	var v sql.NullFloat64
 	if err := s.db.QueryRow(
-		`SELECT AVG(elapsed_ms) FROM query_log WHERE ts >= ?`, sinceMs).Scan(&v); err != nil {
+		`SELECT AVG(elapsed_ms) FROM query_log WHERE ts >= ?`+nf,
+		append([]any{sinceMs}, nargs...)...).Scan(&v); err != nil {
 		return 0, err
 	}
 	return v.Float64, nil

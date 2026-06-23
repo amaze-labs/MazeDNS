@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, type List, type Protection, type Rule } from '../api'
 
-const categories = ['custom', 'ads', 'trackers', 'malware']
+const categories = ['custom', 'ads', 'trackers', 'malware', 'phishing', 'not-found']
 const PAUSE_PRESETS = [
   { label: '30 seconds', seconds: 30 },
   { label: '5 minutes', seconds: 300 },
@@ -241,7 +241,7 @@ export default function Lists() {
         </tbody>
       </table>
 
-      <div className="charts">
+      <div className="charts" style={{ marginTop: 28 }}>
         <div className="panel">
           <h2>Import a list (file or paste)</h2>
           <p className="muted">AdGuard / Pi-hole / hosts syntax. Each file becomes a list named after the file.</p>

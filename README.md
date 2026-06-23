@@ -179,11 +179,13 @@ per-client stats collapse to one client. To preserve real client IPs:
 
 ### Compose
 
-- **Dev:** `docker compose up --build` (`docker-compose.yml`) — master + UI on `:8080`.
-- **Dev clustering:** `docker compose --profile cluster up --build` adds two
-  workers (`worker-a`, `worker-b`) that the master pre-enrolls via
-  `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` — they appear in the Cluster tab with no
-  manual key exchange (resolvers on `:5311` / `:5312`, metrics on `:9091` / `:9092`).
+- **Dev:** `docker compose up --build` (`docker-compose.yml`) — a full local
+  cluster: master + UI on `:8080`, two workers (`worker-a`/`worker-b`,
+  pre-enrolled via `MAZEDNS_CLUSTER_BOOTSTRAP_NODES`; resolvers on `:5311`/`:5312`,
+  metrics on `:9091`/`:9092`), plus four **traffic-generator** clients that query
+  the nodes over the compose network. Because that traffic is container-to-container
+  it keeps each client's own IP, so the dashboard fills with real per-client
+  metrics, query types, and blocked domains. Just the master? `docker compose up mazedns --build`.
 - **Prod:** `MAZEDNS_ADMIN_PASSWORD=… docker compose -f docker-compose.prod.yml up -d`
   — pulls `ghcr.io/ipmaze/mazedns:latest` and runs a master + a worker.
 

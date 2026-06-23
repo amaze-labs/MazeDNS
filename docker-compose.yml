@@ -73,6 +73,55 @@ services:
     volumes:
       - worker-b-data:/data
 
+  # ── Traffic generators ──────────────────────────────────────────────────
+  # Each client queries a node directly over the compose network, so the
+  # resolver sees the client container's own IP (distinct per client) — that's
+  # what populates the per-client dashboard metrics. They also hit blocklisted
+  # domains so blocked/category stats fill in.
+  client-home:
+    build: ./dev/traffic
+    image: mazedns-traffic:dev
+    container_name: mazedns-client-home
+    restart: unless-stopped
+    depends_on: [mazedns]
+    environment:
+      TARGET: mazedns
+      SLEEP: "2"
+      DOMAINS: "google.com youtube.com github.com wikipedia.org netflix.com doubleclick.net ads.example.com"
+
+  client-office:
+    build: ./dev/traffic
+    image: mazedns-traffic:dev
+    container_name: mazedns-client-office
+    restart: unless-stopped
+    depends_on: [mazedns]
+    environment:
+      TARGET: mazedns
+      SLEEP: "5"
+      DOMAINS: "microsoft.com slack.com atlassian.com zoom.us googleadservices.com tracking.example.org example.com"
+
+  client-site-a:
+    build: ./dev/traffic
+    image: mazedns-traffic:dev
+    container_name: mazedns-client-site-a
+    restart: unless-stopped
+    depends_on: [worker-a]
+    environment:
+      TARGET: worker-a
+      SLEEP: "4"
+      DOMAINS: "amazon.com reddit.com apple.com cloudflare.com doubleclick.net"
+
+  client-site-b:
+    build: ./dev/traffic
+    image: mazedns-traffic:dev
+    container_name: mazedns-client-site-b
+    restart: unless-stopped
+    depends_on: [worker-b]
+    environment:
+      TARGET: worker-b
+      SLEEP: "6"
+      DOMAINS: "spotify.com twitch.tv linkedin.com ads.example.com bbc.co.uk"
+
 volumes:
   mazedns-data:
   worker-a-data:

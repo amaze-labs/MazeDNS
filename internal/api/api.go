@@ -108,6 +108,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{name}", s.requireRole(roleAdmin, s.deleteNode))
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
+			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
 		}
 
 		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
@@ -182,9 +183,6 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(raw), &st)
 	}
 	_ = s.store.TouchNode(node.Name, addr, ver, st)
-	if raw := r.Header.Get("X-MazeDNS-Insights"); raw != "" {
-		_ = s.store.SetNodeInsights(node.Name, raw)
-	}
 
 	// Workers receive the effective (active) rule set so list enable/disable and
 	// refreshes propagate without the worker needing the lists table.
@@ -207,6 +205,40 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		rewrites = []store.Rewrite{}
 	}
 	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, PausedUntil: pausedUntil})
+}
+
+// nodeFromKey authenticates a worker by its Bearer node key, or returns nil.
+func (s *Server) nodeFromKey(r *http.Request) *store.Node {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return nil
+	}
+	node, err := s.store.NodeByKeyHash(hashKey(strings.TrimPrefix(h, prefix)))
+	if err != nil {
+		return nil
+	}
+	return node
+}
+
+// clusterLog ingests a batch of query-log entries shipped by a worker and stores
+// them tagged with the worker's node name (node-key auth).
+func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
+	node := s.nodeFromKey(r)
+	if node == nil {
+		writeError(w, http.StatusUnauthorized, "invalid node key")
+		return
+	}
+	var entries []store.QueryLogEntry
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&entries); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ingested": len(entries)})
 }
 
 func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
@@ -420,22 +452,28 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
 
-	local, err := s.store.ComputeInsights(since, 25)
+	// Everything is computed from the unified query log (this node + entries
+	// shipped by workers), so it is cluster-wide and exactly windowed.
+	in, err := s.store.ComputeInsights(since, 12)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	nodeIns, _ := s.store.AllNodeInsights()
-	merged := mergeInsights(local, nodeIns, 12)
-	byNode := byNodeQueries(local, nodeIns)
-
+	byNode, err := s.store.QueriesByNode(since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if byNode == nil {
+		byNode = []store.NodeQueryCount{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"unique_clients": merged.UniqueClients,
-		"avg_latency_ms": merged.AvgLatencyMS,
-		"clients":        merged.Clients,
-		"top_queried":    merged.TopQueried,
-		"top_blocked":    merged.TopBlocked,
-		"qtypes":         merged.QTypes,
+		"unique_clients": in.UniqueClients,
+		"avg_latency_ms": in.AvgLatencyMS,
+		"clients":        in.Clients,
+		"top_queried":    in.TopQueried,
+		"top_blocked":    in.TopBlocked,
+		"qtypes":         in.QTypes,
 		"by_node":        byNode,
 	})
 }

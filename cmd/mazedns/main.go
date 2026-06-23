@@ -199,14 +199,7 @@ func main() {
 				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 			}
 		}
-		// Report this worker's recent breakdowns so the master can show
-		// cluster-wide per-client/domain/type stats.
-		insightsFn := func() store.Insights {
-			since := time.Now().Add(-24 * time.Hour).UnixMilli()
-			in, _ := st.ComputeInsights(since, 25)
-			return in
-		}
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, insightsFn, res.SetBlockPausedUntil)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil)
 		go ag.Run(agentCtx)
 	}
 
@@ -215,6 +208,23 @@ func main() {
 	if !worker {
 		go refresher.Run(context.Background())
 	}
+
+	// Bound query-log growth: the master keeps the full dashboard window (it also
+	// ingests workers' shipped logs); a worker only needs a short buffer before
+	// shipping. Pruning runs hourly, off the DNS path.
+	retention := 90 * 24 * time.Hour
+	if worker {
+		retention = 48 * time.Hour
+	}
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for range t.C {
+			if n, err := st.PruneQueryLog(time.Now().Add(-retention).UnixMilli()); err == nil && n > 0 {
+				slog.Info("query log pruned", "removed", n)
+			}
+		}
+	}()
 
 	// DNS server (UDP/TCP).
 	dnsAddr := net.JoinHostPort(cfg.Listen.Address, strconv.Itoa(cfg.Listen.Port))

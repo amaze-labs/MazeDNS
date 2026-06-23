@@ -34,7 +34,7 @@ func TestAgentSync(t *testing.T) {
 	defer st.Close()
 
 	reloaded := false
-	ag := NewAgent(ts.URL, "tok", time.Second, st, func() error { reloaded = true; return nil }, func() store.NodeStats { return store.NodeStats{} }, nil, nil)
+	ag := NewAgent(ts.URL, "tok", time.Second, st, func() error { reloaded = true; return nil }, func() store.NodeStats { return store.NodeStats{} }, nil)
 	ag.syncOnce(context.Background())
 
 	rules, _ := st.ListRules()
@@ -62,7 +62,7 @@ func TestAgentSync(t *testing.T) {
 	}
 
 	// Wrong token -> fetch error.
-	bad := NewAgent(ts.URL, "wrong", time.Second, st, nil, nil, nil, nil)
+	bad := NewAgent(ts.URL, "wrong", time.Second, st, nil, nil, nil)
 	if _, err := bad.fetch(context.Background()); err == nil {
 		t.Fatal("expected an auth error with a wrong token")
 	}

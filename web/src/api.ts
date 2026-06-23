@@ -18,6 +18,7 @@ export interface QueryLogEntry {
   action: string
   rcode: string
   elapsed_ms: number
+  node: string
 }
 
 export interface Rule {

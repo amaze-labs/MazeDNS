@@ -237,6 +237,23 @@ func (s *Store) ActiveRules() ([]Rule, error) {
 	return out, rows.Err()
 }
 
+// GetMetaInt returns an integer meta value (0 if the key is absent).
+func (s *Store) GetMetaInt(key string) (int64, error) {
+	var v int64
+	err := s.db.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return v, err
+}
+
+// SetMetaInt upserts an integer meta value.
+func (s *Store) SetMetaInt(key string, v int64) error {
+	_, err := s.db.Exec(
+		`INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, v)
+	return err
+}
+
 // GetBlockPausedUntil returns the unix time until which blocking is paused (0 = active).
 func (s *Store) GetBlockPausedUntil() (int64, error) {
 	var v int64

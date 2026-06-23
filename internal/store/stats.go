@@ -24,6 +24,13 @@ type TypeStat struct {
 	Count int64  `json:"count"`
 }
 
+// NodeQueryCount is a per-node query/blocked count (for the cluster distribution).
+type NodeQueryCount struct {
+	Node    string `json:"node"`
+	Total   int64  `json:"total"`
+	Blocked int64  `json:"blocked"`
+}
+
 // SeriesPoint is a time bucket with per-action query counts and mean latency.
 type SeriesPoint struct {
 	TS           int64   `json:"ts"` // bucket start, unix seconds
@@ -238,6 +245,29 @@ func (s *Store) QueryTypeBreakdown(sinceMs int64) ([]TypeStat, error) {
 			return nil, err
 		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// QueriesByNode returns per-node query and blocked counts since sinceMs from the
+// unified log ("" node is reported as "master").
+func (s *Store) QueriesByNode(sinceMs int64) ([]NodeQueryCount, error) {
+	rows, err := s.db.Query(
+		`SELECT CASE WHEN node='' THEN 'master' ELSE node END AS n,
+		        COUNT(*),
+		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END)
+		 FROM query_log WHERE ts >= ? GROUP BY n ORDER BY COUNT(*) DESC`, sinceMs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeQueryCount
+	for rows.Next() {
+		var c NodeQueryCount
+		if err := rows.Scan(&c.Node, &c.Total, &c.Blocked); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

@@ -334,7 +334,6 @@ export default function Dashboard() {
                 <Line type="monotone" dataKey="ms" stroke="#ffb454" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
-            <p className="muted">This node only</p>
           </div>
         </div>
       </Section>
@@ -430,6 +429,7 @@ export default function Dashboard() {
           <thead>
             <tr>
               <th>Time</th>
+              <th>Node</th>
               <th>Client</th>
               <th>Name</th>
               <th>Type</th>
@@ -442,6 +442,7 @@ export default function Dashboard() {
             {log.map((e) => (
               <tr key={e.id}>
                 <td>{new Date(e.ts).toLocaleTimeString()}</td>
+                <td>{e.node || 'master'}</td>
                 <td>{e.client}</td>
                 <td>{e.name}</td>
                 <td>{e.qtype}</td>
@@ -454,7 +455,7 @@ export default function Dashboard() {
             ))}
             {log.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={8} className="muted">
                   No matching queries
                 </td>
               </tr>

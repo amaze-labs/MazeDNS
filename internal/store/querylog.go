@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// QueryLogEntry is one logged DNS query.
+// QueryLogEntry is one logged DNS query. Node is the resolver that handled it
+// ("" = this node / master; otherwise a worker name shipped to the master).
 type QueryLogEntry struct {
 	ID        int64  `json:"id"`
 	TS        int64  `json:"ts"` // unix millis
@@ -16,6 +17,7 @@ type QueryLogEntry struct {
 	Category  string `json:"category"`
 	Rcode     string `json:"rcode"`
 	ElapsedMS int64  `json:"elapsed_ms"`
+	Node      string `json:"node"`
 }
 
 // InsertQueryLogBatch writes multiple entries in a single transaction.
@@ -43,27 +45,77 @@ func (s *Store) InsertQueryLogBatch(entries []QueryLogEntry) error {
 	return tx.Commit()
 }
 
-// RecentQueryLog returns up to limit most recent entries (newest first).
-func (s *Store) RecentQueryLog(limit int) ([]QueryLogEntry, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 100
+// InsertNodeQueryLog writes a batch of entries received from a worker, tagged
+// with the worker's node name (preserving the original timestamps).
+func (s *Store) InsertNodeQueryLog(node string, entries []QueryLogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, node)
+		 VALUES(?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, e := range entries {
+		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, node); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// QueryLogSince returns up to limit entries with id greater than afterID
+// (oldest first) and the highest id returned — used by workers to ship new
+// entries to the master incrementally.
+func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64, error) {
+	if limit <= 0 || limit > 10000 {
+		limit = 5000
 	}
 	rows, err := s.db.Query(
 		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms
-		 FROM query_log ORDER BY id DESC LIMIT ?`, limit)
+		 FROM query_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
 	if err != nil {
-		return nil, err
+		return nil, afterID, err
 	}
 	defer rows.Close()
 	var out []QueryLogEntry
+	maxID := afterID
 	for rows.Next() {
 		var e QueryLogEntry
 		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS); err != nil {
-			return nil, err
+			return nil, afterID, err
+		}
+		if e.ID > maxID {
+			maxID = e.ID
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, maxID, rows.Err()
+}
+
+// MaxQueryLogID returns the highest query-log id (0 if empty).
+func (s *Store) MaxQueryLogID() (int64, error) {
+	var id int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM query_log`).Scan(&id)
+	return id, err
+}
+
+// PruneQueryLog deletes entries older than beforeMs (unix millis).
+func (s *Store) PruneQueryLog(beforeMs int64) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM query_log WHERE ts < ?`, beforeMs)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // CountQueryLog returns the total number of logged queries.
@@ -94,7 +146,7 @@ func (s *Store) SearchQueryLog(search string, limit, offset int) ([]QueryLogEntr
 		return nil, 0, err
 	}
 	rows, err := s.db.Query(
-		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node
 		 FROM query_log`+where+` ORDER BY id DESC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...)
 	if err != nil {
@@ -104,7 +156,7 @@ func (s *Store) SearchQueryLog(search string, limit, offset int) ([]QueryLogEntr
 	var out []QueryLogEntry
 	for rows.Next() {
 		var e QueryLogEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, e)

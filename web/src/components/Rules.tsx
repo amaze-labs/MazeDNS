@@ -37,7 +37,7 @@ export default function Rules() {
     <div>
       <h2>Manual rules</h2>
       <p className="muted">
-        Individual allow/deny entries. Imported blocklists live under <strong>Lists</strong>.
+        Individual allow/deny entries. Imported blocklists live under the <strong>Blocklists</strong> tab.
       </p>
       {err && <div className="error">{err}</div>}
 

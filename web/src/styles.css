@@ -819,6 +819,32 @@ input.search {
   cursor: pointer;
 }
 
+/* Sub-tabs (e.g. Blocklists / Manual rules under Filtering) */
+.subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.subtabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.subtabs button:hover {
+  color: var(--fg);
+}
+.subtabs button.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
 /* Sortable query-log headers */
 th.sortable {
   cursor: pointer;

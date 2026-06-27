@@ -62,3 +62,12 @@ range + node focus); recent-queries has search only.
 - [x] Split traffic by selected window.
 - [x] Curated KPIs with show/hide + persistence.
 - [x] Recent queries: sortable columns + action/type/node filters.
+
+### Follow-up: navigation reorganization
+- [x] **Recent queries → dedicated "queries" tab** (`Queries.tsx`, "Requests"
+      explorer) with its own window + node focus + action/type/search/sort.
+- [x] **Merged Rules + Lists into one "filtering" tab** (`Filtering.tsx`) with
+      Blocklists / Manual rules sub-tabs.
+- [x] Shared filter UI (ranges, node-focus dropdown, node colors) extracted to
+      `web/src/components/filters.tsx`; the query log honors the time window too
+      (new `hours`/`SinceMs` on the query-log query).

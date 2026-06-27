@@ -18,13 +18,13 @@ import {
 import {
   api,
   type Stats,
-  type QueryLogEntry,
   type SeriesPoint,
   type CategoryCount,
   type Insights,
   type Node,
   type LatencyPoint,
 } from '../api'
+import { RANGES, RangeNodeBar, OVERALL_COLOR, colorAt } from './filters'
 
 const catColors: Record<string, string> = {
   ads: '#4ea1ff',
@@ -40,22 +40,8 @@ const sourceColors: Record<string, string> = {
   Blocked: '#ff5d6c',
   Rewritten: '#c48aff',
 }
-const NODE_PALETTE = ['#4ea1ff', '#3ecf8e', '#c48aff', '#ffb454', '#ff5d6c', '#56d4dd', '#e070c0']
-// "overall" is not a node — it gets a reserved neutral color, never a palette slot.
-const OVERALL_COLOR = '#e6e9ee'
-// colorAt maps any integer (including -1) to a stable palette color.
-const colorAt = (i: number) => NODE_PALETTE[((i % NODE_PALETTE.length) + NODE_PALETTE.length) % NODE_PALETTE.length]
 const ONLINE_WINDOW = 120
 const tooltipStyle = { background: '#171c23', border: '1px solid #262d36', borderRadius: 8 }
-const PAGE = 25
-
-const RANGES = [
-  { label: '1h', hours: 1 },
-  { label: '24h', hours: 24 },
-  { label: '7d', hours: 24 * 7 },
-  { label: '30d', hours: 24 * 30 },
-  { label: '90d', hours: 24 * 90 },
-]
 
 const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
 
@@ -88,9 +74,6 @@ const loadJSON = <T,>(key: string, fallback: T): T => {
     return fallback
   }
 }
-
-// ACTIONS are the resolver's action values, for the recent-queries filter.
-const ACTIONS = ['forward', 'cache', 'blocked', 'rewrite', 'authoritative', 'error', 'refused']
 
 const bucketLabel = (ts: number, hours: number) => {
   const d = new Date(ts * 1000)
@@ -166,57 +149,6 @@ function Donut({ data, height = 180 }: { data: { name: string; value: number; fi
   )
 }
 
-// NodeFilter is a multi-select dropdown to focus the dashboard on one or more
-// nodes. Empty selection = all nodes.
-function NodeFilter({
-  options,
-  selected,
-  onChange,
-  color,
-}: {
-  options: string[]
-  selected: string[]
-  onChange: (s: string[]) => void
-  color: (name: string) => string
-}) {
-  const [open, setOpen] = useState(false)
-  const allActive = selected.length === 0
-  const label = allActive ? 'All nodes' : selected.length === 1 ? selected[0] : `${selected.length} nodes`
-  const toggle = (n: string) =>
-    onChange(selected.includes(n) ? selected.filter((x) => x !== n) : [...selected, n])
-  return (
-    <div className="nodefilter">
-      <button className={`nf-trigger ${open ? 'open' : ''} ${allActive ? '' : 'active'}`} onClick={() => setOpen((o) => !o)}>
-        <span className="nf-label">{label}</span>
-        <span className="nf-caret">▾</span>
-      </button>
-      {open && (
-        <>
-          <div className="nodefilter-backdrop" onClick={() => setOpen(false)} />
-          <div className="nodefilter-menu">
-            <div className="nf-head">Focus on nodes</div>
-            <button type="button" className={`nf-opt ${allActive ? 'sel' : ''}`} onClick={() => onChange([])}>
-              <span className="nf-check">{allActive ? '✓' : ''}</span>
-              <span className="nf-name">All nodes</span>
-            </button>
-            <div className="nf-divider" />
-            {options.map((o) => {
-              const sel = selected.includes(o)
-              return (
-                <button key={o} type="button" className={`nf-opt ${sel ? 'sel' : ''}`} onClick={() => toggle(o)}>
-                  <span className="nf-check">{sel ? '✓' : ''}</span>
-                  <span className="nf-swatch" style={{ background: color(o) }} />
-                  <span className="nf-name">{o}</span>
-                </button>
-              )
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 export default function Dashboard() {
   const [hours, setHours] = useState(loadHours)
   const [focus, setFocus] = useState<string[]>(loadFocus)
@@ -232,17 +164,6 @@ export default function Dashboard() {
   const [kpiOrder, setKpiOrder] = useState<string[]>(() => loadJSON('mazedns.kpiOrder', DEFAULT_KPI_ORDER))
   const [kpiHidden, setKpiHidden] = useState<string[]>(() => loadJSON('mazedns.kpiHidden', DEFAULT_KPI_HIDDEN))
   const [customizing, setCustomizing] = useState(false)
-
-  // query log (paginated, searchable, filterable, sortable)
-  const [log, setLog] = useState<QueryLogEntry[]>([])
-  const [qlTotal, setQlTotal] = useState(0)
-  const [qlPage, setQlPage] = useState(0)
-  const [qlInput, setQlInput] = useState('')
-  const [qlSearch, setQlSearch] = useState('')
-  const [qlAction, setQlAction] = useState('')
-  const [qlType, setQlType] = useState('')
-  const [qlSort, setQlSort] = useState('time')
-  const [qlDesc, setQlDesc] = useState(true)
 
   const rangeLabel = RANGES.find((r) => r.hours === hours)?.label ?? `${hours}h`
 
@@ -290,45 +211,6 @@ export default function Dashboard() {
       clearInterval(id)
     }
   }, [hours, focus])
-
-  // Debounce the search box.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setQlSearch(qlInput.trim())
-      setQlPage(0)
-    }, 400)
-    return () => clearTimeout(t)
-  }, [qlInput])
-
-  useEffect(() => {
-    let alive = true
-    const fetchLog = () =>
-      api
-        .queryLog({
-          limit: PAGE,
-          offset: qlPage * PAGE,
-          search: qlSearch,
-          nodes: focus,
-          action: qlAction,
-          qtype: qlType,
-          sort: qlSort,
-          desc: qlDesc,
-          hours,
-        })
-        .then((r) => {
-          if (alive) {
-            setLog(r.entries)
-            setQlTotal(r.total)
-          }
-        })
-        .catch(() => {})
-    fetchLog()
-    const id = setInterval(fetchLog, 5000)
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [qlPage, qlSearch, focus, qlAction, qlType, qlSort, qlDesc, hours])
 
   const malicious = cats.find((c) => c.category === 'malware')?.count ?? 0
   const areaData = series.map((p) => ({
@@ -382,7 +264,6 @@ export default function Dashboard() {
   const onlineNodes = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
   const clusterQ = nodes.reduce((sum, n) => sum + n.total, 0)
   const clusterB = nodes.reduce((sum, n) => sum + n.blocked, 0)
-  const lastPage = Math.max(0, Math.ceil(qlTotal / PAGE) - 1)
 
   // KPI registry — every windowed card honors the time range + node focus (all
   // values derive from `totals`/`ins`, which are fetched with hours + focus).
@@ -424,38 +305,18 @@ export default function Dashboard() {
   const toggleKpi = (id: string) =>
     setKpiHidden((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]))
 
-  // Clicking a column header sorts by it; clicking the active column flips the
-  // direction. Time defaults to newest-first, other columns to ascending.
-  const setSort = (col: string) => {
-    if (qlSort === col) {
-      setQlDesc((d) => !d)
-    } else {
-      setQlSort(col)
-      setQlDesc(col === 'time')
-    }
-    setQlPage(0)
-  }
-  const sortArrow = (col: string) => (qlSort === col ? (qlDesc ? ' ↓' : ' ↑') : '')
-
   return (
     <div>
       {err && <div className="error">{err}</div>}
 
-      <div className="range-tabs">
-        <span className="muted">Window</span>
-        {RANGES.map((r) => (
-          <button key={r.hours} className={hours === r.hours ? 'active' : ''} onClick={() => setHours(r.hours)}>
-            {r.label}
-          </button>
-        ))}
-        {nodes.length > 0 && (
-          <>
-            <div className="spacer" />
-            <span className="muted">Focus</span>
-            <NodeFilter options={['master', ...nodes.map((n) => n.name)]} selected={focus} onChange={setFocus} color={nodeColor} />
-          </>
-        )}
-      </div>
+      <RangeNodeBar
+        hours={hours}
+        setHours={setHours}
+        focus={focus}
+        setFocus={setFocus}
+        nodeNames={nodes.length > 0 ? ['master', ...nodes.map((n) => n.name)] : []}
+        color={nodeColor}
+      />
 
       <Section
         title={`Overview (${rangeLabel})`}
@@ -656,85 +517,6 @@ export default function Dashboard() {
         </div>
       </Section>
 
-      <Section
-        title="Recent queries"
-        right={
-          <div className="ql-filters">
-            <select className="ql-select" value={qlAction} onChange={(e) => { setQlAction(e.target.value); setQlPage(0) }}>
-              <option value="">All actions</option>
-              {ACTIONS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-            <select className="ql-select" value={qlType} onChange={(e) => { setQlType(e.target.value); setQlPage(0) }}>
-              <option value="">All types</option>
-              {(ins?.qtypes ?? []).map((t) => (
-                <option key={t.qtype} value={t.qtype}>
-                  {t.qtype}
-                </option>
-              ))}
-            </select>
-            <input
-              className="search"
-              placeholder="search name or client…"
-              value={qlInput}
-              onChange={(e) => setQlInput(e.target.value)}
-            />
-          </div>
-        }
-      >
-        <table className="sortable">
-          <thead>
-            <tr>
-              <th className="sortable" onClick={() => setSort('time')}>Time{sortArrow('time')}</th>
-              <th className="sortable" onClick={() => setSort('node')}>Node{sortArrow('node')}</th>
-              <th className="sortable" onClick={() => setSort('client')}>Client{sortArrow('client')}</th>
-              <th className="sortable" onClick={() => setSort('name')}>Name{sortArrow('name')}</th>
-              <th className="sortable" onClick={() => setSort('qtype')}>Type{sortArrow('qtype')}</th>
-              <th className="sortable" onClick={() => setSort('action')}>Action{sortArrow('action')}</th>
-              <th className="sortable" onClick={() => setSort('rcode')}>Rcode{sortArrow('rcode')}</th>
-              <th className="sortable" onClick={() => setSort('ms')}>ms{sortArrow('ms')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {log.map((e) => (
-              <tr key={e.id}>
-                <td>{new Date(e.ts).toLocaleTimeString()}</td>
-                <td>{e.node || 'master'}</td>
-                <td>{e.client}</td>
-                <td>{e.name}</td>
-                <td>{e.qtype}</td>
-                <td>
-                  <span className={`badge ${e.action}`}>{e.action}</span>
-                </td>
-                <td>{e.rcode}</td>
-                <td>{e.elapsed_ms.toFixed(2)}</td>
-              </tr>
-            ))}
-            {log.length === 0 && (
-              <tr>
-                <td colSpan={8} className="muted">
-                  No matching queries
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        <div className="pager">
-          <span className="muted">
-            {qlTotal.toLocaleString()} match{qlTotal === 1 ? '' : 'es'} · page {qlPage + 1} of {lastPage + 1}
-          </span>
-          <div className="spacer" />
-          <button className="btn" disabled={qlPage <= 0} onClick={() => setQlPage((p) => Math.max(0, p - 1))}>
-            ‹ Prev
-          </button>
-          <button className="btn" disabled={qlPage >= lastPage} onClick={() => setQlPage((p) => Math.min(lastPage, p + 1))}>
-            Next ›
-          </button>
-        </div>
-      </Section>
     </div>
   )
 }

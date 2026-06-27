@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import Dashboard from './components/Dashboard'
-import Rules from './components/Rules'
-import Lists from './components/Lists'
+import Queries from './components/Queries'
+import Filtering from './components/Filtering'
 import Rewrites from './components/Rewrites'
 import Cluster from './components/Cluster'
 import Settings from './components/Settings'
@@ -10,7 +10,7 @@ import AccountMenu from './components/AccountMenu'
 import Login from './components/Login'
 import { api, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'dashboard' | 'rules' | 'lists' | 'rewrites' | 'cluster' | 'settings' | 'account'
+type Tab = 'dashboard' | 'queries' | 'filtering' | 'rewrites' | 'cluster' | 'settings' | 'account'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -47,7 +47,7 @@ export default function App() {
   }
 
   // 'account' is reached from the avatar menu, not the nav.
-  const tabs: Tab[] = ['dashboard', 'rules', 'lists', 'rewrites']
+  const tabs: Tab[] = ['dashboard', 'queries', 'filtering', 'rewrites']
   if (info?.cluster_enabled) tabs.push('cluster')
   tabs.push('settings')
 
@@ -74,8 +74,8 @@ export default function App() {
       </header>
       <main>
         {tab === 'dashboard' && <Dashboard />}
-        {tab === 'rules' && <Rules />}
-        {tab === 'lists' && <Lists />}
+        {tab === 'queries' && <Queries />}
+        {tab === 'filtering' && <Filtering />}
         {tab === 'rewrites' && <Rewrites />}
         {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
         {tab === 'settings' && <Settings />}

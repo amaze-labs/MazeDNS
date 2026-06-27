@@ -13,6 +13,9 @@ type Metrics struct {
 	reg              *prometheus.Registry
 	Queries          *prometheus.CounterVec
 	UpstreamDuration prometheus.Histogram
+	// UpstreamTCPFallback counts UDP responses that were truncated and retried
+	// over TCP — a useful signal of DNSSEC/large-response cost.
+	UpstreamTCPFallback prometheus.Counter
 }
 
 // New creates and registers the collectors.
@@ -31,8 +34,13 @@ func New() *Metrics {
 			Help:      "Upstream query round-trip time.",
 			Buckets:   prometheus.DefBuckets,
 		}),
+		UpstreamTCPFallback: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: "mazedns",
+			Name:      "upstream_tcp_fallback_total",
+			Help:      "UDP responses that were truncated and retried over TCP.",
+		}),
 	}
-	reg.MustRegister(m.Queries, m.UpstreamDuration)
+	reg.MustRegister(m.Queries, m.UpstreamDuration, m.UpstreamTCPFallback)
 	return m
 }
 

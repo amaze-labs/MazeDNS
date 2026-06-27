@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -120,10 +121,14 @@ func main() {
 		block := filter.New()
 		if cfg.Filter.Enabled {
 			for _, path := range cfg.Filter.BlocklistFiles {
-				if n, lerr := block.LoadHostsFile(path, "custom"); lerr != nil {
+				// Tag file-loaded domains with the list's own name (its basename)
+				// rather than "custom", so they are distinguishable from the
+				// user's manually-added "custom" rules in stats and the UI.
+				cat := listCategory(path)
+				if n, lerr := block.LoadHostsFile(path, cat); lerr != nil {
 					slog.Warn("blocklist load failed", "file", path, "err", lerr)
 				} else {
-					slog.Info("blocklist loaded", "file", path, "domains", n)
+					slog.Info("blocklist loaded", "file", path, "category", cat, "domains", n)
 				}
 			}
 		}
@@ -317,6 +322,21 @@ func main() {
 	if apiSrv != nil {
 		_ = apiSrv.Shutdown(ctx)
 	}
+}
+
+// listCategory derives a blocklist's category label from its filename, e.g.
+// "/etc/mazedns/stevenblack.hosts" -> "stevenblack". This keeps file-sourced
+// blocks separate from the user's "custom" rules. Falls back to "blocklist".
+func listCategory(path string) string {
+	base := strings.TrimLeft(filepath.Base(path), ".")
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.ToLower(strings.TrimSpace(base))
+	if base == "" {
+		return "blocklist"
+	}
+	return base
 }
 
 func toForwardGroups(fs []config.Forwarder) []resolver.ForwardGroup {

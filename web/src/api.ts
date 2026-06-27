@@ -108,6 +108,15 @@ export interface TypeStat {
   count: number
 }
 
+export interface WindowTotals {
+  total: number
+  blocked: number
+  cached: number
+  forwarded: number
+  rewritten: number
+  errors: number
+}
+
 export interface Insights {
   unique_clients: number
   avg_latency_ms: number
@@ -116,6 +125,7 @@ export interface Insights {
   top_blocked: DomainStat[]
   qtypes: TypeStat[]
   by_node: NodeQueries[]
+  totals: WindowTotals
 }
 
 export interface ForwardGroup {
@@ -230,9 +240,26 @@ export const api = {
     fetch(`/api/stats/latency?hours=${hours}${nodesParam(nodes)}`).then(
       j<{ step: number; nodes: string[]; points: LatencyPoint[] }>,
     ),
-  queryLog: (opts: { limit?: number; offset?: number; search?: string; nodes?: string[] } = {}) => {
+  queryLog: (
+    opts: {
+      limit?: number
+      offset?: number
+      search?: string
+      nodes?: string[]
+      action?: string
+      qtype?: string
+      sort?: string
+      desc?: boolean
+      hours?: number
+    } = {},
+  ) => {
     const p = new URLSearchParams({ limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) })
+    if (opts.hours) p.set('hours', String(opts.hours))
     if (opts.search) p.set('search', opts.search)
+    if (opts.action) p.set('action', opts.action)
+    if (opts.qtype) p.set('qtype', opts.qtype)
+    if (opts.sort) p.set('sort', opts.sort)
+    if (opts.desc) p.set('desc', 'true')
     if (opts.nodes && opts.nodes.length) p.set('nodes', opts.nodes.join(','))
     return fetch(`/api/querylog?${p.toString()}`).then(j<{ entries: QueryLogEntry[]; total: number }>)
   },

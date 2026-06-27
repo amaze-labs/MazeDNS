@@ -108,6 +108,38 @@ func (s *Store) ComputeInsights(sinceMs int64, limit int, nodes []string) (Insig
 	return in, nil
 }
 
+// WindowTotals holds per-action query counts over a time window (and node
+// filter), so the dashboard KPIs reflect the selected range + focus instead of
+// since-process-start counters.
+type WindowTotals struct {
+	Total     int64 `json:"total"`
+	Blocked   int64 `json:"blocked"`
+	Cached    int64 `json:"cached"`
+	Forwarded int64 `json:"forwarded"`
+	Rewritten int64 `json:"rewritten"`
+	Errors    int64 `json:"errors"`
+}
+
+// WindowedTotals returns per-action query counts since sinceMs for the given
+// nodes (empty = all). Action values match the resolver: blocked, cache,
+// forward, rewrite, error.
+func (s *Store) WindowedTotals(sinceMs int64, nodes []string) (WindowTotals, error) {
+	nf, nargs := nodeFilterSQL(nodes)
+	var t WindowTotals
+	err := s.db.QueryRow(
+		`SELECT
+		   COUNT(*),
+		   COALESCE(SUM(action='blocked'), 0),
+		   COALESCE(SUM(action='cache'), 0),
+		   COALESCE(SUM(action='forward'), 0),
+		   COALESCE(SUM(action='rewrite'), 0),
+		   COALESCE(SUM(action='error'), 0)
+		 FROM query_log WHERE ts >= ?`+nf,
+		append([]any{sinceMs}, nargs...)...,
+	).Scan(&t.Total, &t.Blocked, &t.Cached, &t.Forwarded, &t.Rewritten, &t.Errors)
+	return t, err
+}
+
 // CategoryCount is a blocked-query count for a category.
 type CategoryCount struct {
 	Category string `json:"category"`

@@ -492,6 +492,11 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	if byNode == nil {
 		byNode = []store.NodeQueryCount{}
 	}
+	totals, err := s.store.WindowedTotals(since, nodes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"unique_clients": in.UniqueClients,
 		"avg_latency_ms": in.AvgLatencyMS,
@@ -500,6 +505,7 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 		"top_blocked":    in.TopBlocked,
 		"qtypes":         in.QTypes,
 		"by_node":        byNode,
+		"totals":         totals,
 	})
 }
 
@@ -582,16 +588,31 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, in)
 }
 
-// getQueryLog returns a page of this node's query log, newest first, with an
-// optional substring search (?search=) on name/client and ?limit/?offset.
+// getQueryLog returns a filtered, sorted page of the query log. Query params:
+// ?search= (name/client substring), ?action=, ?qtype=, ?sort= (time|name|client|
+// qtype|action|rcode|ms|node), ?desc=true, ?nodes=, ?limit/?offset.
 func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {
 		limit = 50
 	}
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	search := strings.TrimSpace(r.URL.Query().Get("search"))
-	entries, total, err := s.store.SearchQueryLog(search, limit, offset, parseNodes(r))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	var sinceMs int64
+	if h, _ := strconv.Atoi(q.Get("hours")); h > 0 {
+		sinceMs = time.Now().Add(-time.Duration(h) * time.Hour).UnixMilli()
+	}
+	entries, total, err := s.store.SearchQueryLog(store.QueryLogQuery{
+		Search:  strings.TrimSpace(q.Get("search")),
+		Action:  strings.TrimSpace(q.Get("action")),
+		QType:   strings.TrimSpace(q.Get("qtype")),
+		Nodes:   parseNodes(r),
+		SinceMs: sinceMs,
+		Sort:    strings.TrimSpace(q.Get("sort")),
+		Desc:    q.Get("desc") == "true" || q.Get("desc") == "1",
+		Limit:   limit,
+		Offset:  offset,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

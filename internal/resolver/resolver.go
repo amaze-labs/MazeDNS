@@ -94,7 +94,7 @@ type Settings struct {
 	Upstreams     []string       `json:"upstreams"`
 	Forwarders    []ForwardGroup `json:"forwarders"`
 	BlockResponse string         `json:"block_response"` // "nxdomain" | "zeroip"
-	RateLimitQPM  int            `json:"rate_limit_qpm"`  // 0 = off
+	RateLimitQPM  int            `json:"rate_limit_qpm"` // 0 = off
 	DNSSEC        bool           `json:"dnssec"`
 	Cache         CacheSettings  `json:"cache"`
 }
@@ -180,6 +180,10 @@ func (r *Resolver) parseUpstreams(specs []string) []Upstream {
 		if err != nil {
 			slog.Warn("invalid upstream", "spec", s, "err", err)
 			continue
+		}
+		// Let plain upstreams report truncation/TCP-fallback to metrics.
+		if pu, ok := u.(*plainUpstream); ok {
+			pu.metrics = r.metrics
 		}
 		out = append(out, u)
 	}
@@ -365,20 +369,73 @@ func upstreamsFor(rt *runtime, name string) []Upstream {
 	return rt.defaultUpstreams
 }
 
+// hedgeDelay is how long we wait for the primary upstream before also querying
+// the remaining upstreams in parallel. A healthy primary answers well within
+// this window (so only one upstream is queried), while a slow or dead one fails
+// over almost immediately instead of burning the full per-query timeout.
+const hedgeDelay = 30 * time.Millisecond
+
 func (r *Resolver) forward(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
 	if len(ups) == 0 {
 		return nil, 0, errNoUpstreams
 	}
-	var lastErr error
-	for _, u := range ups {
-		resp, rtt, err := u.Exchange(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return resp, rtt, nil
+	if len(ups) == 1 {
+		return ups[0].Exchange(req)
 	}
-	return nil, 0, lastErr
+
+	type result struct {
+		msg *dns.Msg
+		rtt time.Duration
+		err error
+	}
+	results := make(chan result, len(ups))
+	// Each goroutine exchanges against its own copy of the request so concurrent
+	// packing can never race on the shared message.
+	launch := func(u Upstream) {
+		go func() {
+			msg, rtt, err := u.Exchange(req.Copy())
+			results <- result{msg, rtt, err}
+		}()
+	}
+
+	launch(ups[0])
+	hedge := time.NewTimer(hedgeDelay)
+	defer hedge.Stop()
+
+	pending := 1
+	rest := ups[1:]
+	var lastErr error
+	for {
+		select {
+		case <-hedge.C:
+			for _, u := range rest {
+				launch(u)
+				pending++
+			}
+			rest = nil
+		case res := <-results:
+			pending--
+			if res.err == nil && res.msg != nil {
+				return res.msg, res.rtt, nil // first success wins.
+			}
+			lastErr = res.err
+			// Primary failed before the hedge fired — query the rest now.
+			if len(rest) > 0 {
+				for _, u := range rest {
+					launch(u)
+					pending++
+				}
+				rest = nil
+				hedge.Stop()
+			}
+			if pending == 0 {
+				if lastErr == nil {
+					lastErr = errNoUpstreams
+				}
+				return nil, 0, lastErr
+			}
+		}
+	}
 }
 
 func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR) *dns.Msg {
@@ -433,9 +490,14 @@ func (r *Resolver) blockedResponse(req *dns.Msg, q dns.Question, blockMode strin
 func ensureDO(m *dns.Msg) {
 	if o := m.IsEdns0(); o != nil {
 		o.SetDo(true)
+		// Advertise a large UDP buffer so signed responses fit in one datagram
+		// instead of truncating and forcing a slower TCP retry.
+		if o.UDPSize() < largeUDPSize {
+			o.SetUDPSize(largeUDPSize)
+		}
 		return
 	}
-	m.SetEdns0(4096, true)
+	m.SetEdns0(largeUDPSize, true)
 }
 
 func rrHeader(name string, t uint16) dns.RR_Header {

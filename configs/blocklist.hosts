@@ -1,6 +1,14 @@
-# MazeDNS sample blocklist (hosts format). A blocked domain also blocks its
-# subdomains. Replace/extend with real lists (e.g. StevenBlack, OISD) later.
-0.0.0.0 doubleclick.net
-0.0.0.0 googleadservices.com
-0.0.0.0 ads.example.com
-0.0.0.0 tracking.example.org
+# MazeDNS blocklist template (hosts or plain-domain format).
+#
+# This file ships EMPTY on purpose: a fresh install blocks nothing until you opt
+# in. Domains listed here are tagged with this file's name ("blocklist") as their
+# category — separate from the "custom" rules you add in the UI.
+#
+# A blocked domain also blocks its subdomains. Add entries in either format:
+#   0.0.0.0 ads.example.com        # hosts format
+#   tracking.example.org           # plain domain
+#
+# For real coverage, point filter.blocklist_files at a maintained list such as
+# StevenBlack or OISD. Example entries (commented out):
+# 0.0.0.0 doubleclick.net
+# 0.0.0.0 googleadservices.com

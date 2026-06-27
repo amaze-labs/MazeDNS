@@ -11,7 +11,19 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+
+	"github.com/IPMaze/MazeDNS/internal/metrics"
 )
+
+// largeUDPSize is the EDNS/receive buffer we advertise and read with, so large
+// (e.g. DNSSEC-signed) UDP responses arrive in one datagram instead of being
+// truncated and retried over TCP.
+const largeUDPSize = 4096
+
+// dotPoolSize is the number of TLS connections kept warm per DoT upstream, so
+// queries reuse an established session instead of paying a full TLS handshake
+// each time.
+const dotPoolSize = 4
 
 // Upstream resolves a query against a single upstream server.
 type Upstream interface {
@@ -44,28 +56,41 @@ func ParseUpstream(spec string, timeout time.Duration) (Upstream, error) {
 		return &dotUpstream{
 			addr:   host,
 			client: &dns.Client{Net: "tcp-tls", Timeout: timeout, TLSConfig: &tls.Config{ServerName: server}},
+			pool:   make(chan *dns.Conn, dotPoolSize),
 		}, nil
 	case strings.HasPrefix(spec, "tcp://"):
-		return &plainUpstream{addr: ensurePort(strings.TrimPrefix(spec, "tcp://"), "53"), proto: "tcp", timeout: timeout}, nil
+		return newPlain(ensurePort(strings.TrimPrefix(spec, "tcp://"), "53"), "tcp", timeout), nil
 	case strings.HasPrefix(spec, "udp://"):
-		return &plainUpstream{addr: ensurePort(strings.TrimPrefix(spec, "udp://"), "53"), proto: "udp", timeout: timeout}, nil
+		return newPlain(ensurePort(strings.TrimPrefix(spec, "udp://"), "53"), "udp", timeout), nil
 	default:
-		return &plainUpstream{addr: ensurePort(spec, "53"), proto: "udp", timeout: timeout}, nil
+		return newPlain(ensurePort(spec, "53"), "udp", timeout), nil
 	}
 }
 
 type plainUpstream struct {
 	addr    string
-	proto   string // "udp" | "tcp"
-	timeout time.Duration
+	proto   string      // "udp" | "tcp"
+	primary *dns.Client // reused across queries (proto = udp or tcp)
+	tcp     *dns.Client // TCP fallback for truncated UDP responses
+	metrics *metrics.Metrics
+}
+
+func newPlain(addr, proto string, timeout time.Duration) *plainUpstream {
+	return &plainUpstream{
+		addr:    addr,
+		proto:   proto,
+		primary: &dns.Client{Net: proto, Timeout: timeout, UDPSize: largeUDPSize},
+		tcp:     &dns.Client{Net: "tcp", Timeout: timeout},
+	}
 }
 
 func (u *plainUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	c := &dns.Client{Net: u.proto, Timeout: u.timeout}
-	resp, rtt, err := c.Exchange(req, u.addr)
+	resp, rtt, err := u.primary.Exchange(req, u.addr)
 	if err == nil && resp != nil && resp.Truncated && u.proto == "udp" {
-		tcp := &dns.Client{Net: "tcp", Timeout: u.timeout}
-		if r2, rtt2, e2 := tcp.Exchange(req, u.addr); e2 == nil {
+		if u.metrics != nil {
+			u.metrics.UpstreamTCPFallback.Inc()
+		}
+		if r2, rtt2, e2 := u.tcp.Exchange(req, u.addr); e2 == nil {
 			return r2, rtt2, nil
 		}
 	}
@@ -74,13 +99,52 @@ func (u *plainUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) 
 
 func (u *plainUpstream) String() string { return u.proto + "://" + u.addr }
 
+// dotUpstream resolves over DNS-over-TLS, pooling established TLS connections to
+// avoid a handshake per query.
 type dotUpstream struct {
 	addr   string
 	client *dns.Client
+	pool   chan *dns.Conn
 }
 
 func (u *dotUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	return u.client.Exchange(req, u.addr)
+	// Try a warm pooled connection first; on any error it may be stale, so fall
+	// back to a fresh dial and retry once.
+	if conn := u.getConn(); conn != nil {
+		if resp, rtt, err := u.client.ExchangeWithConn(req, conn); err == nil {
+			u.putConn(conn)
+			return resp, rtt, nil
+		}
+		conn.Close()
+	}
+	conn, err := u.client.Dial(u.addr)
+	if err != nil {
+		return nil, 0, err
+	}
+	resp, rtt, err := u.client.ExchangeWithConn(req, conn)
+	if err != nil {
+		conn.Close()
+		return nil, 0, err
+	}
+	u.putConn(conn)
+	return resp, rtt, nil
+}
+
+func (u *dotUpstream) getConn() *dns.Conn {
+	select {
+	case c := <-u.pool:
+		return c
+	default:
+		return nil
+	}
+}
+
+func (u *dotUpstream) putConn(c *dns.Conn) {
+	select {
+	case u.pool <- c:
+	default:
+		c.Close() // pool full — let the extra connection go.
+	}
 }
 
 func (u *dotUpstream) String() string { return "tls://" + u.addr }

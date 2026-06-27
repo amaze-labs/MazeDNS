@@ -59,6 +59,12 @@ func (p *OIDCProvider) AuthCodeURL(state string) string {
 	return p.oauth.AuthCodeURL(state)
 }
 
+// RedirectURL returns the configured redirect_uri (the value sent to the
+// provider; it must match what's registered there exactly).
+func (p *OIDCProvider) RedirectURL() string {
+	return p.oauth.RedirectURL
+}
+
 // Exchange swaps an authorization code for verified id_token claims.
 func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCClaims, error) {
 	tok, err := p.oauth.Exchange(ctx, code)

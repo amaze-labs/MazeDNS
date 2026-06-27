@@ -314,35 +314,50 @@ func Load(path string) (Config, error) {
 // (handy for Docker / Compose / Kubernetes) without editing the YAML file.
 // Setting MAZEDNS_OIDC_ISSUER (or _ENABLED=true) turns SSO on.
 func applyOIDCEnv(o *OIDC) {
-	if v := os.Getenv("MAZEDNS_OIDC_ISSUER"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_ISSUER"); v != "" {
 		o.Issuer = v
 		o.Enabled = true
 	}
-	if v := os.Getenv("MAZEDNS_OIDC_CLIENT_ID"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_CLIENT_ID"); v != "" {
 		o.ClientID = v
 	}
-	if v := os.Getenv("MAZEDNS_OIDC_CLIENT_SECRET"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_CLIENT_SECRET"); v != "" {
 		o.ClientSecret = v
 	}
-	if v := os.Getenv("MAZEDNS_OIDC_REDIRECT_URL"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_REDIRECT_URL"); v != "" {
 		o.RedirectURL = v
 	}
-	if v := os.Getenv("MAZEDNS_OIDC_SCOPES"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_SCOPES"); v != "" {
 		o.Scopes = splitList(v)
 	}
-	if v := os.Getenv("MAZEDNS_OIDC_GROUPS_CLAIM"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_GROUPS_CLAIM"); v != "" {
 		o.GroupsClaim = v
 	}
-	if v := os.Getenv("MAZEDNS_OIDC_ADMIN_GROUP"); v != "" {
+	if v := envClean("MAZEDNS_OIDC_ADMIN_GROUP"); v != "" {
 		o.AdminGroup = v
 	}
 	// _ENABLED is applied last so it can explicitly enable or disable.
-	switch strings.ToLower(os.Getenv("MAZEDNS_OIDC_ENABLED")) {
+	switch strings.ToLower(envClean("MAZEDNS_OIDC_ENABLED")) {
 	case "true", "1":
 		o.Enabled = true
 	case "false", "0":
 		o.Enabled = false
 	}
+}
+
+// envClean reads an env var and strips surrounding whitespace and a single pair
+// of matching surrounding quotes. This guards against a very common deployment
+// mistake — quoting the value in docker-compose's list form or an env_file
+// (`- KEY="value"`), where the quotes become part of the value and break exact
+// matches like the OIDC redirect_uri.
+func envClean(key string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = strings.TrimSpace(v[1 : len(v)-1])
+		}
+	}
+	return v
 }
 
 // splitList parses a comma- or space-separated list, trimming blanks.

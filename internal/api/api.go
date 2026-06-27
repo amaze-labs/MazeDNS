@@ -417,6 +417,9 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 		Name: oidcStateCookie, Value: state, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, MaxAge: 300,
 	})
+	// Log the exact redirect_uri sent — it must match the provider's registration
+	// character-for-character (quoting it in the env is a common cause of mismatch).
+	slog.Info("oidc login", "redirect_uri", s.auth.OIDC().RedirectURL())
 	http.Redirect(w, r, s.auth.OIDC().AuthCodeURL(state), http.StatusFound)
 }
 

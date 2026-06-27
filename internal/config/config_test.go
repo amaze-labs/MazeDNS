@@ -84,6 +84,25 @@ filter:
 	}
 }
 
+// Quoted env values (a common docker-compose list-form / env_file mistake) must
+// have the surrounding quotes stripped, or the OIDC redirect_uri won't match.
+func TestOIDCEnvStripsQuotes(t *testing.T) {
+	p := writeConfig(t, minimalConfig)
+	t.Setenv("MAZEDNS_OIDC_ISSUER", `"https://id.example.com"`)
+	t.Setenv("MAZEDNS_OIDC_CLIENT_ID", "mazedns")
+	t.Setenv("MAZEDNS_OIDC_REDIRECT_URL", `"https://dns.example.com/api/auth/oidc/callback"`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Auth.OIDC.RedirectURL != "https://dns.example.com/api/auth/oidc/callback" {
+		t.Errorf("redirect_url not unquoted: %q", cfg.Auth.OIDC.RedirectURL)
+	}
+	if cfg.Auth.OIDC.Issuer != "https://id.example.com" {
+		t.Errorf("issuer not unquoted: %q", cfg.Auth.OIDC.Issuer)
+	}
+}
+
 // MAZEDNS_OIDC_ENABLED=false must win even if the YAML enabled it.
 func TestOIDCEnvDisable(t *testing.T) {
 	p := writeConfig(t, minimalConfig+`

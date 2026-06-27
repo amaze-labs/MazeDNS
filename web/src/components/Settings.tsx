@@ -348,6 +348,26 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               onChange={(e) => setCls({ ...cls, timeout_sec: Number(e.target.value) })}
             />
           </div>
+          <div className="field">
+            <label>
+              Trusted domain list (URL or file path) — reduce false positives: flagged domains on this list are never
+              auto-blocked, only suggested for review. Accepts plain/hosts/ranked-CSV (e.g. a Tranco top-sites list).
+            </label>
+            <input
+              value={cls.trusted_list_url}
+              onChange={(e) => setCls({ ...cls, trusted_list_url: e.target.value })}
+              placeholder="https://… or /path/to/top-domains.csv (blank = off)"
+            />
+          </div>
+          <div className="field">
+            <label>Trusted list cap (0 = all) — for large ranked lists, load only the top N</label>
+            <input
+              type="number"
+              min={0}
+              value={cls.trusted_top_n}
+              onChange={(e) => setCls({ ...cls, trusted_top_n: Number(e.target.value) })}
+            />
+          </div>
           <div className="settings-actions">
             <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
               {clsSaving ? 'Saving…' : 'Save classifier'}

@@ -79,6 +79,7 @@ export interface Classification {
   confidence: number
   reason: string
   model: string
+  trusted: boolean
   updated_at: number
 }
 
@@ -90,11 +91,14 @@ export interface ClassifierSettings {
   mode: string // off|suggest|auto
   min_gap_ms: number
   timeout_sec: number
+  trusted_list_url: string
+  trusted_top_n: number
 }
 
 export interface ClassifierStatus {
   settings: ClassifierSettings
   counts: Record<string, number>
+  trusted_count: number
 }
 
 export interface SeriesPoint {

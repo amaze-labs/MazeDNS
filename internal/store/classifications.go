@@ -15,6 +15,7 @@ type Classification struct {
 	Confidence float64 `json:"confidence"`
 	Reason     string  `json:"reason"`
 	Model      string  `json:"model"`
+	Trusted    bool    `json:"trusted"` // on the trusted list — flagged for review, not auto-blocked
 	UpdatedAt  int64   `json:"updated_at"`
 }
 
@@ -61,10 +62,10 @@ func (s *Store) IsClassified(domain string) (bool, error) {
 // human decision) untouched. Returns whether a row was inserted.
 func (s *Store) InsertClassification(c Classification) (bool, error) {
 	res, err := s.db.Exec(
-		`INSERT INTO classifications(domain, category, block, status, confidence, reason, model, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?)
+		`INSERT INTO classifications(domain, category, block, status, confidence, reason, model, trusted, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(domain) DO NOTHING`,
-		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Reason, c.Model, time.Now().UnixMilli())
+		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Reason, c.Model, boolToInt(c.Trusted), time.Now().UnixMilli())
 	if err != nil {
 		return false, err
 	}
@@ -86,7 +87,7 @@ func (s *Store) ListClassifications(status string, limit int) ([]Classification,
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	q := `SELECT domain, category, block, status, confidence, reason, model, updated_at
+	q := `SELECT domain, category, block, status, confidence, reason, model, trusted, updated_at
 	      FROM classifications`
 	var args []any
 	if status != "" {
@@ -103,11 +104,12 @@ func (s *Store) ListClassifications(status string, limit int) ([]Classification,
 	var out []Classification
 	for rows.Next() {
 		var c Classification
-		var block int
-		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Reason, &c.Model, &c.UpdatedAt); err != nil {
+		var block, trusted int
+		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Reason, &c.Model, &trusted, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Block = block != 0
+		c.Trusted = trusted != 0
 		out = append(out, c)
 	}
 	return out, rows.Err()

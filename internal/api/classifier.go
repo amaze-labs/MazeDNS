@@ -21,9 +21,14 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 	}
 	// Never leak the API key to the UI.
 	cfg.APIKey = ""
+	trustedCount := 0
+	if s.clsTrusted != nil {
+		trustedCount = s.clsTrusted()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings": cfg,
-		"counts":   counts,
+		"settings":      cfg,
+		"counts":        counts,
+		"trusted_count": trustedCount,
 	})
 }
 

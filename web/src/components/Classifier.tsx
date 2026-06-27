@@ -60,6 +60,13 @@ export default function Classifier() {
         A local model ({info?.settings.model || '—'}) classifies newly-seen domains as ads/trackers/malware/phishing or
         clean, so blocking is driven by the model instead of hand-maintained lists. Configure the model in{' '}
         <strong>Settings</strong>.
+        {(info?.trusted_count ?? 0) > 0 && (
+          <>
+            {' '}
+            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains loaded — flagged matches are
+            never auto-blocked, only suggested for review.
+          </>
+        )}
       </p>
       {err && <div className="error">{err}</div>}
 
@@ -110,6 +117,11 @@ export default function Classifier() {
                 <td>{c.domain}</td>
                 <td>
                   <span className={`badge ${catClass(c.category)}`}>{c.category}</span>
+                  {c.trusted && (
+                    <span className="badge allow" title="On the trusted list — likely false positive; review before blocking.">
+                      ⚠ trusted
+                    </span>
+                  )}
                 </td>
                 <td>{Math.round((c.confidence || 0) * 100)}%</td>
                 <td className="muted" style={{ textAlign: 'left' }}>{c.reason}</td>

@@ -79,6 +79,10 @@ classifier:                    # optional LLM domain classification (master only
   mode: "suggest"              # off | suggest (approve before blocking) | auto (block immediately)
   min_gap_ms: 1000             # rate-limit between model calls
   timeout_sec: 60              # per-request timeout (raise it if a local model warms up slowly)
+  # Reduce false positives: a public list of known-legitimate domains. When the
+  # model flags one of these it is never auto-blocked, only suggested for review.
+  trusted_list_url: ""         # URL or file path (plain/hosts/ranked-CSV, e.g. a Tranco top-sites list)
+  trusted_top_n: 0             # cap entries loaded from a large ranked list (0 = all)
 
 cluster:                       # master<->worker config replication
   enabled: false               # worker: start the sync agent (auto-enabled when master_url+node_key are set). The master's control plane is always on — enroll nodes in the UI.

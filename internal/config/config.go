@@ -176,6 +176,11 @@ type Classifier struct {
 	Mode       string `yaml:"mode"`        // off | suggest | auto (initial enforcement mode)
 	MinGapMS   int    `yaml:"min_gap_ms"`  // min spacing between model calls (rate limit)
 	TimeoutSec int    `yaml:"timeout_sec"` // per-request timeout (local models warm up slowly)
+	// TrustedListURL is a public list of known-legitimate domains (file or URL).
+	// Flagged domains on this list are never auto-blocked, only suggested for
+	// review — reducing AI false positives. TrustedTopN caps how many to load.
+	TrustedListURL string `yaml:"trusted_list_url"`
+	TrustedTopN    int    `yaml:"trusted_top_n"`
 }
 
 // Cluster configures master<->worker configuration replication. The master

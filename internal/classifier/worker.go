@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -41,6 +43,12 @@ type Settings struct {
 	Mode       string `json:"mode"`        // off|suggest|auto
 	MinGapMS   int    `json:"min_gap_ms"`  // min spacing between model calls
 	TimeoutSec int    `json:"timeout_sec"` // per-request timeout (local models can be slow to warm up)
+	// TrustedListURL points at a public list of known-legitimate domains (a file
+	// path or URL — plain/hosts/ranked-CSV). When the model flags a domain on
+	// this list it is treated as a likely false positive: never auto-blocked,
+	// only suggested for review. TrustedTopN caps how many entries are loaded.
+	TrustedListURL string `json:"trusted_list_url"`
+	TrustedTopN    int    `json:"trusted_top_n"`
 }
 
 func (s Settings) minGap() time.Duration {
@@ -75,6 +83,10 @@ type Worker struct {
 	clientMu  sync.Mutex
 	client    *Client
 	clientKey string
+
+	trusted     atomic.Pointer[TrustedSet]
+	trustedSrc  atomic.Value // string: the source the current trusted set was built from
+	trustedBusy atomic.Bool
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -158,12 +170,46 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// ensureTrusted (re)loads the trusted list in the background when the configured
+// source changes, swapping it in atomically. Never blocks the worker.
+func (w *Worker) ensureTrusted(s Settings) {
+	src := s.TrustedListURL + "|" + strconv.Itoa(s.TrustedTopN)
+	if s.TrustedListURL == "" {
+		if cur, _ := w.trustedSrc.Load().(string); cur != src {
+			w.trusted.Store(nil)
+			w.trustedSrc.Store(src)
+		}
+		return
+	}
+	if cur, _ := w.trustedSrc.Load().(string); cur == src {
+		return
+	}
+	if !w.trustedBusy.CompareAndSwap(false, true) {
+		return // a load is already in flight
+	}
+	go func() {
+		defer w.trustedBusy.Store(false)
+		set, err := LoadTrusted(s.TrustedListURL, s.TrustedTopN)
+		if err != nil {
+			slog.Warn("trusted list load failed", "source", s.TrustedListURL, "err", err)
+			return
+		}
+		w.trusted.Store(set)
+		w.trustedSrc.Store(src)
+		slog.Info("trusted list loaded", "source", s.TrustedListURL, "domains", set.Count())
+	}()
+}
+
+// TrustedCount returns how many domains are loaded in the trusted set.
+func (w *Worker) TrustedCount() int { return w.trusted.Load().Count() }
+
 func (w *Worker) process(ctx context.Context, domain string) {
 	s := w.get()
 	mode := ParseMode(s.Mode)
 	if !s.Enabled || mode == ModeOff {
 		return
 	}
+	w.ensureTrusted(s)
 	if done, err := w.store.IsClassified(domain); err != nil || done {
 		return // already have a verdict (or DB error) — classify once.
 	}
@@ -173,23 +219,30 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		return
 	}
 	block := v.ShouldBlock()
+	reason := v.Reason
+	// False-positive guard: if the model flags a domain that's on the trusted
+	// list, never auto-block it — record it as a suggestion for human review.
+	trusted := block && w.trusted.Load().Has(domain)
 	status := store.ClassClean
 	if block {
-		if mode == ModeAuto {
+		if mode == ModeAuto && !trusted {
 			status = store.ClassAuto
 		} else {
 			status = store.ClassSuggested
 		}
 	}
+	if trusted {
+		reason = "on trusted list — review before blocking. " + reason
+	}
 	inserted, err := w.store.InsertClassification(store.Classification{
 		Domain: domain, Category: v.Category, Block: block, Status: status,
-		Confidence: v.Confidence, Reason: v.Reason, Model: s.Model,
+		Confidence: v.Confidence, Reason: reason, Model: s.Model, Trusted: trusted,
 	})
 	if err != nil {
 		slog.Warn("store classification failed", "domain", domain, "err", err)
 		return
 	}
-	slog.Debug("classified", "domain", domain, "category", v.Category, "block", block, "status", status)
+	slog.Debug("classified", "domain", domain, "category", v.Category, "block", block, "status", status, "trusted", trusted)
 	// An auto-block verdict takes effect immediately — rebuild the policy.
 	if inserted && status == store.ClassAuto && w.reload != nil {
 		_ = w.reload()

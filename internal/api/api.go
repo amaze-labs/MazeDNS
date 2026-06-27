@@ -42,7 +42,14 @@ type Server struct {
 	clusterEnabled      bool
 	http                *http.Server
 	statsCache          *ttlCache
-	classifierAvailable bool // master only — classifier endpoints/tab are offered
+	classifierAvailable bool       // master only — classifier endpoints/tab are offered
+	clsTrusted          func() int // trusted-list domain count (nil if unset)
+}
+
+// SetClassifierStatus wires runtime classifier status into the API (the size of
+// the loaded trusted list, for the UI).
+func (s *Server) SetClassifierStatus(trustedCount func() int) {
+	s.clsTrusted = trustedCount
 }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are

@@ -64,6 +64,33 @@ export interface AuthInfo {
   auth_enabled: boolean
   oidc_enabled: boolean
   cluster_enabled: boolean
+  classifier_available: boolean
+  classifier_enabled: boolean
+}
+
+export interface Classification {
+  domain: string
+  category: string
+  block: boolean
+  status: string // suggested|approved|rejected|auto|clean
+  confidence: number
+  reason: string
+  model: string
+  updated_at: number
+}
+
+export interface ClassifierSettings {
+  enabled: boolean
+  endpoint: string
+  model: string
+  api_key: string
+  mode: string // off|suggest|auto
+  min_gap_ms: number
+}
+
+export interface ClassifierStatus {
+  settings: ClassifierSettings
+  counts: Record<string, number>
 }
 
 export interface SeriesPoint {
@@ -320,6 +347,24 @@ export const api = {
   addRewrite: (domain: string, rrtype: string, value: string) =>
     fetch('/api/rewrites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ domain, rrtype, value }) }).then(j),
   deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }),
+
+  // LLM classifier
+  classifier: () => fetch('/api/classifier').then(j<ClassifierStatus>),
+  saveClassifierSettings: (s: ClassifierSettings) =>
+    fetch('/api/classifier/settings', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<ClassifierSettings>),
+  setClassifierMode: (mode: string) =>
+    fetch('/api/classifier/mode', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ mode }) }).then(j),
+  classifications: (status = '', limit = 200) => {
+    const p = new URLSearchParams({ limit: String(limit) })
+    if (status) p.set('status', status)
+    return fetch(`/api/classifications?${p.toString()}`).then(j<Classification[]>)
+  },
+  decideClassification: (domain: string, decision: 'approve' | 'reject') =>
+    fetch('/api/classifications/decision', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ domain, decision }),
+    }).then(j),
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),

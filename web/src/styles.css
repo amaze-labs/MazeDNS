@@ -819,6 +819,31 @@ input.search {
   cursor: pointer;
 }
 
+/* Dashboard controls row: range/node filters + an updating indicator */
+.dash-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.updating {
+  color: var(--muted);
+  font-size: 13px;
+  opacity: 0.85;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.9; }
+}
+
+/* Classifier enforcement mode buttons */
+.mode-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* Sub-tabs (e.g. Blocklists / Manual rules under Filtering) */
 .subtabs {
   display: flex;

@@ -46,6 +46,7 @@ type Config struct {
 	Filter     Filter      `yaml:"filter"`
 	API        API         `yaml:"api"`
 	Auth       Auth        `yaml:"auth"`
+	Classifier Classifier  `yaml:"classifier"`
 	Cluster    Cluster     `yaml:"cluster"`
 	Database   Database    `yaml:"database"`
 	Log        Log         `yaml:"log"`
@@ -163,6 +164,19 @@ type OIDC struct {
 	AdminGroup   string   `yaml:"admin_group"`
 }
 
+// Classifier configures optional LLM-based domain classification against a
+// local, OpenAI-compatible model endpoint (Ollama, llama.cpp, LM Studio, …).
+// Disabled by default; runs only on the master. The enforcement mode is seeded
+// from here and then changeable at runtime from the UI.
+type Classifier struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint"`   // OpenAI-compatible base URL, e.g. http://localhost:11434/v1
+	Model    string `yaml:"model"`      // model name, e.g. "llama3.2"
+	APIKey   string `yaml:"api_key"`    // usually empty for local models
+	Mode     string `yaml:"mode"`       // off | suggest | auto (initial enforcement mode)
+	MinGapMS int    `yaml:"min_gap_ms"` // min spacing between model calls (rate limit)
+}
+
 // Cluster configures master<->worker configuration replication. The master
 // serves cluster endpoints when enabled; each worker authenticates with a
 // per-node API key issued by the master's "add node" flow.
@@ -205,6 +219,12 @@ func Default() Config {
 		Auth: Auth{
 			Enabled:    true,
 			SessionTTL: Duration(24 * time.Hour),
+		},
+		Classifier: Classifier{
+			Endpoint: "http://localhost:11434/v1",
+			Model:    "llama3.2",
+			Mode:     "suggest",
+			MinGapMS: 1000,
 		},
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
@@ -260,6 +280,21 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
 		cfg.Cluster.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENABLED"); v == "true" || v == "1" {
+		cfg.Classifier.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENDPOINT"); v != "" {
+		cfg.Classifier.Endpoint = v
+	}
+	if v := os.Getenv("MAZEDNS_CLASSIFIER_MODEL"); v != "" {
+		cfg.Classifier.Model = v
+	}
+	if v := os.Getenv("MAZEDNS_CLASSIFIER_MODE"); v != "" {
+		cfg.Classifier.Mode = v
+	}
+	if v := os.Getenv("MAZEDNS_CLASSIFIER_API_KEY"); v != "" {
+		cfg.Classifier.APIKey = v
 	}
 	applyOIDCEnv(&cfg.Auth.OIDC)
 	if err := cfg.validate(); err != nil {

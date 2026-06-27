@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Settings as S, type ForwardGroup } from '../api'
+import { api, type Settings as S, type ForwardGroup, type ClassifierSettings } from '../api'
 
 const linesToList = (s: string) =>
   s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
 
-export default function Settings() {
+// onClassifierChange lets the app refresh its nav (the AI tab appears/disappears
+// with the classifier's enabled state).
+export default function Settings({ onClassifierChange }: { onClassifierChange?: () => void }) {
   const [s, setS] = useState<S | null>(null)
   const [upstreams, setUpstreams] = useState('')
   const [forwarders, setForwarders] = useState<ForwardGroup[]>([])
@@ -15,6 +17,11 @@ export default function Settings() {
   const [importMsg, setImportMsg] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Classifier settings (separate endpoint; null until loaded / if unavailable).
+  const [cls, setCls] = useState<ClassifierSettings | null>(null)
+  const [clsSaving, setClsSaving] = useState(false)
+  const [clsOk, setClsOk] = useState(false)
+
   const load = async () => {
     try {
       const cur = await api.settings()
@@ -24,10 +31,28 @@ export default function Settings() {
     } catch (e: any) {
       setErr(e.message)
     }
+    api.classifier().then((st) => setCls(st.settings)).catch(() => setCls(null))
   }
   useEffect(() => {
     load()
   }, [])
+
+  const saveClassifier = async () => {
+    if (!cls) return
+    setClsSaving(true)
+    setErr('')
+    setClsOk(false)
+    try {
+      const saved = await api.saveClassifierSettings(cls)
+      setCls(saved)
+      setClsOk(true)
+      onClassifierChange?.()
+    } catch (e: any) {
+      setErr(e.message)
+    } finally {
+      setClsSaving(false)
+    }
+  }
 
   if (!s) {
     return (
@@ -237,6 +262,70 @@ export default function Settings() {
         </button>
         <span className="hint">Changes apply live — no restart.</span>
       </div>
+
+      {cls && (
+        <section className="settings-card">
+          <h3>AI classification (local LLM)</h3>
+          <label className="muted">
+            Classify newly-seen domains with a local OpenAI-compatible model (Ollama, llama.cpp, LM Studio) instead of
+            maintaining blocklists. Runs on the master; auto-blocks also propagate to workers.
+          </label>
+          {clsOk && <div className="ok-msg">Classifier settings saved.</div>}
+          <div className="field">
+            <label className="toggle">
+              <input type="checkbox" checked={cls.enabled} onChange={(e) => setCls({ ...cls, enabled: e.target.checked })} />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Enable classification</span>
+            </label>
+          </div>
+          <div className="field">
+            <label>Enforcement mode</label>
+            <select value={cls.mode} onChange={(e) => setCls({ ...cls, mode: e.target.value })}>
+              <option value="off">Off</option>
+              <option value="suggest">Suggest &amp; approve</option>
+              <option value="auto">Auto-block</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Model endpoint (OpenAI-compatible base URL)</label>
+            <input
+              value={cls.endpoint}
+              onChange={(e) => setCls({ ...cls, endpoint: e.target.value })}
+              placeholder="http://localhost:11434/v1"
+            />
+          </div>
+          <div className="field">
+            <label>Model</label>
+            <input value={cls.model} onChange={(e) => setCls({ ...cls, model: e.target.value })} placeholder="llama3.2" />
+          </div>
+          <div className="field">
+            <label>API key (optional; usually empty for local models)</label>
+            <input
+              type="password"
+              value={cls.api_key}
+              onChange={(e) => setCls({ ...cls, api_key: e.target.value })}
+              placeholder="leave blank to keep current"
+            />
+          </div>
+          <div className="field">
+            <label>Min gap between model calls (ms)</label>
+            <input
+              type="number"
+              min={0}
+              value={cls.min_gap_ms}
+              onChange={(e) => setCls({ ...cls, min_gap_ms: Number(e.target.value) })}
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
+              {clsSaving ? 'Saving…' : 'Save classifier'}
+            </button>
+            <span className="hint">Review verdicts in the AI tab.</span>
+          </div>
+        </section>
+      )}
 
       <section className="settings-card danger-zone">
         <h3>⚠ Danger zone — backup &amp; restore</h3>

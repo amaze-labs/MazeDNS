@@ -168,6 +168,9 @@ Override the baked config without mounting a file:
 | `MAZEDNS_MASTER_URL` / `MAZEDNS_NODE_KEY` | worker: master URL + its node key |
 | `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` | master: pre-enroll nodes, `name=key,name=key` |
 | `MAZEDNS_BLOCKLIST_FILES` | blocklist file path(s), comma/space separated (use absolute paths; replaces `filter.blocklist_files`) |
+| `MAZEDNS_CLASSIFIER_ENABLED` | `true` to enable LLM domain classification (master only) |
+| `MAZEDNS_CLASSIFIER_ENDPOINT` | local OpenAI-compatible base URL (e.g. `http://localhost:11434/v1`) |
+| `MAZEDNS_CLASSIFIER_MODEL` / `MAZEDNS_CLASSIFIER_MODE` | model name; initial mode `off`/`suggest`/`auto` |
 | `MAZEDNS_OIDC_ISSUER` | SSO issuer URL — setting it enables OIDC |
 | `MAZEDNS_OIDC_CLIENT_ID` / `MAZEDNS_OIDC_CLIENT_SECRET` | SSO client credentials |
 | `MAZEDNS_OIDC_REDIRECT_URL` | SSO callback URL |

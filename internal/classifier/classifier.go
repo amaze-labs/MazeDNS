@@ -1,0 +1,175 @@
+// Package classifier asks a local, OpenAI-compatible LLM endpoint (Ollama,
+// llama.cpp, LM Studio, …) to classify domains as ads/trackers/malware/etc., so
+// blocking can be driven by a model instead of hand-maintained lists. Everything
+// runs against the user's own local model — no external calls.
+package classifier
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"golang.org/x/net/publicsuffix"
+)
+
+// Categories a domain can be classified into. The first four are "block"
+// candidates; clean/other are not.
+var blockCategories = map[string]bool{
+	"ads": true, "trackers": true, "malware": true, "phishing": true,
+}
+
+// Verdict is the model's classification of a single registered domain.
+type Verdict struct {
+	Category   string  `json:"category"`
+	Confidence float64 `json:"confidence"`
+	Reason     string  `json:"reason"`
+}
+
+// ShouldBlock reports whether this verdict's category is one we block.
+func (v Verdict) ShouldBlock() bool { return blockCategories[v.Category] }
+
+// Client talks to an OpenAI-compatible /chat/completions endpoint.
+type Client struct {
+	baseURL string
+	model   string
+	apiKey  string
+	http    *http.Client
+}
+
+// NewClient builds a classifier client. baseURL is the OpenAI-compatible base
+// (e.g. "http://localhost:11434/v1"); apiKey is usually empty for local models.
+func NewClient(baseURL, model, apiKey string, timeout time.Duration) *Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	return &Client{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		model:   model,
+		apiKey:  apiKey,
+		http:    &http.Client{Timeout: timeout},
+	}
+}
+
+const systemPrompt = `You classify internet domains for a DNS ad/tracker/malware blocker.
+Respond with ONLY a JSON object, no prose, of the form:
+{"category":"<ads|trackers|malware|phishing|clean|other>","confidence":<0..1>,"reason":"<short>"}
+- ads: advertising / ad-serving domains
+- trackers: analytics / telemetry / user tracking
+- malware: malware C2, drive-by, exploit kits
+- phishing: credential theft / scams
+- clean: legitimate, should not be blocked
+- other: unknown / cannot tell (do not block)
+Be conservative: only choose a blocking category when reasonably sure.`
+
+type chatReq struct {
+	Model       string        `json:"model"`
+	Messages    []chatMessage `json:"messages"`
+	Temperature float64       `json:"temperature"`
+	Stream      bool          `json:"stream"`
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatResp struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// Classify returns the model's verdict for a domain.
+func (c *Client) Classify(ctx context.Context, domain string) (Verdict, error) {
+	body, err := json.Marshal(chatReq{
+		Model:       c.model,
+		Temperature: 0,
+		Stream:      false,
+		Messages: []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: "Classify this domain: " + domain},
+		},
+	})
+	if err != nil {
+		return Verdict{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return Verdict{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Verdict{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return Verdict{}, fmt.Errorf("classifier: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var cr chatResp
+	if err := json.Unmarshal(raw, &cr); err != nil {
+		return Verdict{}, fmt.Errorf("classifier: bad response: %w", err)
+	}
+	if cr.Error != nil {
+		return Verdict{}, fmt.Errorf("classifier: %s", cr.Error.Message)
+	}
+	if len(cr.Choices) == 0 {
+		return Verdict{}, fmt.Errorf("classifier: empty response")
+	}
+	return parseVerdict(cr.Choices[0].Message.Content)
+}
+
+// parseVerdict extracts the JSON verdict from the model's reply, tolerating
+// surrounding prose or markdown fences.
+func parseVerdict(content string) (Verdict, error) {
+	start := strings.IndexByte(content, '{')
+	end := strings.LastIndexByte(content, '}')
+	if start < 0 || end <= start {
+		return Verdict{}, fmt.Errorf("classifier: no JSON in reply %q", truncate(content, 120))
+	}
+	var v Verdict
+	if err := json.Unmarshal([]byte(content[start:end+1]), &v); err != nil {
+		return Verdict{}, fmt.Errorf("classifier: unparseable verdict: %w", err)
+	}
+	v.Category = strings.ToLower(strings.TrimSpace(v.Category))
+	switch v.Category {
+	case "ads", "trackers", "malware", "phishing", "clean", "other":
+	default:
+		v.Category = "other" // unknown label -> don't block
+	}
+	return v, nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// RegisteredDomain returns the eTLD+1 (the registered domain) for a name, so a
+// verdict applies to the whole domain and all its subdomains — and never to a
+// bare public suffix like "co.uk". Returns "" if it can't be determined.
+func RegisteredDomain(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+	if name == "" {
+		return ""
+	}
+	reg, err := publicsuffix.EffectiveTLDPlusOne(name)
+	if err != nil {
+		return ""
+	}
+	return reg
+}

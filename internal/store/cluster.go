@@ -12,12 +12,41 @@ import (
 	"time"
 )
 
+// ReplicatedRules returns the deny/allow rules workers should enforce: the
+// active rules plus enforced AI verdicts (auto-blocked or user-approved) as
+// synthetic "deny" rules tagged "ai". This is what makes AI auto-blocks apply on
+// worker nodes too — they arrive through the normal rule-replication path.
+func (s *Store) ReplicatedRules() ([]Rule, error) {
+	rules, err := s.ActiveRules()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(rules))
+	for _, r := range rules {
+		if r.Action == "deny" {
+			seen[r.Domain] = true
+		}
+	}
+	ai, err := s.ActiveAIBlocked()
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range ai {
+		if seen[c.Domain] {
+			continue // already a deny rule — avoid a duplicate (action,domain)
+		}
+		seen[c.Domain] = true
+		rules = append(rules, Rule{Action: "deny", Domain: c.Domain, Category: "ai", Enabled: true})
+	}
+	return rules, nil
+}
+
 // ConfigVersion returns a short content hash of the replicated config (rules +
 // rewrites). It changes only when that content changes and is identical on any
 // node holding the same config, so a worker detects drift by comparing its own
 // hash to the master's — no monotonic counter needed.
 func (s *Store) ConfigVersion() (string, error) {
-	rules, err := s.ActiveRules()
+	rules, err := s.ReplicatedRules()
 	if err != nil {
 		return "", err
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/auth"
+	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/lists"
@@ -32,14 +33,16 @@ const (
 
 // Server is the HTTP API server.
 type Server struct {
-	store          *store.Store
-	res            *resolver.Resolver
-	reload         func() error
-	refresher      *lists.Refresher
-	auth           *auth.Manager
-	authEnabled    bool
-	clusterEnabled bool
-	http           *http.Server
+	store               *store.Store
+	res                 *resolver.Resolver
+	reload              func() error
+	refresher           *lists.Refresher
+	auth                *auth.Manager
+	authEnabled         bool
+	clusterEnabled      bool
+	http                *http.Server
+	statsCache          *ttlCache
+	classifierAvailable bool // master only — classifier endpoints/tab are offered
 }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
@@ -47,7 +50,7 @@ type Server struct {
 // cluster endpoints when clusterEnabled. reload rebuilds the resolver policy
 // after every mutation.
 func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, refresher *lists.Refresher, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
-	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled}
+	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.Handle("GET /metrics", m.Handler())
@@ -63,10 +66,12 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// Data endpoints (protected: readonly may GET, admin may mutate).
 		mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
-		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.getTimeSeries))
-		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.getCategories))
-		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.getInsights))
-		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.getLatency))
+		// The windowed aggregations are cached briefly (see ttlCache) so frequent
+		// polling and multiple widgets don't recompute the same query_log slice.
+		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.cached(s.getTimeSeries)))
+		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.cached(s.getCategories)))
+		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.cached(s.getInsights)))
+		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.cached(s.getLatency)))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
@@ -87,6 +92,13 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/protection", s.requireRole(roleReadonly, s.getProtection))
 		mux.HandleFunc("POST /api/protection/disable", s.requireRole(roleAdmin, s.disableProtection))
 		mux.HandleFunc("POST /api/protection/enable", s.requireRole(roleAdmin, s.enableProtection))
+
+		// LLM domain classifier.
+		mux.HandleFunc("GET /api/classifier", s.requireRole(roleReadonly, s.getClassifier))
+		mux.HandleFunc("PUT /api/classifier/settings", s.requireRole(roleAdmin, s.putClassifierSettings))
+		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))
+		mux.HandleFunc("GET /api/classifications", s.requireRole(roleReadonly, s.listClassifications))
+		mux.HandleFunc("POST /api/classifications/decision", s.requireRole(roleAdmin, s.decideClassification))
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
@@ -185,9 +197,10 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.TouchNode(node.Name, addr, ver, st)
 
-	// Workers receive the effective (active) rule set so list enable/disable and
-	// refreshes propagate without the worker needing the lists table.
-	rules, err := s.store.ActiveRules()
+	// Workers receive the effective rule set (active rules + enforced AI verdicts
+	// as deny rules) so list enable/disable, refreshes, and AI auto-blocks all
+	// propagate without the worker needing the lists/classifications tables.
+	rules, err := s.store.ReplicatedRules()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -296,10 +309,16 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 // ---- auth handlers ----
 
 func (s *Server) authInfo(w http.ResponseWriter, _ *http.Request) {
+	enabled := false
+	if s.classifierAvailable {
+		enabled = classifier.LoadSettings(s.store, classifier.Settings{}).Enabled
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"auth_enabled":    s.authEnabled,
-		"oidc_enabled":    s.authEnabled && s.auth.OIDCEnabled(),
-		"cluster_enabled": s.clusterEnabled,
+		"auth_enabled":         s.authEnabled,
+		"oidc_enabled":         s.authEnabled && s.auth.OIDCEnabled(),
+		"cluster_enabled":      s.clusterEnabled,
+		"classifier_available": s.classifierAvailable,
+		"classifier_enabled":   enabled,
 	})
 }
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/IPMaze/MazeDNS/internal/api"
 	"github.com/IPMaze/MazeDNS/internal/auth"
+	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/filter"
@@ -90,6 +91,10 @@ func main() {
 	qlog := store.NewQueryLogWriter(st, 4096)
 	defer qlog.Close()
 
+	// Optional LLM classifier worker (set below, master only); referenced here so
+	// every query name can be fed to it for background classification.
+	var clsWorker *classifier.Worker
+
 	res := resolver.New(resolver.Options{
 		Timeout:  5 * time.Second,
 		Zones:    toZoneSpecs(cfg.Zones),
@@ -106,6 +111,9 @@ func main() {
 				Rcode:     ev.Rcode,
 				ElapsedMS: float64(ev.Elapsed.Microseconds()) / 1000.0,
 			})
+			if clsWorker != nil {
+				clsWorker.Enqueue(ev.Name)
+			}
 		},
 	})
 	// Operational settings: the DB is the source of truth, seeded from the config
@@ -147,6 +155,15 @@ func main() {
 				allow.Add(rule.Domain, "")
 			}
 		}
+		// Enforced AI verdicts (auto-blocked or user-approved) join the block set,
+		// tagged "ai" so they're attributable in the dashboard.
+		if aiBlocked, aerr := st.ActiveAIBlocked(); aerr == nil {
+			for _, c := range aiBlocked {
+				block.Add(c.Domain, "ai")
+			}
+		} else {
+			slog.Warn("load ai classifications", "err", aerr)
+		}
 		rewrites := map[string][]resolver.RewriteRR{}
 		wildcards := map[string][]resolver.RewriteRR{}
 		rws, werr := st.ListRewrites()
@@ -184,6 +201,27 @@ func main() {
 	if err := reload(); err != nil {
 		slog.Error("build policy", "err", err)
 		os.Exit(1)
+	}
+
+	// Master: LLM domain classifier. The worker always runs (it no-ops while
+	// disabled) so the feature can be turned on/repointed live from the Settings
+	// UI without a restart. Config seeds the persisted settings on first run.
+	if !worker {
+		defaults := classifier.Settings{
+			Enabled:  cfg.Classifier.Enabled,
+			Endpoint: cfg.Classifier.Endpoint,
+			Model:    cfg.Classifier.Model,
+			APIKey:   cfg.Classifier.APIKey,
+			Mode:     cfg.Classifier.Mode,
+			MinGapMS: cfg.Classifier.MinGapMS,
+		}
+		if cur, _ := st.GetMeta(classifier.SettingsKey); cur == "" {
+			_ = classifier.SaveSettings(st, defaults)
+		}
+		getSettings := func() classifier.Settings { return classifier.LoadSettings(st, defaults) }
+		clsWorker = classifier.NewWorker(st, getSettings, reload)
+		go clsWorker.Run(context.Background())
+		slog.Info("classifier ready", "enabled", getSettings().Enabled)
 	}
 
 	// Master: optionally pre-provision cluster nodes with fixed keys (handy for

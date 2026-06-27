@@ -18,7 +18,7 @@ type Store struct {
 // Rule is an allow/deny entry for a domain, tagged with a category.
 type Rule struct {
 	ID        int64  `json:"id"`
-	Action    string `json:"action"`   // "allow" | "deny"
+	Action    string `json:"action"` // "allow" | "deny"
 	Domain    string `json:"domain"`
 	Category  string `json:"category"` // "ads" | "trackers" | "malware" | "custom"
 	Enabled   bool   `json:"enabled"`
@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	data TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS app_meta (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS classifications (
+	domain TEXT PRIMARY KEY,                    -- registered domain (eTLD+1), normalized
+	category TEXT NOT NULL DEFAULT 'clean',     -- ads|trackers|malware|phishing|clean|other
+	block INTEGER NOT NULL DEFAULT 0,           -- model recommends blocking
+	status TEXT NOT NULL DEFAULT 'suggested',   -- suggested|approved|rejected|auto|clean
+	confidence REAL NOT NULL DEFAULT 0,
+	reason TEXT NOT NULL DEFAULT '',
+	model TEXT NOT NULL DEFAULT '',
+	updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)

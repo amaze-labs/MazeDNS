@@ -8,8 +8,9 @@ const MODES = [
   { id: 'auto', label: 'Auto-block', desc: 'Block-category verdicts take effect immediately.' },
 ]
 const STATUS_TABS = ['suggested', 'auto', 'approved', 'rejected', 'clean']
-const catClass = (c: string) =>
-  ['ads', 'trackers', 'malware', 'phishing'].includes(c) ? 'blocked' : c === 'clean' ? 'allow' : ''
+const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
+// Security categories are red; legitimate content categories are neutral/blue.
+const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'clean' || c === 'other' ? 'allow' : 'info')
 
 // Classifier is the AI domain-classification console: pick the enforcement mode,
 // review the model's verdicts, and approve/reject suggestions.
@@ -51,6 +52,8 @@ export default function Classifier() {
   }
 
   const counts = info?.counts ?? {}
+  // Category breakdown, most-seen first.
+  const catCounts = Object.entries(info?.category_counts ?? {}).sort((a, b) => b[1] - a[1])
   return (
     <div>
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -88,6 +91,23 @@ export default function Classifier() {
           {MODES.find((m) => m.id === info?.settings.mode)?.desc}
         </p>
       </div>
+
+      {catCounts.length > 0 && (
+        <div className="settings-card" style={{ marginBottom: 18 }}>
+          <h3>Traffic by category</h3>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            What the model has seen across all classified domains — security categories plus legitimate content (social,
+            streaming, …).
+          </p>
+          <div className="cat-chips">
+            {catCounts.map(([cat, n]) => (
+              <span key={cat} className={`cat-chip badge ${catClass(cat)}`}>
+                {cat} <strong>{n.toLocaleString()}</strong>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="subtabs">
         {STATUS_TABS.map((st) => (

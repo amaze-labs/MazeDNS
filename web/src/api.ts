@@ -98,6 +98,7 @@ export interface ClassifierSettings {
 export interface ClassifierStatus {
   settings: ClassifierSettings
   counts: Record<string, number>
+  category_counts: Record<string, number>
   trusted_count: number
 }
 

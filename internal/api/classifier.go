@@ -19,6 +19,11 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	categoryCounts, err := s.store.ClassificationCategoryCounts()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	// Never leak the API key to the UI.
 	cfg.APIKey = ""
 	trustedCount := 0
@@ -26,9 +31,10 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		trustedCount = s.clsTrusted()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings":      cfg,
-		"counts":        counts,
-		"trusted_count": trustedCount,
+		"settings":        cfg,
+		"counts":          counts,
+		"category_counts": categoryCounts,
+		"trusted_count":   trustedCount,
 	})
 }
 

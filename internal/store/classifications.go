@@ -138,19 +138,30 @@ func (s *Store) ActiveAIBlocked() ([]Classification, error) {
 
 // ClassificationCounts returns the number of verdicts per status.
 func (s *Store) ClassificationCounts() (map[string]int, error) {
-	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM classifications GROUP BY status`)
+	return s.countClassificationsBy("status")
+}
+
+// ClassificationCategoryCounts returns the number of verdicts per category, for
+// the traffic-by-category breakdown (social, streaming, ads, …).
+func (s *Store) ClassificationCategoryCounts() (map[string]int, error) {
+	return s.countClassificationsBy("category")
+}
+
+func (s *Store) countClassificationsBy(column string) (map[string]int, error) {
+	// column is a fixed identifier (never user input), so it's safe to interpolate.
+	rows, err := s.db.Query(`SELECT ` + column + `, COUNT(*) FROM classifications GROUP BY ` + column)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := map[string]int{}
 	for rows.Next() {
-		var st string
+		var k string
 		var n int
-		if err := rows.Scan(&st, &n); err != nil {
+		if err := rows.Scan(&k, &n); err != nil {
 			return nil, err
 		}
-		out[st] = n
+		out[k] = n
 	}
 	return out, rows.Err()
 }

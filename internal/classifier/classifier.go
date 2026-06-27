@@ -17,11 +17,30 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// Categories a domain can be classified into. The first four are "block"
-// candidates; clean/other are not.
+// blockCategories are the security categories that warrant blocking. Everything
+// else (content categories, clean, other) is recorded but never blocked.
 var blockCategories = map[string]bool{
 	"ads": true, "trackers": true, "malware": true, "phishing": true,
 }
+
+// contentCategories label legitimate traffic by type, so the classifier gives
+// visibility into what a network is doing — not just what to block.
+var contentCategories = []string{
+	"social", "streaming", "shopping", "news", "gaming", "productivity",
+	"search", "email", "finance", "technology", "cdn", "adult",
+}
+
+// validCategories is the full accepted set (security + content + clean/other).
+var validCategories = func() map[string]bool {
+	m := map[string]bool{"clean": true, "other": true}
+	for c := range blockCategories {
+		m[c] = true
+	}
+	for _, c := range contentCategories {
+		m[c] = true
+	}
+	return m
+}()
 
 // Verdict is the model's classification of a single registered domain.
 type Verdict struct {
@@ -55,16 +74,35 @@ func NewClient(baseURL, model, apiKey string, timeout time.Duration) *Client {
 	}
 }
 
-const systemPrompt = `You classify internet domains for a DNS ad/tracker/malware blocker.
+const systemPrompt = `You classify internet domains for a DNS filter and analytics dashboard.
 Respond with ONLY a JSON object, no prose, of the form:
-{"category":"<ads|trackers|malware|phishing|clean|other>","confidence":<0..1>,"reason":"<short>"}
-- ads: advertising / ad-serving domains
+{"category":"<one category below>","confidence":<0..1>,"reason":"<short>"}
+
+Blocking categories (only choose when reasonably sure):
+- ads: advertising / ad-serving
 - trackers: analytics / telemetry / user tracking
 - malware: malware C2, drive-by, exploit kits
 - phishing: credential theft / scams
-- clean: legitimate, should not be blocked
-- other: unknown / cannot tell (do not block)
-Be conservative: only choose a blocking category when reasonably sure.`
+
+Legitimate content categories (describe what the domain is for; never blocked):
+- social: social networks / messaging (e.g. facebook, instagram, reddit)
+- streaming: video/music streaming (e.g. youtube, netflix, spotify, twitch)
+- shopping: e-commerce / retail
+- news: news / media publications
+- gaming: games / gaming platforms
+- productivity: work / office / collaboration tools
+- search: search engines
+- email: webmail / email providers
+- finance: banking / payments / investing
+- technology: developer / software / tech services (e.g. github)
+- cdn: CDNs / cloud infrastructure
+- adult: adult content
+
+Fallbacks:
+- clean: legitimate but none of the above fit
+- other: unknown / cannot tell
+
+Pick the single best-fitting category.`
 
 type chatReq struct {
 	Model       string        `json:"model"`
@@ -144,10 +182,8 @@ func parseVerdict(content string) (Verdict, error) {
 		return Verdict{}, fmt.Errorf("classifier: unparseable verdict: %w", err)
 	}
 	v.Category = strings.ToLower(strings.TrimSpace(v.Category))
-	switch v.Category {
-	case "ads", "trackers", "malware", "phishing", "clean", "other":
-	default:
-		v.Category = "other" // unknown label -> don't block
+	if !validCategories[v.Category] {
+		v.Category = "other" // unknown label -> treated as non-blocking
 	}
 	return v, nil
 }

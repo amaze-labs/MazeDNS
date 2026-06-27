@@ -188,6 +188,24 @@ tr:last-child td {
   color: var(--ok);
 }
 
+.badge.info {
+  background: rgba(78, 161, 255, 0.15);
+  color: var(--accent);
+}
+
+/* Classifier "traffic by category" chips */
+.cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.cat-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .row {
   display: flex;
   gap: 8px;

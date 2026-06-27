@@ -45,9 +45,22 @@ func TestShouldBlock(t *testing.T) {
 			t.Errorf("%q should block", c)
 		}
 	}
-	for _, c := range []string{"clean", "other", ""} {
+	// Content categories are recorded but never blocked.
+	for _, c := range []string{"clean", "other", "", "social", "streaming", "shopping", "news", "gaming"} {
 		if (Verdict{Category: c}).ShouldBlock() {
 			t.Errorf("%q should not block", c)
+		}
+	}
+}
+
+func TestContentCategoriesParsed(t *testing.T) {
+	for _, c := range contentCategories {
+		v, err := parseVerdict(`{"category":"` + c + `","confidence":0.8}`)
+		if err != nil || v.Category != c {
+			t.Errorf("content category %q not preserved: got %q err=%v", c, v.Category, err)
+		}
+		if v.ShouldBlock() {
+			t.Errorf("content category %q must not block", c)
 		}
 	}
 }

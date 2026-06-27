@@ -60,6 +60,30 @@ func TestOIDCEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestBlocklistFilesEnvOverride(t *testing.T) {
+	// The YAML references a relative file; the env var must replace it entirely.
+	p := writeConfig(t, minimalConfig+`
+filter:
+  enabled: true
+  blocklist_files: ["ignored.hosts"]
+`)
+	t.Setenv("MAZEDNS_BLOCKLIST_FILES", "/etc/mazedns/a.hosts, /etc/mazedns/b.hosts")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := cfg.Filter.BlocklistFiles
+	want := []string{"/etc/mazedns/a.hosts", "/etc/mazedns/b.hosts"}
+	if len(got) != len(want) {
+		t.Fatalf("blocklist_files = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("blocklist_files[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 // MAZEDNS_OIDC_ENABLED=false must win even if the YAML enabled it.
 func TestOIDCEnvDisable(t *testing.T) {
 	p := writeConfig(t, minimalConfig+`

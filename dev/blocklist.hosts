@@ -1,0 +1,11 @@
+# DEV/DEMO blocklist — NOT shipped in the production image.
+#
+# Used only by the dev compose stack (docker-compose.yml) so the demo traffic
+# generators produce "blocked" stats on the dashboard, and by tests. The
+# production config (configs/mazedns.yaml) ships no blocklist at all.
+#
+# Mounted into each resolver node and loaded via MAZEDNS_BLOCKLIST_FILES.
+0.0.0.0 doubleclick.net
+0.0.0.0 googleadservices.com
+0.0.0.0 ads.example.com
+0.0.0.0 tracking.example.org

@@ -56,8 +56,13 @@ cache:
 filter:
   enabled: true
   block_response: "nxdomain"   # "nxdomain" or "zeroip" (0.0.0.0 / ::)
-  blocklist_files:
-    - "blocklist.hosts"        # relative paths resolve next to this config file
+  # Ships EMPTY: a fresh install blocks nothing until you opt in. Add blocklists
+  # in the UI (Filtering → Blocklists), or load files here / via the
+  # MAZEDNS_BLOCKLIST_FILES env var (e.g. a mounted StevenBlack/OISD list).
+  # Paths are relative to this config file. Example:
+  #   blocklist_files:
+  #     - "blocklist.hosts"
+  blocklist_files: []
 
 api:
   enabled: true

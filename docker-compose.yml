@@ -26,6 +26,9 @@ services:
       MAZEDNS_ADMIN_PASSWORD: "change-me-please"
       # Pre-enroll the dev workers so clustering works out of the box:
       MAZEDNS_CLUSTER_BOOTSTRAP_NODES: "worker-a=dev-key-worker-a,worker-b=dev-key-worker-b"
+      # Dev-only blocklist so the demo traffic shows blocked/category stats. The
+      # production image ships no blocklist.
+      MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
       - "53:5300/udp"   # DNS
       - "53:5300/tcp"
@@ -34,6 +37,7 @@ services:
       # - "8443:8443"   # DoH  (enable doh.* in config)
     volumes:
       - mazedns-data:/data
+      - ./dev/blocklist.hosts:/etc/mazedns/dev-blocklist.hosts:ro
 
   worker-a:
     build: .
@@ -47,12 +51,14 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_MASTER_URL: "http://mazedns:8080"
       MAZEDNS_NODE_KEY: "dev-key-worker-a"
+      MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
       - "5311:5300/udp"   # worker-a resolver
       - "5311:5300/tcp"
       - "9091:8080"       # worker-a /metrics + /healthz
     volumes:
       - worker-a-data:/data
+      - ./dev/blocklist.hosts:/etc/mazedns/dev-blocklist.hosts:ro
 
   worker-b:
     build: .
@@ -66,12 +72,14 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_MASTER_URL: "http://mazedns:8080"
       MAZEDNS_NODE_KEY: "dev-key-worker-b"
+      MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
       - "5312:5300/udp"   # worker-b resolver
       - "5312:5300/tcp"
       - "9092:8080"       # worker-b /metrics + /healthz
     volumes:
       - worker-b-data:/data
+      - ./dev/blocklist.hosts:/etc/mazedns/dev-blocklist.hosts:ro
 
   # ── Traffic generators ──────────────────────────────────────────────────
   # Each client queries a node directly over the compose network, so the

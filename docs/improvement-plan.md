@@ -29,6 +29,11 @@ different color per component.
 - [x] Tag file blocklist entries with the list source, not `custom`.
 - [x] Ship an empty/inactive default blocklist.
 - [x] Verify empty rules + lists ⇒ zero blocked.
+- [x] Remove the sample blocklist from the shipped image entirely: default
+      `configs/mazedns.yaml` sets `blocklist_files: []`, the populated sample
+      moved to `dev/blocklist.hosts` (dev compose + tests only), loaded via the
+      new `MAZEDNS_BLOCKLIST_FILES` env override. (Subdomains of a blocked domain
+      inherit the block, e.g. `doubleclick.net` ⇒ `securepubads.g.doubleclick.net`.)
 
 ## #5 — DNS latency audit
 **Root cause:** new `dns.Client` per query (no socket reuse); DoT redials TLS per

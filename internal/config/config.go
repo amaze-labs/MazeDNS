@@ -234,6 +234,13 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_LISTEN_ADDRESS"); v != "" {
 		cfg.Listen.Address = v
 	}
+	// MAZEDNS_BLOCKLIST_FILES replaces filter.blocklist_files with a comma/space
+	// separated list of paths — handy for pointing a container at a mounted
+	// blocklist without editing the baked config. Use absolute paths (env values
+	// are not resolved relative to the config file).
+	if v := os.Getenv("MAZEDNS_BLOCKLIST_FILES"); v != "" {
+		cfg.Filter.BlocklistFiles = splitList(v)
+	}
 	if v := os.Getenv("MAZEDNS_API_ADDRESS"); v != "" {
 		cfg.API.Address = v
 	}

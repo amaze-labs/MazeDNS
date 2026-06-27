@@ -12,13 +12,14 @@ func TestIsBlocked(t *testing.T) {
 	e.Add("ads.example.com", "trackers")
 
 	cases := map[string]bool{
-		"doubleclick.net.":    true,  // exact (FQDN form)
-		"ad.doubleclick.net.": true,  // subdomain of a blocked domain
-		"DOUBLECLICK.NET":     true,  // case-insensitive
-		"example.com.":        false, // parent of a blocked domain is not blocked
-		"ads.example.com":     true,
-		"notads.example.com":  false,
-		"safe.org.":           false,
+		"doubleclick.net.":                true,  // exact (FQDN form)
+		"ad.doubleclick.net.":             true,  // subdomain of a blocked domain
+		"securepubads.g.doubleclick.net.": true,  // deep subdomain inherits the block
+		"DOUBLECLICK.NET":                 true,  // case-insensitive
+		"example.com.":                    false, // parent of a blocked domain is not blocked
+		"ads.example.com":                 true,
+		"notads.example.com":              false,
+		"safe.org.":                       false,
 	}
 	for name, want := range cases {
 		if got := e.IsBlocked(name); got != want {

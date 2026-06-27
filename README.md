@@ -167,6 +167,7 @@ Override the baked config without mounting a file:
 | `MAZEDNS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
 | `MAZEDNS_MASTER_URL` / `MAZEDNS_NODE_KEY` | worker: master URL + its node key |
 | `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` | master: pre-enroll nodes, `name=key,name=key` |
+| `MAZEDNS_BLOCKLIST_FILES` | blocklist file path(s), comma/space separated (use absolute paths; replaces `filter.blocklist_files`) |
 | `MAZEDNS_OIDC_ISSUER` | SSO issuer URL — setting it enables OIDC |
 | `MAZEDNS_OIDC_CLIENT_ID` / `MAZEDNS_OIDC_CLIENT_SECRET` | SSO client credentials |
 | `MAZEDNS_OIDC_REDIRECT_URL` | SSO callback URL |

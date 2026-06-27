@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -146,6 +147,11 @@ type AdminBootstrap struct {
 }
 
 // OIDC configures Single Sign-On via an OpenID Connect provider (e.g. Authentik).
+// Every field can also be set from the environment (MAZEDNS_OIDC_ISSUER,
+// MAZEDNS_OIDC_CLIENT_ID, MAZEDNS_OIDC_CLIENT_SECRET, MAZEDNS_OIDC_REDIRECT_URL,
+// MAZEDNS_OIDC_SCOPES, MAZEDNS_OIDC_GROUPS_CLAIM, MAZEDNS_OIDC_ADMIN_GROUP,
+// MAZEDNS_OIDC_ENABLED), which is the preferred way to configure SSO in
+// containers. Env values override the YAML file.
 type OIDC struct {
 	Enabled      bool     `yaml:"enabled"`
 	Issuer       string   `yaml:"issuer"`
@@ -248,10 +254,59 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
 		cfg.Cluster.Enabled = true
 	}
+	applyOIDCEnv(&cfg.Auth.OIDC)
 	if err := cfg.validate(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// applyOIDCEnv overlays MAZEDNS_OIDC_* environment variables onto the OIDC
+// config, so SSO can be configured entirely from the container environment
+// (handy for Docker / Compose / Kubernetes) without editing the YAML file.
+// Setting MAZEDNS_OIDC_ISSUER (or _ENABLED=true) turns SSO on.
+func applyOIDCEnv(o *OIDC) {
+	if v := os.Getenv("MAZEDNS_OIDC_ISSUER"); v != "" {
+		o.Issuer = v
+		o.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_OIDC_CLIENT_ID"); v != "" {
+		o.ClientID = v
+	}
+	if v := os.Getenv("MAZEDNS_OIDC_CLIENT_SECRET"); v != "" {
+		o.ClientSecret = v
+	}
+	if v := os.Getenv("MAZEDNS_OIDC_REDIRECT_URL"); v != "" {
+		o.RedirectURL = v
+	}
+	if v := os.Getenv("MAZEDNS_OIDC_SCOPES"); v != "" {
+		o.Scopes = splitList(v)
+	}
+	if v := os.Getenv("MAZEDNS_OIDC_GROUPS_CLAIM"); v != "" {
+		o.GroupsClaim = v
+	}
+	if v := os.Getenv("MAZEDNS_OIDC_ADMIN_GROUP"); v != "" {
+		o.AdminGroup = v
+	}
+	// _ENABLED is applied last so it can explicitly enable or disable.
+	switch strings.ToLower(os.Getenv("MAZEDNS_OIDC_ENABLED")) {
+	case "true", "1":
+		o.Enabled = true
+	case "false", "0":
+		o.Enabled = false
+	}
+}
+
+// splitList parses a comma- or space-separated list, trimming blanks.
+func splitList(s string) []string {
+	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' })
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func (c Config) validate() error {

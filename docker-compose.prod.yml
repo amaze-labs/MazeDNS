@@ -21,6 +21,14 @@ services:
       MAZEDNS_ADMIN_USERNAME: "admin"
       MAZEDNS_ADMIN_PASSWORD: "${MAZEDNS_ADMIN_PASSWORD:?set a strong admin password}"
       MAZEDNS_CLUSTER_ENABLED: "true"   # serve cluster endpoints + enroll nodes in the UI
+      # --- SSO via OIDC (optional) — uncomment and fill in to enable a
+      #     "Sign in with SSO" button without editing the config file:
+      # MAZEDNS_OIDC_ISSUER: "https://id.example.com/application/o/mazedns/"
+      # MAZEDNS_OIDC_CLIENT_ID: "mazedns"
+      # MAZEDNS_OIDC_CLIENT_SECRET: "${MAZEDNS_OIDC_CLIENT_SECRET:-}"
+      # MAZEDNS_OIDC_REDIRECT_URL: "https://dns.example.com/api/auth/oidc/callback"
+      # MAZEDNS_OIDC_GROUPS_CLAIM: "groups"
+      # MAZEDNS_OIDC_ADMIN_GROUP: "mazedns-admins"
     ports:
       - "53:5300/udp"
       - "53:5300/tcp"

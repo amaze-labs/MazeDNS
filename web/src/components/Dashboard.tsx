@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Area,
   AreaChart,
@@ -41,6 +41,10 @@ const sourceColors: Record<string, string> = {
   Rewritten: '#c48aff',
 }
 const NODE_PALETTE = ['#4ea1ff', '#3ecf8e', '#c48aff', '#ffb454', '#ff5d6c', '#56d4dd', '#e070c0']
+// "overall" is not a node — it gets a reserved neutral color, never a palette slot.
+const OVERALL_COLOR = '#e6e9ee'
+// colorAt maps any integer (including -1) to a stable palette color.
+const colorAt = (i: number) => NODE_PALETTE[((i % NODE_PALETTE.length) + NODE_PALETTE.length) % NODE_PALETTE.length]
 const ONLINE_WINDOW = 120
 const tooltipStyle = { background: '#171c23', border: '1px solid #262d36', borderRadius: 8 }
 const PAGE = 25
@@ -54,7 +58,6 @@ const RANGES = [
 ]
 
 const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
-const pct = (num?: number, den?: number) => (den && num != null ? `${Math.round((num / den) * 100)}%` : '—')
 
 // Persist dashboard view prefs (time window + node focus) in the browser.
 const loadHours = (): number => {
@@ -69,6 +72,26 @@ const loadFocus = (): string[] => {
     return []
   }
 }
+// KPI cards are user-curatable: which ones show and in what order, persisted
+// in the browser. `available` cards that aren't hidden render in `kpiOrder`.
+type KpiDef = { id: string; label: string; value?: string; accent?: string; sub?: string; available: boolean }
+const DEFAULT_KPI_ORDER = [
+  'total', 'blocked', 'cached', 'forwarded', 'malicious', 'clients', 'latency', 'errors', 'rewritten', 'qtypes', 'cache_size',
+]
+// Hidden by default so the dashboard starts clean; users can switch them on.
+const DEFAULT_KPI_HIDDEN = ['rewritten', 'qtypes', 'cache_size']
+const loadJSON = <T,>(key: string, fallback: T): T => {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) || 'null')
+    return Array.isArray(v) ? (v as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+// ACTIONS are the resolver's action values, for the recent-queries filter.
+const ACTIONS = ['forward', 'cache', 'blocked', 'rewrite', 'authoritative', 'error', 'refused']
+
 const bucketLabel = (ts: number, hours: number) => {
   const d = new Date(ts * 1000)
   return hours <= 48
@@ -145,7 +168,17 @@ function Donut({ data, height = 180 }: { data: { name: string; value: number; fi
 
 // NodeFilter is a multi-select dropdown to focus the dashboard on one or more
 // nodes. Empty selection = all nodes.
-function NodeFilter({ options, selected, onChange }: { options: string[]; selected: string[]; onChange: (s: string[]) => void }) {
+function NodeFilter({
+  options,
+  selected,
+  onChange,
+  color,
+}: {
+  options: string[]
+  selected: string[]
+  onChange: (s: string[]) => void
+  color: (name: string) => string
+}) {
   const [open, setOpen] = useState(false)
   const allActive = selected.length === 0
   const label = allActive ? 'All nodes' : selected.length === 1 ? selected[0] : `${selected.length} nodes`
@@ -167,12 +200,12 @@ function NodeFilter({ options, selected, onChange }: { options: string[]; select
               <span className="nf-name">All nodes</span>
             </button>
             <div className="nf-divider" />
-            {options.map((o, i) => {
+            {options.map((o) => {
               const sel = selected.includes(o)
               return (
                 <button key={o} type="button" className={`nf-opt ${sel ? 'sel' : ''}`} onClick={() => toggle(o)}>
                   <span className="nf-check">{sel ? '✓' : ''}</span>
-                  <span className="nf-swatch" style={{ background: NODE_PALETTE[i % NODE_PALETTE.length] }} />
+                  <span className="nf-swatch" style={{ background: color(o) }} />
                   <span className="nf-name">{o}</span>
                 </button>
               )
@@ -195,12 +228,21 @@ export default function Dashboard() {
   const [nodes, setNodes] = useState<Node[]>([])
   const [err, setErr] = useState('')
 
-  // query log (paginated + searchable)
+  // KPI curation (which cards show, and in what order)
+  const [kpiOrder, setKpiOrder] = useState<string[]>(() => loadJSON('mazedns.kpiOrder', DEFAULT_KPI_ORDER))
+  const [kpiHidden, setKpiHidden] = useState<string[]>(() => loadJSON('mazedns.kpiHidden', DEFAULT_KPI_HIDDEN))
+  const [customizing, setCustomizing] = useState(false)
+
+  // query log (paginated, searchable, filterable, sortable)
   const [log, setLog] = useState<QueryLogEntry[]>([])
   const [qlTotal, setQlTotal] = useState(0)
   const [qlPage, setQlPage] = useState(0)
   const [qlInput, setQlInput] = useState('')
   const [qlSearch, setQlSearch] = useState('')
+  const [qlAction, setQlAction] = useState('')
+  const [qlType, setQlType] = useState('')
+  const [qlSort, setQlSort] = useState('time')
+  const [qlDesc, setQlDesc] = useState(true)
 
   const rangeLabel = RANGES.find((r) => r.hours === hours)?.label ?? `${hours}h`
 
@@ -210,6 +252,12 @@ export default function Dashboard() {
   useEffect(() => {
     localStorage.setItem('mazedns.focusNodes', JSON.stringify(focus))
   }, [focus])
+  useEffect(() => {
+    localStorage.setItem('mazedns.kpiOrder', JSON.stringify(kpiOrder))
+  }, [kpiOrder])
+  useEffect(() => {
+    localStorage.setItem('mazedns.kpiHidden', JSON.stringify(kpiHidden))
+  }, [kpiHidden])
 
   useEffect(() => {
     let alive = true
@@ -256,7 +304,17 @@ export default function Dashboard() {
     let alive = true
     const fetchLog = () =>
       api
-        .queryLog({ limit: PAGE, offset: qlPage * PAGE, search: qlSearch, nodes: focus })
+        .queryLog({
+          limit: PAGE,
+          offset: qlPage * PAGE,
+          search: qlSearch,
+          nodes: focus,
+          action: qlAction,
+          qtype: qlType,
+          sort: qlSort,
+          desc: qlDesc,
+          hours,
+        })
         .then((r) => {
           if (alive) {
             setLog(r.entries)
@@ -270,7 +328,7 @@ export default function Dashboard() {
       alive = false
       clearInterval(id)
     }
-  }, [qlPage, qlSearch, focus])
+  }, [qlPage, qlSearch, focus, qlAction, qlType, qlSort, qlDesc, hours])
 
   const malicious = cats.find((c) => c.category === 'malware')?.count ?? 0
   const areaData = series.map((p) => ({
@@ -281,25 +339,42 @@ export default function Dashboard() {
   }))
   const round2 = (n: number) => Math.round(n * 100) / 100
   const latNodes = lat?.nodes ?? []
+
+  // A node keeps the SAME color in every chart, legend, and the focus filter.
+  // Color is keyed by the node's position in one canonical, sorted name list
+  // (built from every place a node can appear), so it never depends on the order
+  // a given panel happens to return its rows in.
+  const nodeNames = useMemo(() => {
+    const s = new Set<string>(['master'])
+    nodes.forEach((n) => s.add(n.name))
+    ;(lat?.nodes ?? []).forEach((n) => s.add(n))
+    ;(ins?.by_node ?? []).forEach((n) => s.add(n.node))
+    return [...s].sort()
+  }, [nodes, lat, ins])
+  const nodeColor = (name: string) => colorAt(nodeNames.indexOf(name))
+
   const latData = (lat?.points ?? []).map((p) => {
     const row: Record<string, number | string | null> = { time: bucketLabel(p.ts, hours), overall: round2(p.overall) }
     for (const n of latNodes) row[n] = p.by_node[n] != null ? round2(p.by_node[n]) : null
     return row
   })
-  const catData = cats.map((c) => ({ name: c.category, value: c.count, fill: catColors[c.category] || '#8a93a0' }))
-  const sourceData = stats
+  // Known categories keep their fixed color; file-sourced lists (e.g. "blocklist",
+  // "stevenblack") fall back to a distinct palette color rather than all-gray.
+  const catData = cats.map((c, i) => ({ name: c.category, value: c.count, fill: catColors[c.category] || colorAt(i) }))
+  const totals = ins?.totals
+  const sourceData = totals
     ? [
-        { name: 'Forwarded', value: stats.forwarded },
-        { name: 'Cached', value: stats.cached },
-        { name: 'Blocked', value: stats.blocked },
-        { name: 'Rewritten', value: stats.rewritten },
+        { name: 'Forwarded', value: totals.forwarded },
+        { name: 'Cached', value: totals.cached },
+        { name: 'Blocked', value: totals.blocked },
+        { name: 'Rewritten', value: totals.rewritten },
       ]
         .filter((d) => d.value > 0)
         .map((d) => ({ ...d, fill: sourceColors[d.name] }))
     : []
   const byNodeData = (ins?.by_node ?? [])
     .filter((n) => n.total > 0)
-    .map((n, i) => ({ name: n.node, value: n.total, fill: NODE_PALETTE[i % NODE_PALETTE.length] }))
+    .map((n) => ({ name: n.node, value: n.total, fill: nodeColor(n.node) }))
   const clientRows = ins?.clients ?? []
   const maxClient = clientRows.reduce((m, c) => Math.max(m, c.total), 0)
 
@@ -308,6 +383,59 @@ export default function Dashboard() {
   const clusterQ = nodes.reduce((sum, n) => sum + n.total, 0)
   const clusterB = nodes.reduce((sum, n) => sum + n.blocked, 0)
   const lastPage = Math.max(0, Math.ceil(qlTotal / PAGE) - 1)
+
+  // KPI registry — every windowed card honors the time range + node focus (all
+  // values derive from `totals`/`ins`, which are fetched with hours + focus).
+  const tt = totals
+  const wpct = (num?: number, den?: number) => (den && num != null ? `${Math.round((num / den) * 100)}% of total` : undefined)
+  const kpiDefs: KpiDef[] = [
+    { id: 'total', label: 'Total queries', value: fmt(tt?.total), available: true },
+    { id: 'blocked', label: 'Blocked', value: fmt(tt?.blocked), accent: 'danger', sub: wpct(tt?.blocked, tt?.total), available: true },
+    { id: 'cached', label: 'Cached', value: fmt(tt?.cached), sub: tt && tt.total ? `${Math.round((tt.cached / tt.total) * 100)}% hit rate` : undefined, available: true },
+    { id: 'forwarded', label: 'Forwarded', value: fmt(tt?.forwarded), available: true },
+    { id: 'malicious', label: `Malicious`, value: fmt(malicious), accent: malicious ? 'danger' : '', available: true },
+    { id: 'clients', label: 'Unique clients', value: fmt(ins?.unique_clients), available: true },
+    { id: 'latency', label: 'Avg latency', value: ins ? `${ins.avg_latency_ms.toFixed(1)} ms` : '—', available: true },
+    { id: 'errors', label: 'Errors', value: fmt(tt?.errors), accent: tt?.errors ? 'danger' : '', available: true },
+    { id: 'rewritten', label: 'Rewritten', value: fmt(tt?.rewritten), available: true },
+    { id: 'qtypes', label: 'Query types', value: fmt(ins?.qtypes.length), available: true },
+    { id: 'cache_size', label: 'Cache entries (live)', value: fmt(stats?.cache_size), available: true },
+  ]
+  const kpiById = new Map(kpiDefs.map((d) => [d.id, d]))
+  // Saved order first, then any KPI ids not yet in the saved order (new ones).
+  const orderedIds = [
+    ...kpiOrder.filter((id) => kpiById.has(id)),
+    ...kpiDefs.filter((d) => !kpiOrder.includes(d.id)).map((d) => d.id),
+  ]
+  const visibleKpis = orderedIds
+    .map((id) => kpiById.get(id))
+    .filter((d): d is KpiDef => !!d && d.available && !kpiHidden.includes(d.id))
+
+  const moveKpi = (id: string, dir: -1 | 1) => {
+    setKpiOrder(() => {
+      const cur = orderedIds.slice()
+      const i = cur.indexOf(id)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= cur.length) return cur
+      ;[cur[i], cur[j]] = [cur[j], cur[i]]
+      return cur
+    })
+  }
+  const toggleKpi = (id: string) =>
+    setKpiHidden((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]))
+
+  // Clicking a column header sorts by it; clicking the active column flips the
+  // direction. Time defaults to newest-first, other columns to ascending.
+  const setSort = (col: string) => {
+    if (qlSort === col) {
+      setQlDesc((d) => !d)
+    } else {
+      setQlSort(col)
+      setQlDesc(col === 'time')
+    }
+    setQlPage(0)
+  }
+  const sortArrow = (col: string) => (qlSort === col ? (qlDesc ? ' ↓' : ' ↑') : '')
 
   return (
     <div>
@@ -324,42 +452,54 @@ export default function Dashboard() {
           <>
             <div className="spacer" />
             <span className="muted">Focus</span>
-            <NodeFilter options={['master', ...nodes.map((n) => n.name)]} selected={focus} onChange={setFocus} />
+            <NodeFilter options={['master', ...nodes.map((n) => n.name)]} selected={focus} onChange={setFocus} color={nodeColor} />
           </>
         )}
       </div>
 
-      <Section title="Overview">
-        <div className="kpi-section">
-          <h3>Traffic (since start)</h3>
-          <div className="cards">
-            <Card label="Total queries" value={fmt(stats?.total)} />
-            <Card label="Forwarded" value={fmt(stats?.forwarded)} />
-            <Card label="Cached" value={fmt(stats?.cached)} sub={`${pct(stats?.cached, stats?.total)} hit rate`} />
-            <Card label="Errors" value={fmt(stats?.errors)} accent={stats?.errors ? 'danger' : ''} />
+      <Section
+        title={`Overview (${rangeLabel})`}
+        right={
+          <button className={`btn ${customizing ? 'active' : ''}`} onClick={() => setCustomizing((c) => !c)}>
+            ⚙ Customize
+          </button>
+        }
+      >
+        {customizing && (
+          <div className="kpi-customize">
+            <div className="muted">Show, hide, and reorder your KPI cards.</div>
+            <ul>
+              {orderedIds.map((id, i) => {
+                const d = kpiById.get(id)
+                if (!d) return null
+                const shown = !kpiHidden.includes(id)
+                return (
+                  <li key={id}>
+                    <label>
+                      <input type="checkbox" checked={shown} onChange={() => toggleKpi(id)} /> {d.label}
+                    </label>
+                    <span className="spacer" />
+                    <button className="btn" disabled={i === 0} onClick={() => moveKpi(id, -1)} title="Move up">
+                      ▲
+                    </button>
+                    <button className="btn" disabled={i === orderedIds.length - 1} onClick={() => moveKpi(id, 1)} title="Move down">
+                      ▼
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
           </div>
-        </div>
-        <div className="kpi-section">
-          <h3>Protection</h3>
-          <div className="cards">
-            <Card label="Blocked" value={fmt(stats?.blocked)} accent="danger" sub={`${pct(stats?.blocked, stats?.total)} of total`} />
-            <Card label={`Malicious (${rangeLabel})`} value={fmt(malicious)} accent={malicious ? 'danger' : ''} />
-            <Card label="Rewritten" value={fmt(stats?.rewritten)} />
-            <Card label="Logged queries" value={fmt(stats?.log_count)} />
-          </div>
-        </div>
-        <div className="kpi-section">
-          <h3>Performance — cluster ({rangeLabel})</h3>
-          <div className="cards">
-            <Card label="Unique clients" value={fmt(ins?.unique_clients)} />
-            <Card label="Avg latency" value={ins ? `${ins.avg_latency_ms.toFixed(1)} ms` : '—'} />
-            <Card label="Cache entries" value={fmt(stats?.cache_size)} />
-            <Card label="Query types" value={fmt(ins?.qtypes.length)} />
-          </div>
+        )}
+        <div className="cards">
+          {visibleKpis.map((d) => (
+            <Card key={d.id} label={d.label} value={d.value} accent={d.accent} sub={d.sub} />
+          ))}
+          {visibleKpis.length === 0 && <p className="muted">All KPIs hidden — open Customize to show some.</p>}
         </div>
         {nodes.length > 0 && (
           <div className="kpi-section">
-            <h3>Cluster</h3>
+            <h3>Cluster health</h3>
             <div className="cards">
               <Card label="Worker nodes" value={fmt(nodes.length)} />
               <Card label="Online" value={fmt(onlineNodes)} accent={onlineNodes < nodes.length ? 'danger' : ''} />
@@ -413,14 +553,14 @@ export default function Dashboard() {
                 <XAxis dataKey="time" stroke="#8a93a0" fontSize={11} tickLine={false} minTickGap={32} />
                 <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Line type="monotone" dataKey="overall" name="overall" stroke="#e6e9ee" strokeWidth={2.5} dot={false} connectNulls />
-                {latNodes.map((n, i) => (
+                <Line type="monotone" dataKey="overall" name="overall" stroke={OVERALL_COLOR} strokeWidth={2.5} dot={false} connectNulls />
+                {latNodes.map((n) => (
                   <Line
                     key={n}
                     type="monotone"
                     dataKey={n}
                     name={n}
-                    stroke={NODE_PALETTE[i % NODE_PALETTE.length]}
+                    stroke={nodeColor(n)}
                     strokeWidth={1.5}
                     dot={false}
                     connectNulls
@@ -429,10 +569,10 @@ export default function Dashboard() {
               </LineChart>
             </ResponsiveContainer>
             <div className="legend">
-              <span><i style={{ background: '#e6e9ee' }} /> overall</span>
-              {latNodes.map((n, i) => (
+              <span><i style={{ background: OVERALL_COLOR }} /> overall</span>
+              {latNodes.map((n) => (
                 <span key={n}>
-                  <i style={{ background: NODE_PALETTE[i % NODE_PALETTE.length] }} /> {n}
+                  <i style={{ background: nodeColor(n) }} /> {n}
                 </span>
               ))}
             </div>
@@ -519,25 +659,43 @@ export default function Dashboard() {
       <Section
         title="Recent queries"
         right={
-          <input
-            className="search"
-            placeholder="search name or client…"
-            value={qlInput}
-            onChange={(e) => setQlInput(e.target.value)}
-          />
+          <div className="ql-filters">
+            <select className="ql-select" value={qlAction} onChange={(e) => { setQlAction(e.target.value); setQlPage(0) }}>
+              <option value="">All actions</option>
+              {ACTIONS.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+            <select className="ql-select" value={qlType} onChange={(e) => { setQlType(e.target.value); setQlPage(0) }}>
+              <option value="">All types</option>
+              {(ins?.qtypes ?? []).map((t) => (
+                <option key={t.qtype} value={t.qtype}>
+                  {t.qtype}
+                </option>
+              ))}
+            </select>
+            <input
+              className="search"
+              placeholder="search name or client…"
+              value={qlInput}
+              onChange={(e) => setQlInput(e.target.value)}
+            />
+          </div>
         }
       >
-        <table>
+        <table className="sortable">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Node</th>
-              <th>Client</th>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Action</th>
-              <th>Rcode</th>
-              <th>ms</th>
+              <th className="sortable" onClick={() => setSort('time')}>Time{sortArrow('time')}</th>
+              <th className="sortable" onClick={() => setSort('node')}>Node{sortArrow('node')}</th>
+              <th className="sortable" onClick={() => setSort('client')}>Client{sortArrow('client')}</th>
+              <th className="sortable" onClick={() => setSort('name')}>Name{sortArrow('name')}</th>
+              <th className="sortable" onClick={() => setSort('qtype')}>Type{sortArrow('qtype')}</th>
+              <th className="sortable" onClick={() => setSort('action')}>Action{sortArrow('action')}</th>
+              <th className="sortable" onClick={() => setSort('rcode')}>Rcode{sortArrow('rcode')}</th>
+              <th className="sortable" onClick={() => setSort('ms')}>ms{sortArrow('ms')}</th>
             </tr>
           </thead>
           <tbody>

@@ -802,10 +802,79 @@ tr.expand td {
   margin-top: 8px;
 }
 
-/* Recent-queries search + pager */
+/* Recent-queries filters + search + pager */
 input.search {
   min-width: 220px;
   flex: none;
+}
+.ql-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ql-select {
+  flex: none;
+  min-width: 120px;
+  cursor: pointer;
+}
+
+/* Sortable query-log headers */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th.sortable:hover {
+  color: var(--fg);
+}
+
+/* Active toggle button (e.g. ⚙ Customize) */
+.btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* KPI customize panel */
+.kpi-customize {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.kpi-customize > .muted {
+  text-align: left;
+  margin-bottom: 8px;
+}
+.kpi-customize ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px;
+}
+.kpi-customize li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.kpi-customize li label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.kpi-customize li input {
+  flex: none;
+  min-width: 0;
+}
+.kpi-customize li .btn {
+  padding: 2px 8px;
 }
 .pager {
   display: flex;

@@ -88,7 +88,10 @@ logged once. Passwords are argon2id-hashed; sessions are server-side and
 revocable. Roles: `admin` (full) and `readonly` (GET only).
 
 For SSO, fill in `auth.oidc.*` (issuer, client_id, client_secret, redirect_url)
-for your Authentik provider — a "Sign in with SSO" button then appears.
+for your Authentik provider — a "Sign in with SSO" button then appears. In
+containers you can configure the same fields entirely from the environment with
+the `MAZEDNS_OIDC_*` variables (see the env table below); setting
+`MAZEDNS_OIDC_ISSUER` is enough to turn SSO on.
 
 ### Settings
 
@@ -164,6 +167,12 @@ Override the baked config without mounting a file:
 | `MAZEDNS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
 | `MAZEDNS_MASTER_URL` / `MAZEDNS_NODE_KEY` | worker: master URL + its node key |
 | `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` | master: pre-enroll nodes, `name=key,name=key` |
+| `MAZEDNS_OIDC_ISSUER` | SSO issuer URL — setting it enables OIDC |
+| `MAZEDNS_OIDC_CLIENT_ID` / `MAZEDNS_OIDC_CLIENT_SECRET` | SSO client credentials |
+| `MAZEDNS_OIDC_REDIRECT_URL` | SSO callback URL |
+| `MAZEDNS_OIDC_SCOPES` | scopes, comma/space separated (default `openid profile email`) |
+| `MAZEDNS_OIDC_GROUPS_CLAIM` / `MAZEDNS_OIDC_ADMIN_GROUP` | map a provider group to admin |
+| `MAZEDNS_OIDC_ENABLED` | `true` / `false` to force SSO on or off |
 
 ### Seeing real client IPs
 

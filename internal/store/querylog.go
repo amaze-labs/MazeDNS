@@ -9,13 +9,13 @@ import (
 // QueryLogEntry is one logged DNS query. Node is the resolver that handled it
 // ("" = this node / master; otherwise a worker name shipped to the master).
 type QueryLogEntry struct {
-	ID        int64  `json:"id"`
-	TS        int64  `json:"ts"` // unix millis
-	Client    string `json:"client"`
-	Name      string `json:"name"`
-	QType     string `json:"qtype"`
-	Action    string `json:"action"`
-	Category  string `json:"category"`
+	ID        int64   `json:"id"`
+	TS        int64   `json:"ts"` // unix millis
+	Client    string  `json:"client"`
+	Name      string  `json:"name"`
+	QType     string  `json:"qtype"`
+	Action    string  `json:"action"`
+	Category  string  `json:"category"`
 	Rcode     string  `json:"rcode"`
 	ElapsedMS float64 `json:"elapsed_ms"` // milliseconds, sub-ms precision
 	Node      string  `json:"node"`
@@ -126,25 +126,63 @@ func (s *Store) CountQueryLog() (int64, error) {
 	return n, err
 }
 
-// SearchQueryLog returns a page of query-log entries (newest first), optionally
-// filtered by a substring match on name or client, plus the total match count.
-func (s *Store) SearchQueryLog(search string, limit, offset int, nodes []string) ([]QueryLogEntry, int64, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 50
+// QueryLogQuery describes a filtered, sorted, paginated query-log lookup.
+type QueryLogQuery struct {
+	Search  string   // substring match on name or client
+	Action  string   // exact action filter ("" = all)
+	QType   string   // exact query-type filter ("" = all)
+	Nodes   []string // node filter (empty = all)
+	SinceMs int64    // only entries with ts >= SinceMs (0 = no lower bound)
+	Sort    string   // column key (see queryLogSortColumns); default newest-first
+	Desc    bool     // sort descending
+	Limit   int
+	Offset  int
+}
+
+// queryLogSortColumns whitelists the user-facing sort keys -> SQL columns, so the
+// ORDER BY clause can never be injected.
+var queryLogSortColumns = map[string]string{
+	"time":   "id", // id is monotonic, a stable proxy for arrival time
+	"name":   "name",
+	"client": "client",
+	"qtype":  "qtype",
+	"action": "action",
+	"rcode":  "rcode",
+	"ms":     "elapsed_ms",
+	"node":   "node",
+}
+
+// SearchQueryLog returns a filtered, sorted page of query-log entries plus the
+// total match count. Defaults to newest-first.
+func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) {
+	if q.Limit <= 0 || q.Limit > 1000 {
+		q.Limit = 50
 	}
-	if offset < 0 {
-		offset = 0
+	if q.Offset < 0 {
+		q.Offset = 0
 	}
 	var conds []string
 	var args []any
-	if search != "" {
+	if q.SinceMs > 0 {
+		conds = append(conds, "ts >= ?")
+		args = append(args, q.SinceMs)
+	}
+	if q.Search != "" {
 		conds = append(conds, "(name LIKE ? OR client LIKE ?)")
-		like := "%" + search + "%"
+		like := "%" + q.Search + "%"
 		args = append(args, like, like)
 	}
-	if len(nodes) > 0 {
-		ph := make([]string, len(nodes))
-		for i, n := range nodes {
+	if q.Action != "" {
+		conds = append(conds, "action = ?")
+		args = append(args, q.Action)
+	}
+	if q.QType != "" {
+		conds = append(conds, "qtype = ?")
+		args = append(args, q.QType)
+	}
+	if len(q.Nodes) > 0 {
+		ph := make([]string, len(q.Nodes))
+		for i, n := range q.Nodes {
 			ph[i] = "?"
 			args = append(args, n)
 		}
@@ -154,14 +192,29 @@ func (s *Store) SearchQueryLog(search string, limit, offset int, nodes []string)
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
+
+	col, ok := queryLogSortColumns[q.Sort]
+	if !ok {
+		col = "id"
+	}
+	dir := "DESC"
+	if !q.Desc && q.Sort != "" {
+		dir = "ASC"
+	}
+	// Tie-break on id so paging is stable when the sort column has duplicates.
+	orderBy := " ORDER BY " + col + " " + dir
+	if col != "id" {
+		orderBy += ", id DESC"
+	}
+
 	var total int64
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM query_log`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.Query(
 		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node
-		 FROM query_log`+where+` ORDER BY id DESC LIMIT ? OFFSET ?`,
-		append(args, limit, offset)...)
+		 FROM query_log`+where+orderBy+` LIMIT ? OFFSET ?`,
+		append(args, q.Limit, q.Offset)...)
 	if err != nil {
 		return nil, 0, err
 	}

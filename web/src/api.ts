@@ -59,6 +59,8 @@ export interface SessionUser {
   id: number
   username: string
   role: string
+  source?: string // "local" | "oidc"
+  avatar_url?: string
 }
 
 export interface AuthInfo {

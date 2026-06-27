@@ -5,6 +5,35 @@ import (
 	"testing"
 )
 
+func TestUpsertOIDCUserAvatar(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	u, err := s.UpsertOIDCUser("sub-1", "alice", "admin", "https://idp/pic.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Source != "oidc" || u.AvatarURL != "https://idp/pic.png" {
+		t.Fatalf("first upsert: %+v", u)
+	}
+	// A later login refreshes the avatar (and role).
+	u2, err := s.UpsertOIDCUser("sub-1", "alice", "readonly", "https://idp/new.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u2.ID != u.ID || u2.AvatarURL != "https://idp/new.png" || u2.Role != "readonly" {
+		t.Fatalf("re-upsert should update avatar+role in place: %+v", u2)
+	}
+	// GetUserByID surfaces source + avatar (used by /api/me).
+	got, _ := s.GetUserByID(u.ID)
+	if got == nil || got.Source != "oidc" || got.AvatarURL != "https://idp/new.png" {
+		t.Fatalf("GetUserByID: %+v", got)
+	}
+}
+
 func TestUpdateNodeKeyRotation(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

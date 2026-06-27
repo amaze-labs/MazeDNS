@@ -24,6 +24,7 @@ type OIDCClaims struct {
 	Username string
 	Email    string
 	Role     string
+	Picture  string // avatar URL (profile_picture / picture claim)
 }
 
 // NewOIDC performs discovery against the issuer and builds the provider.
@@ -93,6 +94,12 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCClaims, 
 	if username == "" {
 		username = sub
 	}
+	// Avatar: prefer Authentik's "profile_picture", fall back to the standard
+	// OIDC "picture" claim.
+	picture, _ := claims["profile_picture"].(string)
+	if picture == "" {
+		picture, _ = claims["picture"].(string)
+	}
 
 	role := "admin" // no admin group configured -> all SSO users are admins
 	if p.adminGroup != "" {
@@ -104,7 +111,7 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCClaims, 
 			}
 		}
 	}
-	return &OIDCClaims{Subject: sub, Username: username, Email: email, Role: role}, nil
+	return &OIDCClaims{Subject: sub, Username: username, Email: email, Role: role, Picture: picture}, nil
 }
 
 func toStringSlice(v any) []string {

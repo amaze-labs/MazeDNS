@@ -1142,6 +1142,23 @@ th.sortable:hover {
 .acct-avatar.lg:hover {
   box-shadow: none;
 }
+/* OIDC profile picture fills the round avatar */
+.acct-avatar.has-img {
+  background: none;
+  padding: 0;
+  overflow: hidden;
+}
+.acct-avatar img,
+img.acct-avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+img.acct-avatar.lg {
+  border: 1px solid var(--line);
+}
 .acct-backdrop {
   position: fixed;
   inset: 0;

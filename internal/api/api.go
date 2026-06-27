@@ -400,7 +400,16 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
-	writeJSON(w, http.StatusOK, u)
+	// Enrich with source + avatar so the UI can hide password change for SSO
+	// accounts and show the profile picture.
+	source, avatar := "local", ""
+	if full, _ := s.store.GetUserByID(u.ID); full != nil {
+		source, avatar = full.Source, full.AvatarURL
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id": u.ID, "username": u.Username, "role": u.Role,
+		"source": source, "avatar_url": avatar,
+	})
 }
 
 func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
@@ -439,7 +448,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "oidc exchange failed")
 		return
 	}
-	user, err := s.store.UpsertOIDCUser(claims.Subject, claims.Username, claims.Role)
+	user, err := s.store.UpsertOIDCUser(claims.Subject, claims.Username, claims.Role, claims.Picture)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "user provisioning failed")
 		return

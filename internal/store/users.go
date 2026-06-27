@@ -12,6 +12,7 @@ type User struct {
 	Username     string `json:"username"`
 	Role         string `json:"role"`   // "admin" | "readonly"
 	Source       string `json:"source"` // "local" | "oidc"
+	AvatarURL    string `json:"avatar_url"`
 	Subject      string `json:"-"`
 	PasswordHash string `json:"-"`
 	UpdatedAt    int64  `json:"updated_at"`
@@ -66,8 +67,8 @@ func (s *Store) CountAdmins() (int64, error) {
 func (s *Store) GetUserByID(id int64) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(
-		`SELECT id, username, role, source, subject, password_hash, updated_at FROM users WHERE id=?`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
+		`SELECT id, username, role, source, avatar_url, subject, password_hash, updated_at FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -99,9 +100,9 @@ func (s *Store) DeleteUser(id int64) error {
 func (s *Store) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(
-		`SELECT id, username, role, source, subject, password_hash, updated_at FROM users WHERE username=?`,
+		`SELECT id, username, role, source, avatar_url, subject, password_hash, updated_at FROM users WHERE username=?`,
 		username).
-		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
+		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -111,15 +112,17 @@ func (s *Store) GetUserByUsername(username string) (*User, error) {
 	return u, nil
 }
 
-// UpsertOIDCUser creates or updates an OIDC user (keyed by username) and returns it.
-func (s *Store) UpsertOIDCUser(subject, username, role string) (*User, error) {
+// UpsertOIDCUser creates or updates an OIDC user (keyed by username) and returns
+// it, refreshing the role and avatar from the provider on each login.
+func (s *Store) UpsertOIDCUser(subject, username, role, avatarURL string) (*User, error) {
 	now := time.Now().Unix()
 	if _, err := s.db.Exec(
-		`INSERT INTO users(username, role, source, subject, password_hash, updated_at)
-		 VALUES(?,?, 'oidc', ?, '', ?)
+		`INSERT INTO users(username, role, source, avatar_url, subject, password_hash, updated_at)
+		 VALUES(?,?, 'oidc', ?, ?, '', ?)
 		 ON CONFLICT(username) DO UPDATE SET
-		   role=excluded.role, source='oidc', subject=excluded.subject, updated_at=excluded.updated_at`,
-		username, role, subject, now); err != nil {
+		   role=excluded.role, source='oidc', avatar_url=excluded.avatar_url,
+		   subject=excluded.subject, updated_at=excluded.updated_at`,
+		username, role, avatarURL, subject, now); err != nil {
 		return nil, err
 	}
 	return s.GetUserByUsername(username)

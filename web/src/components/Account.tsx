@@ -96,37 +96,50 @@ export default function Account({ me }: { me: SessionUser | null }) {
     }
   }
 
+  // SSO (OIDC) accounts have no local password — managed by the identity provider.
+  const isSSO = me?.source === 'oidc'
+
   return (
     <div className="settings">
       <h2>Account</h2>
 
-      <section className="settings-card">
-        <h3>Change my password</h3>
-        {pwErr && <div className="error">{pwErr}</div>}
-        {pwMsg && <div className="ok-msg">{pwMsg}</div>}
-        <form onSubmit={changePw}>
-          <div className="field">
-            <label>Current password</label>
-            <input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>New password (min 8 characters)</label>
-            <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
-          </div>
-          <div className="field">
-            <label>Confirm new password</label>
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-            />
-          </div>
-          <button type="submit" className="btn primary">
-            Update password
-          </button>
-        </form>
-      </section>
+      {isSSO ? (
+        <section className="settings-card">
+          <h3>Password</h3>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            Your account is managed by single sign-on, so there is no password to change here. Update it with your SSO
+            provider.
+          </p>
+        </section>
+      ) : (
+        <section className="settings-card">
+          <h3>Change my password</h3>
+          {pwErr && <div className="error">{pwErr}</div>}
+          {pwMsg && <div className="ok-msg">{pwMsg}</div>}
+          <form onSubmit={changePw}>
+            <div className="field">
+              <label>Current password</label>
+              <input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>New password (min 8 characters)</label>
+              <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Confirm new password</label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+              />
+            </div>
+            <button type="submit" className="btn primary">
+              Update password
+            </button>
+          </form>
+        </section>
+      )}
 
       {isAdmin && (
         <section className="settings-card">

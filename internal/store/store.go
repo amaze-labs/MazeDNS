@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS users (
 	role TEXT NOT NULL DEFAULT 'readonly',
 	source TEXT NOT NULL DEFAULT 'local',
 	subject TEXT NOT NULL DEFAULT '',
+	avatar_url TEXT NOT NULL DEFAULT '',
 	password_hash TEXT NOT NULL DEFAULT '',
 	updated_at INTEGER NOT NULL
 );
@@ -184,6 +185,7 @@ CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status)
 		`ALTER TABLE nodes ADD COLUMN q_rewritten INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN q_errors INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN insights TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

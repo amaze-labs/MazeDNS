@@ -15,23 +15,33 @@ export default function AccountMenu({
   onLogout: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const [imgOk, setImgOk] = useState(true)
   const initial = (user.username.trim()[0] || '?').toUpperCase()
+  // Show the OIDC profile picture when present; fall back to the initial if it's
+  // missing or fails to load.
+  const avatar = user.avatar_url && imgOk ? user.avatar_url : ''
+  const Face = ({ cls }: { cls: string }) =>
+    avatar ? (
+      <img className={cls} src={avatar} alt="" referrerPolicy="no-referrer" onError={() => setImgOk(false)} />
+    ) : (
+      <div className={cls}>{initial}</div>
+    )
   return (
     <div className="acct">
       <button
-        className={`acct-avatar ${open ? 'open' : ''}`}
+        className={`acct-avatar ${open ? 'open' : ''} ${avatar ? 'has-img' : ''}`}
         onClick={() => setOpen((o) => !o)}
         title={user.username}
         aria-label="Account menu"
       >
-        {initial}
+        {avatar ? <img src={avatar} alt="" referrerPolicy="no-referrer" onError={() => setImgOk(false)} /> : initial}
       </button>
       {open && (
         <>
           <div className="acct-backdrop" onClick={() => setOpen(false)} />
           <div className="acct-menu">
             <div className="acct-head">
-              <div className="acct-avatar lg">{initial}</div>
+              <Face cls="acct-avatar lg" />
               <div className="acct-id">
                 <div className="acct-name">{user.username}</div>
                 <span className={`role-badge ${user.role}`}>{user.role}</span>

@@ -159,6 +159,7 @@ export default function Dashboard() {
   const [lat, setLat] = useState<{ nodes: string[]; points: LatencyPoint[] } | null>(null)
   const [nodes, setNodes] = useState<Node[]>([])
   const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(true)
 
   // KPI curation (which cards show, and in what order)
   const [kpiOrder, setKpiOrder] = useState<string[]>(() => loadJSON('mazedns.kpiOrder', DEFAULT_KPI_ORDER))
@@ -182,27 +183,26 @@ export default function Dashboard() {
 
   useEffect(() => {
     let alive = true
-    const tick = async () => {
-      try {
-        const [s, ts, c, i, l] = await Promise.all([
-          api.stats(),
-          api.timeseries(hours, focus),
-          api.categories(hours, focus),
-          api.insights(hours, focus),
-          api.latency(hours, focus),
-        ])
-        if (!alive) return
-        setStats(s)
-        setSeries(ts.points)
-        setCats(c)
-        setIns(i)
-        setLat(l)
-        setErr('')
-        const n = await api.clusterNodes().catch(() => [] as Node[])
-        if (alive) setNodes(n)
-      } catch (e: any) {
-        if (alive) setErr(e.message)
-      }
+    setLoading(true)
+    // Fire each request independently and update its widget as soon as it
+    // arrives, so a slow endpoint (e.g. heavy insights on a big query log)
+    // never blocks the rest of the dashboard from reflecting a filter change.
+    const tick = () => {
+      const fail = (e: any) => alive && setErr(e.message)
+      api.stats().then((s) => alive && setStats(s)).catch(fail)
+      api.timeseries(hours, focus).then((r) => alive && setSeries(r.points)).catch(fail)
+      api.categories(hours, focus).then((c) => alive && setCats(c)).catch(fail)
+      api
+        .insights(hours, focus)
+        .then((i) => {
+          if (!alive) return
+          setIns(i)
+          setErr('')
+          setLoading(false) // insights drives the KPIs — clear the indicator once it lands
+        })
+        .catch(fail)
+      api.latency(hours, focus).then((l) => alive && setLat(l)).catch(fail)
+      api.clusterNodes().then((n) => alive && setNodes(n)).catch(() => {})
     }
     tick()
     const id = setInterval(tick, 5000)
@@ -309,14 +309,17 @@ export default function Dashboard() {
     <div>
       {err && <div className="error">{err}</div>}
 
-      <RangeNodeBar
-        hours={hours}
-        setHours={setHours}
-        focus={focus}
-        setFocus={setFocus}
-        nodeNames={nodes.length > 0 ? ['master', ...nodes.map((n) => n.name)] : []}
-        color={nodeColor}
-      />
+      <div className="dash-controls">
+        <RangeNodeBar
+          hours={hours}
+          setHours={setHours}
+          focus={focus}
+          setFocus={setFocus}
+          nodeNames={nodes.length > 0 ? ['master', ...nodes.map((n) => n.name)] : []}
+          color={nodeColor}
+        />
+        {loading && <span className="updating">Updating…</span>}
+      </div>
 
       <Section
         title={`Overview (${rangeLabel})`}

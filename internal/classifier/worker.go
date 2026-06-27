@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -33,12 +34,13 @@ func ParseMode(s string) Mode {
 // Settings is the live, UI-editable classifier configuration (persisted in the
 // store and read fresh on every use, so changes apply without a restart).
 type Settings struct {
-	Enabled  bool   `json:"enabled"`
-	Endpoint string `json:"endpoint"`
-	Model    string `json:"model"`
-	APIKey   string `json:"api_key"`
-	Mode     string `json:"mode"`       // off|suggest|auto
-	MinGapMS int    `json:"min_gap_ms"` // min spacing between model calls
+	Enabled    bool   `json:"enabled"`
+	Endpoint   string `json:"endpoint"`
+	Model      string `json:"model"`
+	APIKey     string `json:"api_key"`
+	Mode       string `json:"mode"`        // off|suggest|auto
+	MinGapMS   int    `json:"min_gap_ms"`  // min spacing between model calls
+	TimeoutSec int    `json:"timeout_sec"` // per-request timeout (local models can be slow to warm up)
 }
 
 func (s Settings) minGap() time.Duration {
@@ -46,6 +48,16 @@ func (s Settings) minGap() time.Duration {
 		return time.Second
 	}
 	return time.Duration(s.MinGapMS) * time.Millisecond
+}
+
+// Timeout is the per-request timeout, defaulting generously since a local model
+// often loads on the first call (which is what causes "context deadline
+// exceeded").
+func (s Settings) Timeout() time.Duration {
+	if s.TimeoutSec <= 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(s.TimeoutSec) * time.Second
 }
 
 // Worker classifies newly-seen domains in the background and persists verdicts.
@@ -79,11 +91,11 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 // clientFor returns a cached client for the current endpoint/model/key, rebuilding
 // it only when those change.
 func (w *Worker) clientFor(s Settings) *Client {
-	key := s.Endpoint + "|" + s.Model + "|" + s.APIKey
+	key := fmt.Sprintf("%s|%s|%s|%s", s.Endpoint, s.Model, s.APIKey, s.Timeout())
 	w.clientMu.Lock()
 	defer w.clientMu.Unlock()
 	if w.client == nil || w.clientKey != key {
-		w.client = NewClient(s.Endpoint, s.Model, s.APIKey, 30*time.Second)
+		w.client = NewClient(s.Endpoint, s.Model, s.APIKey, s.Timeout())
 		w.clientKey = key
 	}
 	return w.client

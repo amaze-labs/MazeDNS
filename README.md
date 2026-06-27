@@ -166,6 +166,7 @@ Override the baked config without mounting a file:
 | `MAZEDNS_ADMIN_USERNAME` / `MAZEDNS_ADMIN_PASSWORD` | first-run admin |
 | `MAZEDNS_LOG_LEVEL` | `debug` / `info` / `warn` / `error` |
 | `MAZEDNS_MASTER_URL` / `MAZEDNS_NODE_KEY` | worker: master URL + its node key |
+| `MAZEDNS_MASTER_IP` | worker: pin the master's IP (skip DNS); TLS still uses the URL host |
 | `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` | master: pre-enroll nodes, `name=key,name=key` |
 | `MAZEDNS_BLOCKLIST_FILES` | blocklist file path(s), comma/space separated (use absolute paths; replaces `filter.blocklist_files`) |
 | `MAZEDNS_CLASSIFIER_ENABLED` | `true` to enable LLM domain classification (master only) |

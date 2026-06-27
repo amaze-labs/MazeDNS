@@ -125,7 +125,20 @@ type Node struct {
 	Version   string `json:"version"` // short content hash the node last reported
 	LastSeen  int64  `json:"last_seen"`
 	CreatedAt int64  `json:"created_at"`
+	IsMaster  bool   `json:"is_master"` // the master node (always online; no key to renew)
 	NodeStats
+}
+
+// UpdateNodeKey rotates an enrolled node's API key (hash + display prefix).
+func (s *Store) UpdateNodeKey(name, keyHash, keyPrefix string) error {
+	res, err := s.db.Exec(`UPDATE nodes SET key_hash=?, key_prefix=? WHERE name=?`, keyHash, keyPrefix, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("node not found")
+	}
+	return nil
 }
 
 // CreateNode enrolls a new node with the given API key hash and display prefix.

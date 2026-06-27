@@ -46,6 +46,7 @@ export interface Node {
   version: string
   last_seen: number
   created_at: number
+  is_master: boolean
   total: number
   blocked: number
   cached: number
@@ -86,6 +87,7 @@ export interface ClassifierSettings {
   api_key: string
   mode: string // off|suggest|auto
   min_gap_ms: number
+  timeout_sec: number
 }
 
 export interface ClassifierStatus {
@@ -374,5 +376,7 @@ export const api = {
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
   addNode: (name: string) =>
     fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ name: string; key: string }>),
+  renewNodeKey: (name: string) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/key`, { method: 'POST' }).then(j<{ name: string; key: string }>),
   deleteNode: (name: string) => fetch(`/api/cluster/nodes/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 }

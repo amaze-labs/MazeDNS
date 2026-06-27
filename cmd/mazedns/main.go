@@ -78,7 +78,13 @@ func main() {
 				slog.Error("oidc init failed; continuing without SSO", "err", oerr)
 			} else {
 				oidcProvider = p
-				slog.Info("oidc enabled", "issuer", cfg.Auth.OIDC.Issuer)
+				// Log the exact redirect_uri we send the provider — it must match
+				// the one registered there *character for character* (a common
+				// cause of "mismatching redirect_uri").
+				slog.Info("oidc enabled", "issuer", cfg.Auth.OIDC.Issuer, "redirect_uri", cfg.Auth.OIDC.RedirectURL)
+				if cfg.Auth.OIDC.RedirectURL == "" {
+					slog.Warn("oidc redirect_url is empty — set auth.oidc.redirect_url or MAZEDNS_OIDC_REDIRECT_URL")
+				}
 			}
 		}
 		authMgr = auth.NewManager(st, oidcProvider, cfg.Auth.SessionTTL.Std())
@@ -208,12 +214,13 @@ func main() {
 	// UI without a restart. Config seeds the persisted settings on first run.
 	if !worker {
 		defaults := classifier.Settings{
-			Enabled:  cfg.Classifier.Enabled,
-			Endpoint: cfg.Classifier.Endpoint,
-			Model:    cfg.Classifier.Model,
-			APIKey:   cfg.Classifier.APIKey,
-			Mode:     cfg.Classifier.Mode,
-			MinGapMS: cfg.Classifier.MinGapMS,
+			Enabled:    cfg.Classifier.Enabled,
+			Endpoint:   cfg.Classifier.Endpoint,
+			Model:      cfg.Classifier.Model,
+			APIKey:     cfg.Classifier.APIKey,
+			Mode:       cfg.Classifier.Mode,
+			MinGapMS:   cfg.Classifier.MinGapMS,
+			TimeoutSec: cfg.Classifier.TimeoutSec,
 		}
 		if cur, _ := st.GetMeta(classifier.SettingsKey); cur == "" {
 			_ = classifier.SaveSettings(st, defaults)
@@ -242,7 +249,7 @@ func main() {
 				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 			}
 		}
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.MasterIP, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil)
 		go ag.Run(agentCtx)
 	}
 

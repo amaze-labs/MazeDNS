@@ -120,6 +120,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		if clusterEnabled {
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
+			mux.HandleFunc("POST /api/cluster/nodes/{name}/key", s.requireRole(roleAdmin, s.renewNodeKey))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{name}", s.requireRole(roleAdmin, s.deleteNode))
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
@@ -257,14 +258,26 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
-	nodes, err := s.store.ListNodes()
+	workers, err := s.store.ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if nodes == nil {
-		nodes = []store.Node{}
+	// Prepend the master itself as a node so the cluster view counts it (it is a
+	// resolver too). The master is always "online" — its last_seen is now.
+	total, blocked, cached, forwarded, rewritten, errs := s.res.StatsSnapshot()
+	ver, _ := s.store.ConfigVersion()
+	master := store.Node{
+		Name:     "master",
+		Version:  ver,
+		LastSeen: time.Now().Unix(),
+		IsMaster: true,
+		NodeStats: store.NodeStats{
+			Total: int64(total), Blocked: int64(blocked), Cached: int64(cached),
+			Forwarded: int64(forwarded), Rewritten: int64(rewritten), Errors: int64(errs),
+		},
 	}
+	nodes := append([]store.Node{master}, workers...)
 	writeJSON(w, http.StatusOK, nodes)
 }
 
@@ -305,6 +318,30 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// renewNodeKey rotates a worker's API key, returning the new key once. The old
+// key stops working immediately; update the worker's MAZEDNS_NODE_KEY.
+func (s *Server) renewNodeKey(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || name == "master" {
+		writeError(w, http.StatusBadRequest, "the master has no key to renew")
+		return
+	}
+	key, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key generation failed")
+		return
+	}
+	prefix := key
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	if err := s.store.UpdateNodeKey(name, hashKey(key), prefix); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "key": key})
 }
 
 // ---- auth handlers ----

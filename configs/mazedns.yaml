@@ -78,10 +78,12 @@ classifier:                    # optional LLM domain classification (master only
   api_key: ""                  # usually empty for local models
   mode: "suggest"              # off | suggest (approve before blocking) | auto (block immediately)
   min_gap_ms: 1000             # rate-limit between model calls
+  timeout_sec: 60              # per-request timeout (raise it if a local model warms up slowly)
 
 cluster:                       # master<->worker config replication
   enabled: false               # worker: start the sync agent (auto-enabled when master_url+node_key are set). The master's control plane is always on — enroll nodes in the UI.
   master_url: ""               # worker: master base URL (or MAZEDNS_MASTER_URL)
+  master_ip: ""                # worker: pin the master's IP to skip DNS (or MAZEDNS_MASTER_IP); TLS still uses the URL host
   node_key: ""                 # worker: per-node API key from the master (or MAZEDNS_NODE_KEY)
   interval: "30s"              # worker: snapshot poll interval
 

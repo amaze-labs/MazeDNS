@@ -169,12 +169,13 @@ type OIDC struct {
 // Disabled by default; runs only on the master. The enforcement mode is seeded
 // from here and then changeable at runtime from the UI.
 type Classifier struct {
-	Enabled  bool   `yaml:"enabled"`
-	Endpoint string `yaml:"endpoint"`   // OpenAI-compatible base URL, e.g. http://localhost:11434/v1
-	Model    string `yaml:"model"`      // model name, e.g. "llama3.2"
-	APIKey   string `yaml:"api_key"`    // usually empty for local models
-	Mode     string `yaml:"mode"`       // off | suggest | auto (initial enforcement mode)
-	MinGapMS int    `yaml:"min_gap_ms"` // min spacing between model calls (rate limit)
+	Enabled    bool   `yaml:"enabled"`
+	Endpoint   string `yaml:"endpoint"`    // OpenAI-compatible base URL, e.g. http://localhost:11434/v1
+	Model      string `yaml:"model"`       // model name, e.g. "llama3.2"
+	APIKey     string `yaml:"api_key"`     // usually empty for local models
+	Mode       string `yaml:"mode"`        // off | suggest | auto (initial enforcement mode)
+	MinGapMS   int    `yaml:"min_gap_ms"`  // min spacing between model calls (rate limit)
+	TimeoutSec int    `yaml:"timeout_sec"` // per-request timeout (local models warm up slowly)
 }
 
 // Cluster configures master<->worker configuration replication. The master
@@ -183,6 +184,7 @@ type Classifier struct {
 type Cluster struct {
 	Enabled   bool     `yaml:"enabled"`
 	MasterURL string   `yaml:"master_url"` // worker: master base URL, e.g. http://master:8080
+	MasterIP  string   `yaml:"master_ip"`  // worker: pin the master's IP (skip DNS); TLS still uses the URL host
 	NodeKey   string   `yaml:"node_key"`   // worker: per-node API key from the master
 	Interval  Duration `yaml:"interval"`   // worker: snapshot poll interval
 }
@@ -221,10 +223,11 @@ func Default() Config {
 			SessionTTL: Duration(24 * time.Hour),
 		},
 		Classifier: Classifier{
-			Endpoint: "http://localhost:11434/v1",
-			Model:    "llama3.2",
-			Mode:     "suggest",
-			MinGapMS: 1000,
+			Endpoint:   "http://localhost:11434/v1",
+			Model:      "llama3.2",
+			Mode:       "suggest",
+			MinGapMS:   1000,
+			TimeoutSec: 60,
 		},
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
@@ -277,6 +280,9 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_NODE_KEY"); v != "" {
 		cfg.Cluster.NodeKey = v
 		cfg.Cluster.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_MASTER_IP"); v != "" {
+		cfg.Cluster.MasterIP = v
 	}
 	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
 		cfg.Cluster.Enabled = true

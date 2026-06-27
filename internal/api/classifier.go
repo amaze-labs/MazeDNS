@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -67,10 +66,10 @@ func (s *Server) testClassifier(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "endpoint and model are required"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), in.Timeout())
 	defer cancel()
 	const sample = "doubleclick.net"
-	v, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, 20*time.Second).Classify(ctx, sample)
+	v, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

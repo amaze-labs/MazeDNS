@@ -262,7 +262,7 @@ export default function Dashboard() {
   const maxClient = clientRows.reduce((m, c) => Math.max(m, c.total), 0)
 
   const now = Date.now() / 1000
-  const onlineNodes = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
+  const onlineNodes = nodes.filter((n) => n.is_master || (n.last_seen && now - n.last_seen < ONLINE_WINDOW)).length
   // Worker query/blocked counts are derived from the windowed, focus-aware
   // per-node breakdown (not the since-start node counters), so the Cluster cards
   // honor the time range + node focus like the rest of the dashboard.
@@ -320,7 +320,7 @@ export default function Dashboard() {
           setHours={setHours}
           focus={focus}
           setFocus={setFocus}
-          nodeNames={nodes.length > 0 ? ['master', ...nodes.map((n) => n.name)] : []}
+          nodeNames={[...new Set(nodes.map((n) => n.name))]}
           color={nodeColor}
         />
         {loading && <Spinner label="Updating…" />}
@@ -370,7 +370,7 @@ export default function Dashboard() {
           <div className="kpi-section">
             <h3>Cluster health</h3>
             <div className="cards">
-              <Card label="Worker nodes" value={fmt(nodes.length)} />
+              <Card label="Nodes" value={fmt(nodes.length)} sub="incl. master" />
               <Card label="Online" value={fmt(onlineNodes)} accent={onlineNodes < nodes.length ? 'danger' : ''} />
               <Card label="Worker queries" value={fmt(clusterQ)} />
               <Card label="Worker blocked" value={fmt(clusterB)} accent="danger" />

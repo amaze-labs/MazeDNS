@@ -72,13 +72,27 @@ export default function Cluster() {
   }
 
   const del = async (n: string) => {
+    if (!window.confirm(`Remove node “${n}”? Its key is revoked.`)) return
     await api.deleteNode(n)
     if (newKey?.name === n) setNewKey(null)
     load()
   }
 
+  const renew = async (n: string) => {
+    if (!window.confirm(`Rotate the key for “${n}”? The old key stops working immediately — update the worker's MAZEDNS_NODE_KEY.`)) return
+    try {
+      const r = await api.renewNodeKey(n)
+      setNewKey(r)
+      setErr('')
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   const now = Date.now() / 1000
-  const online = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
+  const isOnline = (n: Node) => n.is_master || (!!n.last_seen && now - n.last_seen < ONLINE_WINDOW)
+  const online = nodes.filter(isOnline).length
   const totalQ = nodes.reduce((sum, n) => sum + n.total, 0)
   const totalB = nodes.reduce((sum, n) => sum + n.blocked, 0)
 
@@ -132,9 +146,9 @@ export default function Cluster() {
       {newKey && (
         <div className="enroll">
           <div className="ok-msg">
-            <strong>Node “{newKey.name}” enrolled.</strong> The key is shown once (stored hashed). Run one of the
-            following on the new host — adjust <code>{masterURL}</code> if the worker reaches the master at a different
-            address.
+            <strong>Key for node “{newKey.name}” — shown once</strong> (stored hashed). Run the worker with it, or update
+            its <code>MAZEDNS_NODE_KEY</code> if you rotated. Adjust <code>{masterURL}</code> if the worker reaches the
+            master at a different address.
           </div>
           <CodeBlock label="Option A — docker run" text={dockerRun} />
           <CodeBlock label="Option B — docker compose (add to your compose file)" text={dockerCompose} />
@@ -145,6 +159,7 @@ export default function Cluster() {
       <table>
         <thead>
           <tr>
+            <th>Status</th>
             <th>Node</th>
             <th>Address</th>
             <th>Queries</th>
@@ -157,22 +172,34 @@ export default function Cluster() {
         <tbody>
           {nodes.map((n) => (
             <tr key={n.name}>
-              <td>{n.name}</td>
+              <td>
+                <span className={`node-dot ${isOnline(n) ? 'on' : 'off'}`} title={isOnline(n) ? 'online' : 'offline'} />
+              </td>
+              <td>
+                {n.name} {n.is_master && <span className="badge">master</span>}
+              </td>
               <td>{n.address || '—'}</td>
               <td>{n.total.toLocaleString()}</td>
               <td>{n.blocked.toLocaleString()}</td>
               <td>{n.version ? <code>{n.version}</code> : <span className="muted">pending</span>}</td>
-              <td>{ago(n.last_seen)}</td>
+              <td>{n.is_master ? 'now' : ago(n.last_seen)}</td>
               <td>
-                <button className="del" onClick={() => del(n.name)}>
-                  ✕
-                </button>
+                {!n.is_master && (
+                  <div className="ql-filters">
+                    <button className="btn" onClick={() => renew(n.name)} title="Rotate this node's key">
+                      Renew key
+                    </button>
+                    <button className="del" onClick={() => del(n.name)}>
+                      ✕
+                    </button>
+                  </div>
+                )}
               </td>
             </tr>
           ))}
           {nodes.length === 0 && (
             <tr>
-              <td colSpan={7} className="muted">
+              <td colSpan={8} className="muted">
                 No nodes enrolled — add one above
               </td>
             </tr>

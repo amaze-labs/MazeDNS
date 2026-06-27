@@ -339,6 +339,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               onChange={(e) => setCls({ ...cls, min_gap_ms: Number(e.target.value) })}
             />
           </div>
+          <div className="field">
+            <label>Request timeout (seconds) — raise it if a local model is slow to warm up</label>
+            <input
+              type="number"
+              min={1}
+              value={cls.timeout_sec}
+              onChange={(e) => setCls({ ...cls, timeout_sec: Number(e.target.value) })}
+            />
+          </div>
           <div className="settings-actions">
             <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
               {clsSaving ? 'Saving…' : 'Save classifier'}

@@ -13,12 +13,26 @@ import Spinner from './components/Spinner'
 import { api, type SessionUser, type AuthInfo } from './api'
 
 type Tab = 'dashboard' | 'queries' | 'filtering' | 'ai' | 'rewrites' | 'cluster' | 'settings' | 'account'
+const ALL_TABS: Tab[] = ['dashboard', 'queries', 'filtering', 'ai', 'rewrites', 'cluster', 'settings', 'account']
+
+// The current tab is reflected in the URL path (/dashboard, /queries, …) so
+// pages are linkable and the browser back/forward buttons work.
+const tabFromPath = (): Tab => {
+  const seg = window.location.pathname.replace(/^\/+|\/+$/g, '') as Tab
+  return ALL_TABS.includes(seg) ? seg : 'dashboard'
+}
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('dashboard')
+  const [tab, setTab] = useState<Tab>(tabFromPath)
   const [user, setUser] = useState<SessionUser | null>(null)
   const [info, setInfo] = useState<AuthInfo | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // navigate switches tab and pushes the matching path into history.
+  const navigate = (t: Tab) => {
+    setTab(t)
+    if (tabFromPath() !== t) window.history.pushState({}, '', `/${t}`)
+  }
 
   const refresh = async () => {
     const inf = await api.authInfo()
@@ -29,6 +43,13 @@ export default function App() {
 
   useEffect(() => {
     refresh().catch(() => setLoading(false))
+    // Normalize the URL on first load (e.g. "/" -> "/dashboard").
+    if (window.location.pathname !== `/${tabFromPath()}`) {
+      window.history.replaceState({}, '', `/${tabFromPath()}`)
+    }
+    const onPop = () => setTab(tabFromPath())
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
   }, [])
 
   const logout = async () => {
@@ -61,7 +82,7 @@ export default function App() {
         <h1>🧭 MazeDNS</h1>
         <nav>
           {tabs.map((t) => (
-            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
+            <button key={t} className={tab === t ? 'active' : ''} onClick={() => navigate(t)}>
               {t}
             </button>
           ))}
@@ -71,7 +92,7 @@ export default function App() {
           <AccountMenu
             user={user}
             authEnabled={!!info?.auth_enabled}
-            onSettings={() => setTab('account')}
+            onSettings={() => navigate('account')}
             onLogout={logout}
           />
         )}

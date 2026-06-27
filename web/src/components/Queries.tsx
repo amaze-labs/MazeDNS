@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type QueryLogEntry, type Node } from '../api'
 import { RangeNodeBar, makeNodeColor } from './filters'
+import Spinner from './Spinner'
 
 const PAGE = 50
 const ACTIONS = ['forward', 'cache', 'blocked', 'rewrite', 'authoritative', 'error', 'refused']
@@ -36,6 +37,7 @@ export default function Queries() {
   const [sort, setSortCol] = useState('time')
   const [desc, setDesc] = useState(true)
   const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     localStorage.setItem('mazedns.ql.hours', String(hours))
@@ -62,6 +64,7 @@ export default function Queries() {
 
   useEffect(() => {
     let alive = true
+    setLoading(true)
     const fetchLog = () =>
       api
         .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, sort, desc, hours })
@@ -70,6 +73,7 @@ export default function Queries() {
             setLog(r.entries)
             setTotal(r.total)
             setErr('')
+            setLoading(false)
           }
         })
         .catch((e) => alive && setErr(e.message))
@@ -96,7 +100,9 @@ export default function Queries() {
 
   return (
     <div>
-      <h2>Requests</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        Requests {loading && <Spinner />}
+      </h2>
       <p className="muted" style={{ textAlign: 'left' }}>
         Explore the cluster-wide DNS query log. Filter by window, node, action, and type; click a column to sort.
       </p>

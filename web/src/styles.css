@@ -826,15 +826,28 @@ input.search {
   gap: 12px;
   flex-wrap: wrap;
 }
-.updating {
+/* App-wide circular loading spinner */
+.spinner-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.spinner {
+  display: inline-block;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}
+.spinner-label {
   color: var(--muted);
   font-size: 13px;
-  opacity: 0.85;
-  animation: pulse 1.2s ease-in-out infinite;
 }
-@keyframes pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 0.9; }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Classifier enforcement mode buttons */

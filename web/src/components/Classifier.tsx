@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type Classification, type ClassifierStatus } from '../api'
+import Spinner from './Spinner'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -52,7 +53,9 @@ export default function Classifier() {
   const counts = info?.counts ?? {}
   return (
     <div>
-      <h2>AI classification</h2>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        AI classification {!info && <Spinner />}
+      </h2>
       <p className="muted" style={{ textAlign: 'left' }}>
         A local model ({info?.settings.model || '—'}) classifies newly-seen domains as ads/trackers/malware/phishing or
         clean, so blocking is driven by the model instead of hand-maintained lists. Configure the model in{' '}

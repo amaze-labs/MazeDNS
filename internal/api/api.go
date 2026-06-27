@@ -96,6 +96,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		// LLM domain classifier.
 		mux.HandleFunc("GET /api/classifier", s.requireRole(roleReadonly, s.getClassifier))
 		mux.HandleFunc("PUT /api/classifier/settings", s.requireRole(roleAdmin, s.putClassifierSettings))
+		mux.HandleFunc("POST /api/classifier/test", s.requireRole(roleAdmin, s.testClassifier))
 		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))
 		mux.HandleFunc("GET /api/classifications", s.requireRole(roleReadonly, s.listClassifications))
 		mux.HandleFunc("POST /api/classifications/decision", s.requireRole(roleAdmin, s.decideClassification))

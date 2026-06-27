@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -47,6 +49,35 @@ func (s *Server) putClassifierSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	in.APIKey = ""
 	writeJSON(w, http.StatusOK, in)
+}
+
+// testClassifier classifies a sample domain against the supplied settings (an
+// empty api_key falls back to the stored one), so the user can verify the model
+// endpoint works before saving. Always returns 200 with an {ok, ...} body.
+func (s *Server) testClassifier(w http.ResponseWriter, r *http.Request) {
+	var in classifier.Settings
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if in.APIKey == "" {
+		in.APIKey = classifier.LoadSettings(s.store, classifier.Settings{}).APIKey
+	}
+	if strings.TrimSpace(in.Endpoint) == "" || strings.TrimSpace(in.Model) == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "endpoint and model are required"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	const sample = "doubleclick.net"
+	v, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, 20*time.Second).Classify(ctx, sample)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "domain": sample, "category": v.Category, "confidence": v.Confidence, "reason": v.Reason,
+	})
 }
 
 // setClassifierMode is a quick toggle of just the enforcement mode (used by the

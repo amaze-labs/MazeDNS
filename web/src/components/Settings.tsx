@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type Settings as S, type ForwardGroup, type ClassifierSettings } from '../api'
+import Spinner from './Spinner'
 
 const linesToList = (s: string) =>
   s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
@@ -21,6 +22,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [cls, setCls] = useState<ClassifierSettings | null>(null)
   const [clsSaving, setClsSaving] = useState(false)
   const [clsOk, setClsOk] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = async () => {
     try {
@@ -54,11 +57,29 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     }
   }
 
+  const testClassifier = async () => {
+    if (!cls) return
+    setTesting(true)
+    setTestMsg(null)
+    try {
+      const r = await api.testClassifier(cls)
+      setTestMsg(
+        r.ok
+          ? { ok: true, text: `Connected — classified ${r.domain} as “${r.category}” (${Math.round((r.confidence || 0) * 100)}%).` }
+          : { ok: false, text: r.error || 'Test failed.' },
+      )
+    } catch (e: any) {
+      setTestMsg({ ok: false, text: e.message })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   if (!s) {
     return (
       <div>
         <h2>Settings</h2>
-        {err ? <div className="error">{err}</div> : <p className="muted">Loading…</p>}
+        {err ? <div className="error">{err}</div> : <Spinner label="Loading…" />}
       </div>
     )
   }
@@ -322,8 +343,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
               {clsSaving ? 'Saving…' : 'Save classifier'}
             </button>
+            <button className="btn" onClick={testClassifier} disabled={testing}>
+              {testing ? <Spinner label="Testing…" /> : 'Test connection'}
+            </button>
             <span className="hint">Review verdicts in the AI tab.</span>
           </div>
+          {testMsg && <div className={testMsg.ok ? 'ok-msg' : 'error'}>{testMsg.text}</div>}
         </section>
       )}
 

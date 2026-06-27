@@ -9,6 +9,7 @@ import Settings from './components/Settings'
 import Account from './components/Account'
 import AccountMenu from './components/AccountMenu'
 import Login from './components/Login'
+import Spinner from './components/Spinner'
 import { api, type SessionUser, type AuthInfo } from './api'
 
 type Tab = 'dashboard' | 'queries' | 'filtering' | 'ai' | 'rewrites' | 'cluster' | 'settings' | 'account'
@@ -38,7 +39,7 @@ export default function App() {
   if (loading) {
     return (
       <div className="app">
-        <p className="muted">Loading…</p>
+        <Spinner size={22} label="Loading…" />
       </div>
     )
   }

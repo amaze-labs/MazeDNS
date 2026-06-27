@@ -352,6 +352,10 @@ export const api = {
   classifier: () => fetch('/api/classifier').then(j<ClassifierStatus>),
   saveClassifierSettings: (s: ClassifierSettings) =>
     fetch('/api/classifier/settings', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<ClassifierSettings>),
+  testClassifier: (s: ClassifierSettings) =>
+    fetch('/api/classifier/test', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(s) }).then(
+      j<{ ok: boolean; error?: string; domain?: string; category?: string; confidence?: number; reason?: string }>,
+    ),
   setClassifierMode: (mode: string) =>
     fetch('/api/classifier/mode', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ mode }) }).then(j),
   classifications: (status = '', limit = 200) => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import Spinner from './Spinner'
 import {
   Area,
   AreaChart,
@@ -262,8 +263,12 @@ export default function Dashboard() {
 
   const now = Date.now() / 1000
   const onlineNodes = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
-  const clusterQ = nodes.reduce((sum, n) => sum + n.total, 0)
-  const clusterB = nodes.reduce((sum, n) => sum + n.blocked, 0)
+  // Worker query/blocked counts are derived from the windowed, focus-aware
+  // per-node breakdown (not the since-start node counters), so the Cluster cards
+  // honor the time range + node focus like the rest of the dashboard.
+  const workerRows = (ins?.by_node ?? []).filter((n) => n.node && n.node !== 'master')
+  const clusterQ = workerRows.reduce((sum, n) => sum + n.total, 0)
+  const clusterB = workerRows.reduce((sum, n) => sum + n.blocked, 0)
 
   // KPI registry — every windowed card honors the time range + node focus (all
   // values derive from `totals`/`ins`, which are fetched with hours + focus).
@@ -318,7 +323,7 @@ export default function Dashboard() {
           nodeNames={nodes.length > 0 ? ['master', ...nodes.map((n) => n.name)] : []}
           color={nodeColor}
         />
-        {loading && <span className="updating">Updating…</span>}
+        {loading && <Spinner label="Updating…" />}
       </div>
 
       <Section

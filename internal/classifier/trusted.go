@@ -4,11 +4,21 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 )
+
+// DefaultTrustedURL is the public top-domains list used out of the box (no manual
+// configuration) to reduce false positives. Majestic Million is a free, no-auth,
+// plain-CSV list of the most-referenced domains, updated daily.
+const DefaultTrustedURL = "https://downloads.majestic.com/majestic_million.csv"
+
+// DefaultTrustedTopN caps how many of the default list's (ranked, most-popular-
+// first) entries are loaded, so we don't pull the full ~1M list.
+const DefaultTrustedTopN = 100000
 
 // TrustedSet is an immutable set of registered domains considered well-known and
 // legitimate (e.g. a popularity list like Tranco/Umbrella, or a curated
@@ -76,22 +86,24 @@ func parseTrusted(r io.Reader, topN int) (*TrustedSet, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Pull the domain out of common formats:
-		//   "example.com"          plain
-		//   "1,example.com"        ranked CSV (Tranco)
-		//   "0.0.0.0 example.com"  hosts
-		field := line
-		if i := strings.LastIndexByte(field, ','); i >= 0 {
-			field = field[i+1:]
-		}
-		if parts := strings.Fields(field); len(parts) > 1 {
-			field = parts[len(parts)-1]
-		}
-		if d := RegisteredDomain(field); d != "" {
-			set.domains[d] = struct{}{}
-			if topN > 0 && len(set.domains) >= topN {
+		// Tokenize on commas and whitespace and take the first token that is a
+		// real registered domain. This handles every common layout regardless of
+		// which column the domain is in:
+		//   "example.com"                       plain
+		//   "1,example.com"                     ranked CSV (Tranco: rank,domain)
+		//   "1,1,example.com,com,123,…"         ranked CSV (Majestic: domain in col 3)
+		//   "0.0.0.0 example.com"               hosts
+		for _, tok := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+			if tok == "" || net.ParseIP(tok) != nil {
+				continue // skip rank numbers, IPs, etc.
+			}
+			if d := RegisteredDomain(tok); d != "" && strings.ContainsRune(d, '.') {
+				set.domains[d] = struct{}{}
 				break
 			}
+		}
+		if topN > 0 && len(set.domains) >= topN {
+			break
 		}
 	}
 	return set, sc.Err()

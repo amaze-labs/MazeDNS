@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -170,11 +171,31 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// ensureTrusted (re)loads the trusted list in the background when the configured
+// effectiveTrusted resolves the configured trusted-list setting:
+//   - "off"/"none"/"-"  -> disabled
+//   - "" (blank)        -> the built-in public default list (no manual config)
+//   - anything else     -> that URL or file path
+func effectiveTrusted(s Settings) (url string, topN int) {
+	switch strings.ToLower(strings.TrimSpace(s.TrustedListURL)) {
+	case "off", "none", "-", "disabled":
+		return "", 0
+	case "":
+		topN = s.TrustedTopN
+		if topN <= 0 {
+			topN = DefaultTrustedTopN
+		}
+		return DefaultTrustedURL, topN
+	default:
+		return strings.TrimSpace(s.TrustedListURL), s.TrustedTopN
+	}
+}
+
+// ensureTrusted (re)loads the trusted list in the background when the effective
 // source changes, swapping it in atomically. Never blocks the worker.
 func (w *Worker) ensureTrusted(s Settings) {
-	src := s.TrustedListURL + "|" + strconv.Itoa(s.TrustedTopN)
-	if s.TrustedListURL == "" {
+	url, topN := effectiveTrusted(s)
+	src := url + "|" + strconv.Itoa(topN)
+	if url == "" {
 		if cur, _ := w.trustedSrc.Load().(string); cur != src {
 			w.trusted.Store(nil)
 			w.trustedSrc.Store(src)
@@ -189,14 +210,14 @@ func (w *Worker) ensureTrusted(s Settings) {
 	}
 	go func() {
 		defer w.trustedBusy.Store(false)
-		set, err := LoadTrusted(s.TrustedListURL, s.TrustedTopN)
+		set, err := LoadTrusted(url, topN)
 		if err != nil {
-			slog.Warn("trusted list load failed", "source", s.TrustedListURL, "err", err)
+			slog.Warn("trusted list load failed", "source", url, "err", err)
 			return
 		}
 		w.trusted.Store(set)
 		w.trustedSrc.Store(src)
-		slog.Info("trusted list loaded", "source", s.TrustedListURL, "domains", set.Count())
+		slog.Info("trusted list loaded", "source", url, "domains", set.Count())
 	}()
 }
 

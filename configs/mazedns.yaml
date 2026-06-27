@@ -81,8 +81,10 @@ classifier:                    # optional LLM domain classification (master only
   timeout_sec: 60              # per-request timeout (raise it if a local model warms up slowly)
   # Reduce false positives: a public list of known-legitimate domains. When the
   # model flags one of these it is never auto-blocked, only suggested for review.
-  trusted_list_url: ""         # URL or file path (plain/hosts/ranked-CSV, e.g. a Tranco top-sites list)
-  trusted_top_n: 0             # cap entries loaded from a large ranked list (0 = all)
+  # Blank uses the built-in public default (Majestic Million top domains, fetched
+  # automatically). Set "off" to disable, or give your own URL/file.
+  trusted_list_url: ""         # "" = built-in public list · "off" = disable · or URL/path (plain/hosts/ranked-CSV)
+  trusted_top_n: 0             # cap entries from a ranked list (0 = default 100k for the built-in list)
 
 cluster:                       # master<->worker config replication
   enabled: false               # worker: start the sync agent (auto-enabled when master_url+node_key are set). The master's control plane is always on — enroll nodes in the UI.

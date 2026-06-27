@@ -350,17 +350,19 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </div>
           <div className="field">
             <label>
-              Trusted domain list (URL or file path) — reduce false positives: flagged domains on this list are never
-              auto-blocked, only suggested for review. Accepts plain/hosts/ranked-CSV (e.g. a Tranco top-sites list).
+              Trusted domain list — reduce false positives: flagged domains on this list are never auto-blocked, only
+              suggested for review. <strong>Leave blank to use the built-in public list</strong> (Majestic Million top
+              domains, fetched automatically). Set <code>off</code> to disable, or paste your own URL / file path
+              (plain / hosts / ranked-CSV).
             </label>
             <input
               value={cls.trusted_list_url}
               onChange={(e) => setCls({ ...cls, trusted_list_url: e.target.value })}
-              placeholder="https://… or /path/to/top-domains.csv (blank = off)"
+              placeholder="blank = built-in public list · off = disable · or https://… / /path/to/list.csv"
             />
           </div>
           <div className="field">
-            <label>Trusted list cap (0 = all) — for large ranked lists, load only the top N</label>
+            <label>Trusted list cap (0 = default) — for large ranked lists, load only the top N most popular</label>
             <input
               type="number"
               min={0}

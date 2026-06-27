@@ -6,10 +6,13 @@ import (
 )
 
 func TestParseTrustedFormats(t *testing.T) {
-	// Mixed formats: plain, ranked CSV (Tranco), hosts, comment, subdomain.
+	// Mixed formats: plain, Tranco (rank,domain), Majestic (domain in col 3),
+	// hosts, header row, comment, subdomain.
 	in := `# comment
+GlobalRank,TldRank,Domain,TLD,RefSubNets
 example.com
 1,google.com
+2,2,majestic.com,com,123456
 0.0.0.0 microsoft.com
 www.github.com
 `
@@ -17,7 +20,7 @@ www.github.com
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{"example.com", "google.com", "microsoft.com", "github.com"} {
+	for _, d := range []string{"example.com", "google.com", "majestic.com", "microsoft.com", "github.com"} {
 		if !set.Has(d) {
 			t.Errorf("expected %q trusted", d)
 		}
@@ -28,6 +31,21 @@ www.github.com
 	}
 	if set.Has("evil.test") {
 		t.Error("unlisted domain must not match")
+	}
+}
+
+func TestEffectiveTrusted(t *testing.T) {
+	// Blank -> built-in public default.
+	if url, topN := effectiveTrusted(Settings{}); url != DefaultTrustedURL || topN != DefaultTrustedTopN {
+		t.Errorf("blank should use default: %q %d", url, topN)
+	}
+	// "off" -> disabled.
+	if url, _ := effectiveTrusted(Settings{TrustedListURL: "off"}); url != "" {
+		t.Errorf("off should disable, got %q", url)
+	}
+	// Custom URL is used as-is.
+	if url, topN := effectiveTrusted(Settings{TrustedListURL: "https://x/list.csv", TrustedTopN: 5}); url != "https://x/list.csv" || topN != 5 {
+		t.Errorf("custom not honored: %q %d", url, topN)
 	}
 }
 

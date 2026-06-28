@@ -90,6 +90,9 @@ classifier:                    # optional LLM domain classification (master only
   # default is abuse.ch URLhaus.
   threat_disable_default: false   # set true to NOT use the built-in public threat list
   threat_list_url: ""             # optional extra custom threat list (URL or file path)
+  # Enrich each classification with WHOIS/RDAP registration data (domain age,
+  # registrar) — a strong signal for the model. One RDAP lookup per new domain.
+  whois_enabled: true
 
 cluster:                       # master<->worker config replication
   enabled: false               # worker: start the sync agent (auto-enabled when master_url+node_key are set). The master's control plane is always on — enroll nodes in the UI.

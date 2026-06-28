@@ -89,6 +89,17 @@ func (s *Store) DeleteClassification(domain string) error {
 	return err
 }
 
+// DeleteAllClassifications wipes every AI verdict (a clean-slate reset). Returns
+// the number removed.
+func (s *Store) DeleteAllClassifications() (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM classifications`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ListClassifications returns a page of verdicts, optionally filtered by status,
 // newest first.
 func (s *Store) ListClassifications(status string, limit, offset int) ([]Classification, error) {

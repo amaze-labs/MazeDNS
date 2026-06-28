@@ -99,6 +99,18 @@ export interface ClassifierSettings {
   trusted_disable_default: boolean
   threat_list_url: string
   threat_disable_default: boolean
+  whois_enabled: boolean
+}
+
+export interface WhoisInfo {
+  domain: string
+  registrar: string
+  created: string
+  expires: string
+  updated: string
+  age_days: number
+  status: string[]
+  nameservers: string[]
 }
 
 export interface ClassifierStatus {
@@ -392,6 +404,11 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ domain, decision }),
     }).then(j),
+  clearClassifications: () => fetch('/api/classifications', { method: 'DELETE' }).then(j<{ deleted: number }>),
+  whois: (domain: string) =>
+    fetch(`/api/classifier/whois?domain=${encodeURIComponent(domain)}`).then(
+      j<{ ok: boolean; error?: string; domain?: string; whois?: WhoisInfo }>,
+    ),
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),

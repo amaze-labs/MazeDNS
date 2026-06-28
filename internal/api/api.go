@@ -47,14 +47,16 @@ type Server struct {
 	clsTrusted          func() int
 	clsThreat           func() int
 	clsTrustedSearch    func(string, int) []string
+	clsWhois            func(context.Context, string) (classifier.WhoisInfo, error)
 }
 
 // SetClassifierStatus wires runtime classifier status into the API (loaded
-// trusted/threat list sizes and trusted-list search, for the UI).
-func (s *Server) SetClassifierStatus(trustedCount, threatCount func() int, trustedSearch func(string, int) []string) {
+// trusted/threat list sizes, trusted-list search, and WHOIS lookups for the UI).
+func (s *Server) SetClassifierStatus(trustedCount, threatCount func() int, trustedSearch func(string, int) []string, whois func(context.Context, string) (classifier.WhoisInfo, error)) {
 	s.clsTrusted = trustedCount
 	s.clsThreat = threatCount
 	s.clsTrustedSearch = trustedSearch
+	s.clsWhois = whois
 }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
@@ -113,7 +115,9 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/classifier/test", s.requireRole(roleAdmin, s.testClassifier))
 		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))
 		mux.HandleFunc("GET /api/classifications", s.requireRole(roleReadonly, s.listClassifications))
+		mux.HandleFunc("DELETE /api/classifications", s.requireRole(roleAdmin, s.clearClassifications))
 		mux.HandleFunc("POST /api/classifications/decision", s.requireRole(roleAdmin, s.decideClassification))
+		mux.HandleFunc("GET /api/classifier/whois", s.requireRole(roleReadonly, s.getWhois))
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))

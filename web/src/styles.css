@@ -194,6 +194,23 @@ tr:last-child td {
 }
 
 /* Classifier verdict table */
+.cls-row {
+  cursor: pointer;
+}
+.cls-row:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+/* Domain detail modal: label / value grid */
+.dd-grid {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 8px 14px;
+  align-items: baseline;
+  text-align: left;
+}
+.dd-grid > .muted {
+  text-align: left;
+}
 .cls-domain {
   font-weight: 500;
   word-break: break-all;

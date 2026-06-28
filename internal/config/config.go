@@ -192,6 +192,9 @@ type Classifier struct {
 	// unless ThreatDisableDefault; ThreatListURL adds a custom source.
 	ThreatListURL        string `yaml:"threat_list_url"`
 	ThreatDisableDefault bool   `yaml:"threat_disable_default"`
+	// WhoisEnabled enriches classifications with RDAP/WHOIS registration data
+	// (domain age etc.) as a signal for the model.
+	WhoisEnabled bool `yaml:"whois_enabled"`
 }
 
 // Cluster configures master<->worker configuration replication. The master
@@ -239,11 +242,12 @@ func Default() Config {
 			SessionTTL: Duration(24 * time.Hour),
 		},
 		Classifier: Classifier{
-			Endpoint:   "http://localhost:11434/v1",
-			Model:      "llama3.2",
-			Mode:       "suggest",
-			MinGapMS:   1000,
-			TimeoutSec: 60,
+			Endpoint:     "http://localhost:11434/v1",
+			Model:        "llama3.2",
+			Mode:         "suggest",
+			MinGapMS:     1000,
+			TimeoutSec:   60,
+			WhoisEnabled: true,
 		},
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},

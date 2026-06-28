@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -147,6 +148,41 @@ func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request) {
 		items = []store.Classification{}
 	}
 	writeJSON(w, http.StatusOK, items)
+}
+
+// clearClassifications wipes all AI verdicts (a clean-slate reset) and rebuilds
+// the policy (so any AI-enforced blocks are dropped until re-classified).
+func (s *Server) clearClassifications(w http.ResponseWriter, _ *http.Request) {
+	n, err := s.store.DeleteAllClassifications()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.reload != nil {
+		_ = s.reload()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
+}
+
+// getWhois returns RDAP/WHOIS registration data for a domain (for the detail view).
+func (s *Server) getWhois(w http.ResponseWriter, r *http.Request) {
+	domain := strings.TrimSpace(r.URL.Query().Get("domain"))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "domain is required")
+		return
+	}
+	if s.clsWhois == nil {
+		writeError(w, http.StatusServiceUnavailable, "classifier not available")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	info, err := s.clsWhois(ctx, domain)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "domain": domain})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "whois": info})
 }
 
 // decideClassification approves or rejects a verdict. Approving makes it block;

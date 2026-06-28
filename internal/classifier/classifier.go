@@ -127,8 +127,9 @@ type chatResp struct {
 // Hints carries deterministic signals (looked up before the model runs) so the
 // model can incorporate them into its verdict and reasoning.
 type Hints struct {
-	Trusted bool // on a known-legitimate / popular-domains list
-	Threat  bool // on a known-malicious threat-intel feed
+	Trusted bool   // on a known-legitimate / popular-domains list
+	Threat  bool   // on a known-malicious threat-intel feed
+	Whois   string // one-line registration summary (e.g. "registered 5 days ago …")
 }
 
 // Classify returns the model's verdict for a domain, informed by any hints.
@@ -139,6 +140,9 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 	}
 	if h.Trusted {
 		user += "\nSignal: this domain is among the most popular, established domains on the internet — very unlikely to be malicious."
+	}
+	if h.Whois != "" {
+		user += "\nRegistration (WHOIS): " + h.Whois + "."
 	}
 	body, err := json.Marshal(chatReq{
 		Model:       c.model,

@@ -53,6 +53,9 @@ type Settings struct {
 	// model missed it. Built-in public default unless ThreatDisableDefault.
 	ThreatListURL        string `json:"threat_list_url"`
 	ThreatDisableDefault bool   `json:"threat_disable_default"`
+	// WhoisEnabled enriches each classification with the domain's registration
+	// data (via RDAP) — domain age is a strong signal for the model.
+	WhoisEnabled bool `json:"whois_enabled"`
 }
 
 func (s Settings) minGap() time.Duration {
@@ -90,6 +93,7 @@ type Worker struct {
 
 	trusted *setHolder
 	threat  *setHolder
+	whois   *WhoisCache
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -102,7 +106,13 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		recent:  make(map[string]time.Time),
 		trusted: newSetHolder("trusted"),
 		threat:  newSetHolder("threat"),
+		whois:   NewWhoisCache(),
 	}
+}
+
+// Whois returns cached registration data for a domain (used by the UI detail view).
+func (w *Worker) Whois(ctx context.Context, domain string) (WhoisInfo, error) {
+	return w.whois.Lookup(ctx, domain)
 }
 
 // clientFor returns a cached client for the current endpoint/model/key, rebuilding
@@ -200,10 +210,17 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	}
 
 	// Look the deterministic signals up FIRST, then let the model decide with them
-	// in hand (so its category + reasoning incorporate the threat/trusted context).
+	// in hand (so its category + reasoning incorporate the threat/trusted/WHOIS
+	// context).
 	trusted := w.trusted.has(domain)
 	threat := w.threat.has(domain)
-	v, err := w.clientFor(s).Classify(ctx, domain, Hints{Trusted: trusted, Threat: threat})
+	hints := Hints{Trusted: trusted, Threat: threat}
+	if s.WhoisEnabled {
+		if info, werr := w.whois.Lookup(ctx, domain); werr == nil {
+			hints.Whois = info.summary()
+		}
+	}
+	v, err := w.clientFor(s).Classify(ctx, domain, hints)
 	if err != nil {
 		slog.Warn("classify failed", "domain", domain, "err", err)
 		return

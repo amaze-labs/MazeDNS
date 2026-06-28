@@ -409,6 +409,21 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               placeholder="https://… or /path/to/threatlist.txt"
             />
           </div>
+          <div className="field">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={cls.whois_enabled}
+                onChange={(e) => setCls({ ...cls, whois_enabled: e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">
+                Enrich with WHOIS (domain age, registrar) via RDAP — a strong signal for the model
+              </span>
+            </label>
+          </div>
           <div className="settings-actions">
             <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
               {clsSaving ? 'Saving…' : 'Save classifier'}

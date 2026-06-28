@@ -226,6 +226,7 @@ func main() {
 			TrustedDisableDefault: cfg.Classifier.TrustedDisableDefault,
 			ThreatListURL:         cfg.Classifier.ThreatListURL,
 			ThreatDisableDefault:  cfg.Classifier.ThreatDisableDefault,
+			WhoisEnabled:          cfg.Classifier.WhoisEnabled,
 		}
 		if cur, _ := st.GetMeta(classifier.SettingsKey); cur == "" {
 			_ = classifier.SaveSettings(st, defaults)
@@ -335,7 +336,7 @@ func main() {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
 		apiSrv = api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
 		if clsWorker != nil {
-			apiSrv.SetClassifierStatus(clsWorker.TrustedCount, clsWorker.ThreatCount, clsWorker.TrustedSearch)
+			apiSrv.SetClassifierStatus(clsWorker.TrustedCount, clsWorker.ThreatCount, clsWorker.TrustedSearch, clsWorker.Whois)
 		}
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)

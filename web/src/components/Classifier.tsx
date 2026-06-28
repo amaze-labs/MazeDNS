@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type Classification, type ClassifierStatus } from '../api'
 import Spinner from './Spinner'
 import ClassifierHelp from './ClassifierHelp'
+import DomainDetail from './DomainDetail'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -24,6 +25,7 @@ export default function Classifier() {
   const [err, setErr] = useState('')
 
   const [showHelp, setShowHelp] = useState(false)
+  const [selected, setSelected] = useState<Classification | null>(null)
   // Trusted-list viewer
   const [showTrusted, setShowTrusted] = useState(false)
   const [trustedSearch, setTrustedSearch] = useState('')
@@ -68,6 +70,17 @@ export default function Classifier() {
       setErr(e.message)
     }
   }
+  const clearAll = async () => {
+    if (!window.confirm('Delete ALL AI classifications and start fresh? Domains will be re-evaluated as they are queried again.')) return
+    try {
+      await api.clearClassifications()
+      setPage(0)
+      loadRows()
+      loadInfo()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
 
   const counts = info?.counts ?? {}
   const total = counts[tab] ?? 0
@@ -77,10 +90,14 @@ export default function Classifier() {
   return (
     <div>
       {showHelp && <ClassifierHelp onClose={() => setShowHelp(false)} />}
+      {selected && <DomainDetail c={selected} onClose={() => setSelected(null)} onAction={decide} />}
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         AI classification {!info && <Spinner />}
         <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowHelp(true)}>
           Learn more
+        </button>
+        <button className="btn ghost-danger" onClick={clearAll} title="Delete all classifications and start fresh">
+          Clear all
         </button>
       </h2>
       <p className="muted" style={{ textAlign: 'left' }}>
@@ -171,63 +188,48 @@ export default function Classifier() {
         ))}
       </div>
 
+      <p className="muted" style={{ textAlign: 'left' }}>
+        Click a row for full details + WHOIS.
+      </p>
       <table className="cls-table">
         <thead>
           <tr>
             <th>Domain</th>
             <th>Category</th>
-            <th>Signals</th>
             <th>Confidence</th>
-            <th>Reason</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {rows.map((c) => {
             const blocked = c.status === 'auto' || c.status === 'approved'
+            const stop = (fn: () => void) => (e: React.MouseEvent) => {
+              e.stopPropagation()
+              fn()
+            }
             return (
-              <tr key={c.domain}>
+              <tr key={c.domain} className="cls-row" onClick={() => setSelected(c)}>
                 <td className="cls-domain">{c.domain}</td>
                 <td>
                   <span className={`badge ${catClass(c.category)}`}>{c.category}</span>
-                </td>
-                <td>
-                  <div className="cls-signals">
-                    {c.threat && (
-                      <span className="badge blocked" title="Listed on a threat-intelligence feed (abuse.ch URLhaus) — corroborated malicious.">
-                        🛡 threat
-                      </span>
-                    )}
-                    {c.trusted && (
-                      <span className="badge allow" title="On the trusted (known-legitimate) list — not blocked.">
-                        ✓ trusted
-                      </span>
-                    )}
-                    {blocked && <span className="badge blocked">blocked</span>}
-                    {c.status === 'rejected' && <span className="badge allow">allowed</span>}
-                  </div>
+                  {c.threat && <span className="badge blocked" title="On a threat-intel feed (abuse.ch)" style={{ marginLeft: 6 }}>🛡</span>}
+                  {c.trusted && <span className="badge allow" title="On the trusted list" style={{ marginLeft: 6 }}>✓</span>}
                 </td>
                 <td className="cls-conf">{Math.round((c.confidence || 0) * 100)}%</td>
-                <td className="muted cls-reason" title={c.reason}>
-                  {c.reason}
-                </td>
                 <td>
                   <div className="cls-actions">
-                    {/* Block: enforce, unless already blocked. */}
                     {!blocked && (
-                      <button className="btn primary" onClick={() => decide(c.domain, 'approve')} title="Block this domain">
+                      <button className="btn primary" onClick={stop(() => decide(c.domain, 'approve'))} title="Block this domain">
                         Block
                       </button>
                     )}
-                    {/* Allow: never block (hide forever from suggestions). */}
                     {c.status !== 'rejected' && (
-                      <button className="btn" onClick={() => decide(c.domain, 'reject')} title="Allow — never block (hide forever)">
+                      <button className="btn" onClick={stop(() => decide(c.domain, 'reject'))} title="Allow — never block">
                         Allow
                       </button>
                     )}
-                    {/* Dismiss: hide once; the domain may be re-suggested later. */}
                     {c.status === 'suggested' && (
-                      <button className="btn ghost" onClick={() => decide(c.domain, 'dismiss')} title="Dismiss this suggestion (may reappear later)">
+                      <button className="btn ghost" onClick={stop(() => decide(c.domain, 'dismiss'))} title="Dismiss (may reappear later)">
                         Dismiss
                       </button>
                     )}
@@ -238,7 +240,7 @@ export default function Classifier() {
           })}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={6} className="muted">
+              <td colSpan={4} className="muted">
                 Nothing here yet
               </td>
             </tr>

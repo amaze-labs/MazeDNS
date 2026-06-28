@@ -21,11 +21,11 @@ func TestCacheHitMiss(t *testing.T) {
 	c := New(100, 5*time.Second, time.Hour)
 	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
 
-	if _, ok := c.Get(q); ok {
+	if _, ok := c.Get(q, false); ok {
 		t.Fatal("expected miss on empty cache")
 	}
-	c.Set(q, makeReply("example.com", 300))
-	got, ok := c.Get(q)
+	c.Set(q, false, makeReply("example.com", 300))
+	got, ok := c.Get(q, false)
 	if !ok {
 		t.Fatal("expected hit after set")
 	}
@@ -35,16 +35,21 @@ func TestCacheHitMiss(t *testing.T) {
 
 	q2 := q
 	q2.Qtype = dns.TypeAAAA
-	if _, ok := c.Get(q2); ok {
+	if _, ok := c.Get(q2, false); ok {
 		t.Error("expected miss for a different qtype")
+	}
+
+	// The DNSSEC-signed variant is a separate cache entry.
+	if _, ok := c.Get(q, true); ok {
+		t.Error("expected miss for the signed variant of an unsigned entry")
 	}
 }
 
 func TestCacheTTLClamp(t *testing.T) {
 	c := New(100, 30*time.Second, time.Hour)
 	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
-	c.Set(q, makeReply("example.com", 5)) // 5s is below the 30s min
-	got, ok := c.Get(q)
+	c.Set(q, false, makeReply("example.com", 5)) // 5s is below the 30s min
+	got, ok := c.Get(q, false)
 	if !ok {
 		t.Fatal("expected hit")
 	}

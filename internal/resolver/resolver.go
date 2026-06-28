@@ -263,6 +263,7 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	// Capture the client's DNSSEC intent and UDP buffer BEFORE resolving, because
 	// the forward path may add the DO bit / a larger buffer to req when DNSSEC is
 	// forced upstream — which would otherwise mask what the client actually asked.
+	clientEDNS := req.IsEdns0() != nil
 	clientDO, clientUDP := false, dns.MinMsgSize // 512
 	if o := req.IsEdns0(); o != nil {
 		clientDO = o.Do()
@@ -280,6 +281,10 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	// signed payload.
 	if !clientDO {
 		stripDNSSEC(resp)
+	}
+	// A client that sent no EDNS must not get an OPT record back (RFC 6891 §6.1.1).
+	if !clientEDNS {
+		removeOPT(resp)
 	}
 	// For UDP clients, truncate to the client's advertised buffer. This sets the TC
 	// bit on oversized (e.g. DNSSEC-signed) answers so the client retries cleanly
@@ -336,9 +341,17 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		}
 	}
 
+	// Whether this query wants the DNSSEC-signed answer: either the client asked
+	// (DO bit) or we're forcing validation upstream. Signed and unsigned answers
+	// are cached under separate keys so a client never gets the wrong variant.
+	wantSigned := rt.forceDNSSEC
+	if o := req.IsEdns0(); o != nil && o.Do() {
+		wantSigned = true
+	}
+
 	// 4. Cache.
 	if rt.cache != nil {
-		if cached, ok := rt.cache.Get(q); ok {
+		if cached, ok := rt.cache.Get(q, wantSigned); ok {
 			cached.Id = req.Id
 			r.stats.Cached.Add(1)
 			return cached, "cache", ""
@@ -362,7 +375,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		r.metrics.UpstreamDuration.Observe(rtt.Seconds())
 	}
 	if rt.cache != nil {
-		rt.cache.Set(q, resp)
+		rt.cache.Set(q, wantSigned, resp)
 	}
 	resp.Id = req.Id
 	return resp, "forward", ""
@@ -545,6 +558,17 @@ func stripDNSSEC(m *dns.Msg) {
 	m.Extra = filter(m.Extra) // keeps OPT (not a DNSSEC type)
 	if o := m.IsEdns0(); o != nil {
 		o.SetDo(false)
+	}
+}
+
+// removeOPT drops the EDNS0 OPT record from a message — used when replying to a
+// client that sent no OPT, so we don't return an unsolicited one.
+func removeOPT(m *dns.Msg) {
+	for i, rr := range m.Extra {
+		if rr.Header().Rrtype == dns.TypeOPT {
+			m.Extra = append(m.Extra[:i], m.Extra[i+1:]...)
+			return
+		}
 	}
 }
 

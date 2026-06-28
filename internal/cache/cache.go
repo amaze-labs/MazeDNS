@@ -38,8 +38,13 @@ func New(maxItems int, minTTL, maxTTL time.Duration) *Cache {
 	}
 }
 
-func keyFor(q dns.Question) string {
+// keyFor keys an entry by question AND whether it's the DNSSEC-signed variant, so
+// a signed (DO) answer and an unsigned one are never served to the wrong client.
+func keyFor(q dns.Question, do bool) string {
 	var b strings.Builder
+	if do {
+		b.WriteByte('+') // signed variant
+	}
 	b.WriteString(strconv.FormatUint(uint64(q.Qclass), 10))
 	b.WriteByte('/')
 	b.WriteString(strconv.FormatUint(uint64(q.Qtype), 10))
@@ -49,9 +54,10 @@ func keyFor(q dns.Question) string {
 }
 
 // Get returns a cached reply for q (a copy, with TTLs decremented by the elapsed
-// time) and true on a hit, or nil/false on a miss or expiry.
-func (c *Cache) Get(q dns.Question) (*dns.Msg, bool) {
-	k := keyFor(q)
+// time) and true on a hit, or nil/false on a miss or expiry. do selects the
+// DNSSEC-signed variant.
+func (c *Cache) Get(q dns.Question, do bool) (*dns.Msg, bool) {
+	k := keyFor(q, do)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.items[k]
@@ -69,9 +75,9 @@ func (c *Cache) Get(q dns.Question) (*dns.Msg, bool) {
 	return msg, true
 }
 
-// Set stores msg as the cached reply for q. Empty/NXDOMAIN answers are
-// negative-cached using the SOA minimum when present.
-func (c *Cache) Set(q dns.Question, msg *dns.Msg) {
+// Set stores msg as the cached reply for q (do = the DNSSEC-signed variant).
+// Empty/NXDOMAIN answers are negative-cached using the SOA minimum when present.
+func (c *Cache) Set(q dns.Question, do bool, msg *dns.Msg) {
 	if msg == nil {
 		return
 	}
@@ -79,15 +85,16 @@ func (c *Cache) Set(q dns.Question, msg *dns.Msg) {
 	if ttl <= 0 {
 		return
 	}
+	k := keyFor(q, do)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, exists := c.items[keyFor(q)]; !exists && len(c.items) >= c.maxItems {
-		for k := range c.items { // simple eviction: drop one arbitrary entry
-			delete(c.items, k)
+	if _, exists := c.items[k]; !exists && len(c.items) >= c.maxItems {
+		for ek := range c.items { // simple eviction: drop one arbitrary entry
+			delete(c.items, ek)
 			break
 		}
 	}
-	c.items[keyFor(q)] = entry{
+	c.items[k] = entry{
 		msg:       msg.Copy(),
 		expiresAt: time.Now().Add(ttl),
 	}

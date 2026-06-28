@@ -20,8 +20,10 @@ func NewServer(addr string, res *Resolver) *Server {
 	mux.HandleFunc(".", res.Handle)
 	return &Server{
 		addr: addr,
-		udp:  &dns.Server{Addr: addr, Net: "udp", Handler: mux},
-		tcp:  &dns.Server{Addr: addr, Net: "tcp", Handler: mux},
+		// UDPSize lets the listener read EDNS queries larger than the bare 512-byte
+		// default (e.g. with cookies / client-subnet) without them being truncated.
+		udp: &dns.Server{Addr: addr, Net: "udp", Handler: mux, UDPSize: largeUDPSize},
+		tcp: &dns.Server{Addr: addr, Net: "tcp", Handler: mux},
 	}
 }
 

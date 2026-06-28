@@ -104,6 +104,7 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		}
 		start := time.Now()
 		client := httpClientIP(req)
+		clientEDNS := msg.IsEdns0() != nil
 		clientDO := false
 		if o := msg.IsEdns0(); o != nil {
 			clientDO = o.Do()
@@ -113,6 +114,9 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		// (the AD flag is kept). DoH is over HTTP, so no UDP truncation is needed.
 		if !clientDO {
 			stripDNSSEC(resp)
+		}
+		if !clientEDNS {
+			removeOPT(resp)
 		}
 		out, err := resp.Pack()
 		if err != nil {

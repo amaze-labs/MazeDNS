@@ -28,11 +28,9 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 	// Never leak the API key to the UI.
 	cfg.APIKey = ""
 	trustedCount, threatCount := 0, 0
-	if s.clsTrusted != nil {
-		trustedCount = s.clsTrusted()
-	}
-	if s.clsThreat != nil {
-		threatCount = s.clsThreat()
+	if s.cls != nil {
+		trustedCount = s.cls.TrustedCount()
+		threatCount = s.cls.ThreatCount()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings":        cfg,
@@ -43,19 +41,22 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// getTrustedList returns a (searchable) preview of the loaded trusted domains.
-func (s *Server) getTrustedList(w http.ResponseWriter, r *http.Request) {
+// getList returns a searchable preview of a loaded list (?list=trusted|threat).
+func (s *Server) getList(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = 200
 	}
 	count, domains := 0, []string{}
-	if s.clsTrusted != nil {
-		count = s.clsTrusted()
-	}
-	if s.clsTrustedSearch != nil {
-		if d := s.clsTrustedSearch(search, limit); d != nil {
+	if s.cls != nil {
+		var d []string
+		if r.URL.Query().Get("list") == "threat" {
+			count, d = s.cls.ThreatCount(), s.cls.ThreatSearch(search, limit)
+		} else {
+			count, d = s.cls.TrustedCount(), s.cls.TrustedSearch(search, limit)
+		}
+		if d != nil {
 			domains = d
 		}
 	}
@@ -171,13 +172,13 @@ func (s *Server) getWhois(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain is required")
 		return
 	}
-	if s.clsWhois == nil {
+	if s.cls == nil {
 		writeError(w, http.StatusServiceUnavailable, "classifier not available")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	info, err := s.clsWhois(ctx, domain)
+	info, err := s.cls.Whois(ctx, domain)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "domain": domain})
 		return

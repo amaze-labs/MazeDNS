@@ -44,20 +44,21 @@ type Server struct {
 	http                *http.Server
 	statsCache          *ttlCache
 	classifierAvailable bool // master only — classifier endpoints/tab are offered
-	clsTrusted          func() int
-	clsThreat           func() int
-	clsTrustedSearch    func(string, int) []string
-	clsWhois            func(context.Context, string) (classifier.WhoisInfo, error)
+	cls                 classifierStatus
 }
 
-// SetClassifierStatus wires runtime classifier status into the API (loaded
-// trusted/threat list sizes, trusted-list search, and WHOIS lookups for the UI).
-func (s *Server) SetClassifierStatus(trustedCount, threatCount func() int, trustedSearch func(string, int) []string, whois func(context.Context, string) (classifier.WhoisInfo, error)) {
-	s.clsTrusted = trustedCount
-	s.clsThreat = threatCount
-	s.clsTrustedSearch = trustedSearch
-	s.clsWhois = whois
+// classifierStatus exposes the classifier worker's runtime state to the API
+// (list sizes, list search, WHOIS) without coupling to the concrete worker.
+type classifierStatus interface {
+	TrustedCount() int
+	ThreatCount() int
+	TrustedSearch(q string, limit int) []string
+	ThreatSearch(q string, limit int) []string
+	Whois(ctx context.Context, domain string) (classifier.WhoisInfo, error)
 }
+
+// SetClassifierStatus wires the running classifier worker into the API.
+func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
 // served; in master mode the control-plane API and web UI are mounted, plus the
@@ -110,7 +111,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// LLM domain classifier.
 		mux.HandleFunc("GET /api/classifier", s.requireRole(roleReadonly, s.getClassifier))
-		mux.HandleFunc("GET /api/classifier/trusted", s.requireRole(roleReadonly, s.getTrustedList))
+		mux.HandleFunc("GET /api/classifier/list", s.requireRole(roleReadonly, s.getList))
 		mux.HandleFunc("PUT /api/classifier/settings", s.requireRole(roleAdmin, s.putClassifierSettings))
 		mux.HandleFunc("POST /api/classifier/test", s.requireRole(roleAdmin, s.testClassifier))
 		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))

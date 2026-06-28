@@ -26,10 +26,10 @@ export default function Classifier() {
 
   const [showHelp, setShowHelp] = useState(false)
   const [selected, setSelected] = useState<Classification | null>(null)
-  // Trusted-list viewer
-  const [showTrusted, setShowTrusted] = useState(false)
-  const [trustedSearch, setTrustedSearch] = useState('')
-  const [trustedRows, setTrustedRows] = useState<string[]>([])
+  // List viewer (trusted / threat)
+  const [listView, setListView] = useState<'trusted' | 'threat' | null>(null)
+  const [listSearch, setListSearch] = useState('')
+  const [listRows, setListRows] = useState<string[]>([])
 
   const loadInfo = () => api.classifier().then(setInfo).catch((e) => setErr(e.message))
   const loadRows = () => api.classifications(tab, PAGE, page * PAGE).then(setRows).catch((e) => setErr(e.message))
@@ -38,10 +38,18 @@ export default function Classifier() {
     loadInfo()
   }, [])
   useEffect(() => {
-    if (!showTrusted) return
-    const t = setTimeout(() => api.trustedList(trustedSearch, 200).then((r) => setTrustedRows(r.domains)).catch(() => {}), 300)
+    if (!listView) return
+    const t = setTimeout(
+      () => api.classifierList(listView, listSearch, 200).then((r) => setListRows(r.domains)).catch(() => {}),
+      300,
+    )
     return () => clearTimeout(t)
-  }, [showTrusted, trustedSearch])
+  }, [listView, listSearch])
+  const openList = (l: 'trusted' | 'threat') => {
+    setListSearch('')
+    setListRows([])
+    setListView((cur) => (cur === l ? null : l))
+  }
   useEffect(() => {
     setPage(0) // reset paging when switching tabs
   }, [tab])
@@ -90,7 +98,15 @@ export default function Classifier() {
   return (
     <div>
       {showHelp && <ClassifierHelp onClose={() => setShowHelp(false)} />}
-      {selected && <DomainDetail c={selected} onClose={() => setSelected(null)} onAction={decide} />}
+      {selected && (
+        <DomainDetail
+          c={selected}
+          threatCount={info?.threat_count ?? 0}
+          trustedCount={info?.trusted_count ?? 0}
+          onClose={() => setSelected(null)}
+          onAction={decide}
+        />
+      )}
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         AI classification {!info && <Spinner />}
         <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowHelp(true)}>
@@ -107,39 +123,44 @@ export default function Classifier() {
         {(info?.trusted_count ?? 0) > 0 && (
           <>
             {' '}
-            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains (flagged matches are never
-            blocked).{' '}
-            <button className="linkbtn" onClick={() => setShowTrusted((v) => !v)}>
-              {showTrusted ? 'hide' : 'view'}
+            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains (never blocked).{' '}
+            <button className="linkbtn" onClick={() => openList('trusted')}>
+              {listView === 'trusted' ? 'hide' : 'view'}
             </button>
           </>
         )}
         {(info?.threat_count ?? 0) > 0 && (
           <>
             {' '}
-            Threat list: <strong>{info?.threat_count.toLocaleString()}</strong> known-malicious domains (corroborate
-            verdicts).
+            Threat list: <strong>{info?.threat_count.toLocaleString()}</strong> known-malicious domains (abuse.ch
+            URLhaus).{' '}
+            <button className="linkbtn" onClick={() => openList('threat')}>
+              {listView === 'threat' ? 'hide' : 'view'}
+            </button>
           </>
         )}
       </p>
       {err && <div className="error">{err}</div>}
 
-      {showTrusted && (
+      {listView && (
         <div className="settings-card" style={{ marginBottom: 18 }}>
-          <h3>Trusted domains ({(info?.trusted_count ?? 0).toLocaleString()})</h3>
+          <h3>
+            {listView === 'threat' ? 'Threat-intel domains — abuse.ch URLhaus' : 'Trusted domains'} (
+            {((listView === 'threat' ? info?.threat_count : info?.trusted_count) ?? 0).toLocaleString()})
+          </h3>
           <input
             className="search"
-            placeholder="search trusted domains…"
-            value={trustedSearch}
-            onChange={(e) => setTrustedSearch(e.target.value)}
+            placeholder={`search ${listView} domains…`}
+            value={listSearch}
+            onChange={(e) => setListSearch(e.target.value)}
           />
           <div className="cat-chips" style={{ marginTop: 10 }}>
-            {trustedRows.map((d) => (
-              <span key={d} className="cat-chip badge allow">
+            {listRows.map((d) => (
+              <span key={d} className={`cat-chip badge ${listView === 'threat' ? 'blocked' : 'allow'}`}>
                 {d}
               </span>
             ))}
-            {trustedRows.length === 0 && <span className="muted">No matches</span>}
+            {listRows.length === 0 && <span className="muted">No matches</span>}
           </div>
         </div>
       )}

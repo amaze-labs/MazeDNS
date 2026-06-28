@@ -9,12 +9,29 @@ const fmtDate = (s: string) => (s ? new Date(s).toLocaleDateString() : '—')
 
 // DomainDetail shows everything known about one classified domain: the model's
 // verdict plus live WHOIS/RDAP registration data, with the review actions.
+// A single contribution row in the score breakdown. dir: 'up' raises suspicion
+// (red), 'down' lowers it / overrides (green), '' is neutral/informational.
+function Signal({ label, value, dir = '' }: { label: string; value: string; dir?: 'up' | 'down' | '' }) {
+  const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '•'
+  return (
+    <div className={`signal ${dir}`}>
+      <span className="signal-arrow">{arrow}</span>
+      <span className="signal-label">{label}</span>
+      <span className="signal-value">{value}</span>
+    </div>
+  )
+}
+
 export default function DomainDetail({
   c,
+  threatCount,
+  trustedCount,
   onClose,
   onAction,
 }: {
   c: Classification
+  threatCount: number
+  trustedCount: number
   onClose: () => void
   onAction: (domain: string, decision: 'approve' | 'reject' | 'dismiss') => void
 }) {
@@ -54,6 +71,41 @@ export default function DomainDetail({
         <span>{c.model || '—'}</span>
         <span className="muted">Reason</span>
         <span>{c.reason || '—'}</span>
+      </div>
+
+      <h4>Score breakdown — what drove the verdict</h4>
+      <div className="signals">
+        <Signal label="Model prediction" value={`${c.category} @ ${Math.round((c.confidence || 0) * 100)}%`} />
+        <Signal
+          label={`Threat intel — abuse.ch URLhaus (${threatCount.toLocaleString()} domains)`}
+          value={c.threat ? 'Listed → forced malicious, score floored to ≥97%' : 'Not on the feed'}
+          dir={c.threat ? 'up' : ''}
+        />
+        <Signal
+          label={`Trusted list (${trustedCount.toLocaleString()} domains)`}
+          value={c.trusted ? 'Listed → never blocked (overrides the model)' : 'Not on the list'}
+          dir={c.trusted ? 'down' : ''}
+        />
+        {whois && whois.age_days > 0 ? (
+          <Signal
+            label="Domain age (WHOIS)"
+            value={whois.age_days < 90 ? `${whois.age_days} days — very new, suspicious` : `${whois.age_days} days — established`}
+            dir={whois.age_days < 90 ? 'up' : 'down'}
+          />
+        ) : (
+          <Signal label="Domain age (WHOIS)" value={loading ? 'looking up…' : 'unknown'} />
+        )}
+        {whois && (whois.registrant || whois.nameservers?.length > 0) && (
+          <Signal
+            label="Ownership (WHOIS)"
+            value={whois.registrant || `nameservers: ${(whois.nameservers || []).slice(0, 2).join(', ')}`}
+          />
+        )}
+        <Signal
+          label="Final verdict"
+          value={`${blocked ? 'blocked' : c.status === 'rejected' ? 'allowed' : c.status} @ ${Math.round((c.confidence || 0) * 100)}%`}
+          dir={blocked ? 'up' : 'down'}
+        />
       </div>
 
       <h4>Registration (WHOIS / RDAP)</h4>

@@ -194,8 +194,9 @@ func (w *Worker) Run(ctx context.Context) {
 func (w *Worker) TrustedCount() int { return w.trusted.count() }
 func (w *Worker) ThreatCount() int  { return w.threat.count() }
 
-// TrustedSearch returns trusted domains matching q (for the trusted-list viewer).
+// TrustedSearch / ThreatSearch return matching domains (for the list viewers).
 func (w *Worker) TrustedSearch(q string, limit int) []string { return w.trusted.search(q, limit) }
+func (w *Worker) ThreatSearch(q string, limit int) []string  { return w.threat.search(q, limit) }
 
 func (w *Worker) process(ctx context.Context, domain string) {
 	s := w.get()

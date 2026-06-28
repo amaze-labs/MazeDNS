@@ -200,6 +200,43 @@ tr:last-child td {
 .cls-row:hover td {
   background: rgba(255, 255, 255, 0.03);
 }
+/* Score breakdown rows in the domain detail modal */
+.signals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+.signal {
+  display: grid;
+  grid-template-columns: 16px minmax(160px, auto) 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.signal-arrow {
+  color: var(--muted);
+  font-size: 11px;
+}
+.signal.up .signal-arrow {
+  color: var(--danger);
+}
+.signal.down .signal-arrow {
+  color: var(--ok);
+}
+.signal-label {
+  color: var(--muted);
+}
+.signal.up .signal-value {
+  color: var(--danger);
+}
+.signal.down .signal-value {
+  color: var(--ok);
+}
+
 /* Domain detail modal: label / value grid */
 .dd-grid {
   display: grid;

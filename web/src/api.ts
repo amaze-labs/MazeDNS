@@ -389,10 +389,10 @@ export const api = {
     ),
   setClassifierMode: (mode: string) =>
     fetch('/api/classifier/mode', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ mode }) }).then(j),
-  trustedList: (search = '', limit = 200) => {
-    const p = new URLSearchParams({ limit: String(limit) })
+  classifierList: (list: 'trusted' | 'threat', search = '', limit = 200) => {
+    const p = new URLSearchParams({ list, limit: String(limit) })
     if (search) p.set('search', search)
-    return fetch(`/api/classifier/trusted?${p.toString()}`).then(j<{ count: number; domains: string[] }>)
+    return fetch(`/api/classifier/list?${p.toString()}`).then(j<{ count: number; domains: string[] }>)
   },
   classifications: (status = '', limit = 25, offset = 0) => {
     const p = new URLSearchParams({ limit: String(limit), offset: String(offset) })

@@ -336,7 +336,7 @@ func main() {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
 		apiSrv = api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
 		if clsWorker != nil {
-			apiSrv.SetClassifierStatus(clsWorker.TrustedCount, clsWorker.ThreatCount, clsWorker.TrustedSearch, clsWorker.Whois)
+			apiSrv.SetClassifierStatus(clsWorker)
 		}
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)

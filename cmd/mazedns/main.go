@@ -28,6 +28,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
+	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
@@ -248,6 +249,16 @@ func main() {
 		bootstrapNodes(st, os.Getenv("MAZEDNS_CLUSTER_BOOTSTRAP_NODES"))
 	}
 
+	// Master: NetBird/reverse-DNS client enricher (turns client IPs into peer /
+	// hostnames in the UI). Configured live on the Settings page.
+	var enricher *netbird.Enricher
+	if !worker {
+		enricher = netbird.NewEnricher(func() netbird.Settings {
+			return netbird.LoadSettings(st, netbird.Settings{})
+		})
+		go enricher.Run(context.Background())
+	}
+
 	// Worker: replicate config from the master.
 	var agentCancel context.CancelFunc
 	if worker && cfg.Cluster.Enabled && cfg.Cluster.MasterURL != "" && cfg.Cluster.NodeKey != "" {
@@ -342,6 +353,9 @@ func main() {
 		apiSrv = api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
 		if clsWorker != nil {
 			apiSrv.SetClassifierStatus(clsWorker)
+		}
+		if enricher != nil {
+			apiSrv.SetEnricher(enricher)
 		}
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)

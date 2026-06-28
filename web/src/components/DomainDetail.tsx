@@ -1,43 +1,32 @@
 import { useEffect, useState } from 'react'
-import { api, type Classification, type WhoisInfo } from '../api'
+import { api, type Classification, type DomainClient, type WhoisInfo } from '../api'
 import Modal from './Modal'
 import Spinner from './Spinner'
 
 const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
 const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'other' ? 'allow' : 'info')
 const fmtDate = (s: string) => (s ? new Date(s).toLocaleDateString() : '—')
+const fmtTime = (ms: number) => (ms ? new Date(ms).toLocaleString() : '—')
 
-// DomainDetail shows everything known about one classified domain: the model's
-// verdict plus live WHOIS/RDAP registration data, with the review actions.
-// A single contribution row in the score breakdown. dir: 'up' raises suspicion
-// (red), 'down' lowers it / overrides (green), '' is neutral/informational.
-function Signal({ label, value, dir = '' }: { label: string; value: string; dir?: 'up' | 'down' | '' }) {
-  const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '•'
-  return (
-    <div className={`signal ${dir}`}>
-      <span className="signal-arrow">{arrow}</span>
-      <span className="signal-label">{label}</span>
-      <span className="signal-value">{value}</span>
-    </div>
-  )
-}
+// scoreClass colours the legitimacy number: high = safe (green), low = risky (red).
+const scoreClass = (n: number) => (n >= 70 ? 'allow' : n >= 50 ? 'info' : 'blocked')
 
+// DomainDetail shows everything known about one classified domain: the legitimacy
+// scorecard (start 100, deduct per risk factor), live WHOIS/RDAP data, the clients
+// that queried it, and the review actions.
 export default function DomainDetail({
   c,
-  threatCount,
-  trustedCount,
   onClose,
   onAction,
 }: {
   c: Classification
-  threatCount: number
-  trustedCount: number
   onClose: () => void
   onAction: (domain: string, decision: 'approve' | 'reject' | 'dismiss') => void
 }) {
   const [whois, setWhois] = useState<WhoisInfo | null>(null)
   const [whoisErr, setWhoisErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [clients, setClients] = useState<DomainClient[] | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -46,6 +35,10 @@ export default function DomainDetail({
       .then((r) => (r.ok && r.whois ? setWhois(r.whois) : setWhoisErr(r.error || 'unavailable')))
       .catch((e) => setWhoisErr(e.message))
       .finally(() => setLoading(false))
+    api
+      .domainClients(c.domain)
+      .then((r) => setClients(r.clients))
+      .catch(() => setClients([]))
   }, [c.domain])
 
   const blocked = c.status === 'auto' || c.status === 'approved'
@@ -53,6 +46,11 @@ export default function DomainDetail({
     onAction(c.domain, d)
     onClose()
   }
+
+  // The legitimacy score and its factor breakdown come from the backend; fall
+  // back gracefully for old verdicts that predate scoring.
+  const score = typeof c.score === 'number' ? c.score : 100
+  const factors = c.factors || []
 
   return (
     <Modal title={c.domain} onClose={onClose}>
@@ -63,62 +61,84 @@ export default function DomainDetail({
           {c.threat && <span className="badge blocked" style={{ marginLeft: 6 }}>🛡 threat</span>}
           {c.trusted && <span className="badge allow" style={{ marginLeft: 6 }}>✓ trusted</span>}
         </span>
-        <span className="muted">Confidence</span>
-        <span>{Math.round((c.confidence || 0) * 100)}%</span>
-        <span className="muted">Status</span>
-        <span>{blocked ? 'blocked' : c.status === 'rejected' ? 'allowed' : c.status}</span>
+        <span className="muted">Legitimacy</span>
+        <span>
+          <span className={`badge ${scoreClass(score)}`}>{score}% legitimate</span>
+          <span className="muted" style={{ marginLeft: 8 }}>
+            {blocked ? 'blocked' : c.status === 'rejected' ? 'allowed' : c.status}
+          </span>
+        </span>
         <span className="muted">Model</span>
         <span>{c.model || '—'}</span>
-        <span className="muted">Reason</span>
+        <span className="muted">Summary</span>
         <span>{c.reason || '—'}</span>
       </div>
 
-      <h4>Score breakdown — what drove the verdict</h4>
+      <h4>Legitimacy scorecard</h4>
       <p className="muted" style={{ textAlign: 'left' }}>
-        Signals are gathered first and fed to the model; the model then predicts; finally the deterministic signals can
-        override it.
+        Every domain starts <strong>100% legitimate</strong>. Each risk factor below — weighed the way a SOC analyst
+        would — deducts from the score. The model's own read is just one (bounded) factor, so it can't single-handedly
+        sink a legitimate domain. Below {/* blockThreshold */}50% it becomes a block candidate.
       </p>
-      <div className="signals">
-        {/* 1. Deterministic signals (inputs, and able to override the model). */}
-        <Signal
-          label={`Threat intel (${threatCount.toLocaleString()} domains)`}
-          value={c.threat ? 'Listed → forced malicious, score floored to ≥97%' : 'Not on any feed'}
-          dir={c.threat ? 'up' : ''}
-        />
-        <Signal
-          label="Trusted (allowlist / nameserver infrastructure)"
-          value={
-            c.trusted
-              ? 'Trusted → never blocked (overrides the model — see Ownership below)'
-              : `Not on the trusted list (${trustedCount.toLocaleString()} domains)`
-          }
-          dir={c.trusted ? 'down' : ''}
-        />
-        {whois && whois.age_days > 0 ? (
-          <Signal
-            label="Domain age (WHOIS)"
-            value={whois.age_days < 90 ? `${whois.age_days} days — very new, suspicious` : `${whois.age_days} days — established (not auto-blocked on a model-only verdict)`}
-            dir={whois.age_days < 90 ? 'up' : 'down'}
-          />
-        ) : (
-          <Signal label="Domain age (WHOIS)" value={loading ? 'looking up…' : 'unknown'} />
-        )}
-        {whois && (whois.registrant || whois.nameservers?.length > 0) && (
-          <Signal
-            label="Ownership (WHOIS)"
-            value={whois.registrant ? `registrant: ${whois.registrant}` : `nameservers: ${(whois.nameservers || []).slice(0, 3).join(', ')}`}
-            dir={c.trusted ? 'down' : ''}
-          />
-        )}
-        {/* 2. The model's own prediction (made with the signals in hand). */}
-        <Signal label="Model prediction" value={`${c.category} @ ${Math.round((c.confidence || 0) * 100)}%`} />
-        {/* 3. The resulting decision after overrides. */}
-        <Signal
-          label="Final verdict"
-          value={`${blocked ? 'blocked' : c.status === 'rejected' ? 'allowed' : c.status} @ ${Math.round((c.confidence || 0) * 100)}%`}
-          dir={blocked ? 'up' : 'down'}
-        />
+      <div className="scorecard">
+        <div className="score-row base">
+          <span className="score-label">Starting score</span>
+          <span className="score-detail">every domain is presumed legitimate</span>
+          <span className="score-delta">100</span>
+        </div>
+        {factors.map((f, i) => (
+          <div key={i} className={`score-row ${f.delta < 0 ? 'risk' : f.delta > 0 ? 'up' : 'neutral'}`}>
+            <span className="score-label">{f.label}</span>
+            <span className="score-detail">{f.detail}</span>
+            <span className="score-delta">{f.delta === 0 ? '—' : f.delta > 0 ? `+${f.delta}` : f.delta}</span>
+          </div>
+        ))}
+        <div className={`score-row total ${scoreClass(score)}`}>
+          <span className="score-label">Final legitimacy</span>
+          <span className="score-detail">{score < 50 ? 'block candidate' : 'allowed'}</span>
+          <span className="score-delta">{score}</span>
+        </div>
       </div>
+
+      <h4>Clients querying this domain</h4>
+      {clients === null ? (
+        <Spinner label="Loading…" />
+      ) : clients.length === 0 ? (
+        <p className="muted" style={{ textAlign: 'left' }}>No queries for this domain in the retained logs.</p>
+      ) : (
+        <table className="table compact">
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Queries</th>
+              <th>Blocked</th>
+              <th>Last seen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {clients.map((cl) => (
+              <tr key={cl.client}>
+                <td>
+                  {cl.name ? (
+                    <>
+                      <strong>{cl.name}</strong>{' '}
+                      <span className="muted">
+                        {cl.client}
+                        {cl.source && ` · ${cl.source}`}
+                      </span>
+                    </>
+                  ) : (
+                    cl.client
+                  )}
+                </td>
+                <td>{cl.count.toLocaleString()}</td>
+                <td>{cl.blocked > 0 ? <span className="badge blocked">{cl.blocked}</span> : '—'}</td>
+                <td className="muted">{fmtTime(cl.last_seen)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       <h4>Registration (WHOIS / RDAP)</h4>
       {loading ? (

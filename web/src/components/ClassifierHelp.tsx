@@ -19,50 +19,59 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="How AI classification &amp; scoring works" onClose={onClose}>
       <p className="muted" style={{ textAlign: 'left' }}>
-        For every <em>new registered domain</em> your network queries, two public lists are looked up first and fed
-        into the model, so its category and reasoning are informed by them. The model then decides, a couple of safety
-        rails act as a backstop, and your enforcement mode decides what actually happens. Nothing runs on the DNS hot
-        path — classification is asynchronous, so resolution stays fast.
+        Every <em>new registered domain</em> your network queries is scored like a SOC analyst would: it{' '}
+        <strong>starts at 100% legitimate</strong>, and each risk factor deducts from that score. The local model's read
+        is just <em>one</em> of those factors (and a bounded one), so a confidently-wrong model can no longer
+        single-handedly block a legitimate site. Nothing runs on the DNS hot path — scoring is asynchronous, so
+        resolution stays fast.
       </p>
 
-      <h4>The scoring flow</h4>
+      <h4>How the score is built</h4>
       <div className="flow">
-        <Step>A new registered domain is seen in a query</Step>
-        <Arrow />
         <Step tone="info">
-          Look up deterministic <strong>signals</strong> — is it on the <strong>trusted</strong> list (popular domains)
-          and/or the <strong>threat-intel</strong> list (abuse.ch)?
+          Start at <strong>100% legitimate</strong> — every domain is presumed innocent
+        </Step>
+        <Arrow />
+        <Step>Gather signals: trusted &amp; threat lists, WHOIS (age, ownership, nameservers), TLD &amp; name shape</Step>
+        <Arrow />
+        <Step tone="allow">
+          <strong>Trusted shortcut</strong> — on the popular-domains list, <em>or</em> served by a trusted entity's own
+          nameservers (e.g. <code>apple.com</code>) → score stays <strong>100</strong>. Nameservers can't be faked, so
+          this is the strongest false-positive guard, and it overrides everything below.
+        </Step>
+        <Arrow />
+        <Step>Otherwise, deduct for each risk factor:</Step>
+        <Branch tone="block" label="−70">
+          on a <strong>threat-intel</strong> feed (strong, but weighed with the rest — not an automatic block)
+        </Branch>
+        <Branch tone="block" label="−45…−6">
+          <strong>young domain</strong> (newer = bigger hit — phishing/malware is overwhelmingly young)
+        </Branch>
+        <Branch tone="block" label="−15">
+          <strong>risky TLD</strong> (TLDs with disproportionate abuse)
+        </Branch>
+        <Branch tone="block" label="−8…−20">
+          <strong>look-alike name shape</strong> (punycode/homograph, random/DGA, digit- or hyphen-heavy)
+        </Branch>
+        <Branch tone="block" label="−0…−50">
+          <strong>model assessment</strong> — scaled by its confidence, but capped so it can't sink a domain alone
+        </Branch>
+        <Arrow />
+        <Step tone="allow">
+          <strong>Established floor</strong> — a &gt;2-year-old domain that isn't on a threat feed can't be pushed into
+          block range by soft signals alone
         </Step>
         <Arrow />
         <Step tone="mode">
-          The local model classifies it <strong>with those signals in hand</strong> → category + confidence
+          Block candidate when legitimacy <strong>&lt; 50%</strong> AND there's a real threat indicator (model security
+          category or a threat-feed hit) — so a merely <em>young</em> legit site is never blocked on structure alone
         </Step>
-        <Arrow />
-        <Step>Safety rails (backstop — a small model can still err, even with the hints)</Step>
-        <Branch tone="block" label="threat">
-          On a threat feed → force <strong>malicious</strong>, score <strong>≥97%</strong> — even if the model disagreed.
-        </Branch>
-        <Branch tone="allow" label="trusted">
-          On the trusted list, <strong>or nameservers on a trusted domain</strong> (e.g. <code>apple.com</code>) →{' '}
-          <strong>never blocked</strong>. Nameservers can't be faked, so this is the strongest false-positive guard.
-        </Branch>
-        <Branch tone="allow" label="established">
-          Old/established domain (&gt;2 years) → <strong>not auto-blocked</strong> on a model-only verdict (sent to
-          review) — phishing/malware is overwhelmingly young.
-        </Branch>
-        <Arrow />
-        <Step>Is it a blocking verdict? (a security category, and not trusted)</Step>
-        <Branch tone="info" label="no">
-          Recorded as <strong>content</strong> (social, streaming, …) for visibility — never blocked.
-        </Branch>
-        <Arrow />
-        <Step tone="mode">Your enforcement mode decides the outcome</Step>
         <div className="flow-outcomes">
           <div className="flow-box block">
-            <strong>Auto-block</strong> → blocked immediately
+            <strong>&lt; 35%</strong> + auto-block mode → blocked immediately
           </div>
           <div className="flow-box suggest">
-            <strong>Suggest</strong> → waits in “suggested” for your approval
+            <strong>&lt; 50%</strong> → waits in “suggested” for your approval
           </div>
         </div>
       </div>
@@ -70,20 +79,20 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
       <h4>What the numbers &amp; signals mean</h4>
       <ul className="help-list">
         <li>
-          <strong>Confidence</strong> — how sure the model is (it already sees the threat/trusted signals). The safety
-          rails still apply: a threat match floors it at ≥97%, and a trusted domain is never blocked regardless.
+          <strong>Legitimacy</strong> — the 0–100% score. 100 = presumed-innocent; the breakdown in each domain's detail
+          view shows exactly which factors dropped it. Below 50% (with a threat indicator) it's a block candidate.
         </li>
         <li>
-          <strong>🛡 threat</strong> — the domain is on a known-malware feed. Strong signal: it corroborates a malicious
-          verdict and catches domains the model alone would have missed.
+          <strong>🛡 threat</strong> — on a known-malware/phishing feed. A heavy deduction that also catches domains the
+          model alone would have missed — but it's weighed against age and trust, not taken as an absolute rule.
         </li>
         <li>
-          <strong>✓ trusted</strong> — the domain is a well-known legitimate site. It is never blocked, which is how
-          false positives are kept down. If a domain is on <em>both</em> lists, the threat list wins.
+          <strong>✓ trusted</strong> — a well-known legitimate site (or on trusted infrastructure). Scores 100 and is
+          never blocked — this is the main false-positive guard, and it wins over a threat-list hit.
         </li>
         <li>
-          <strong>Category</strong> — security categories (red) are block candidates; content categories (blue) are
-          labels only; <code>other</code> is legitimate-but-unclassified.
+          <strong>Category</strong> — security categories (red) can drive a block; content categories (blue) are labels
+          only; <code>other</code> is legitimate-but-unclassified.
         </li>
       </ul>
 

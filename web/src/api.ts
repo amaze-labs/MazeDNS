@@ -73,17 +73,40 @@ export interface AuthInfo {
   classifier_enabled: boolean
 }
 
+export interface ScoreFactor {
+  label: string
+  detail: string
+  delta: number // change to legitimacy (negative = risk, 0 = neutral)
+}
+
 export interface Classification {
   domain: string
   category: string
   block: boolean
   status: string // suggested|approved|rejected|auto|clean
   confidence: number
+  score: number // legitimacy 0-100 (100 = fully legit, low = risky)
+  factors?: ScoreFactor[]
   reason: string
   model: string
   trusted: boolean
   threat: boolean
   updated_at: number
+}
+
+export interface DomainClient {
+  client: string
+  name: string // enriched display name (NetBird peer / reverse-DNS)
+  source: string // "netbird" | "rdns" | ""
+  count: number
+  blocked: number
+  last_seen: number
+}
+
+export interface NetbirdSettings {
+  enabled: boolean
+  api_url: string
+  token: string
 }
 
 export interface ClassifierSettings {
@@ -418,6 +441,20 @@ export const api = {
   whois: (domain: string) =>
     fetch(`/api/classifier/whois?domain=${encodeURIComponent(domain)}`).then(
       j<{ ok: boolean; error?: string; domain?: string; whois?: WhoisInfo }>,
+    ),
+  domainClients: (domain: string) =>
+    fetch(`/api/classifier/clients?domain=${encodeURIComponent(domain)}`).then(
+      j<{ domain: string; clients: DomainClient[] }>,
+    ),
+
+  // NetBird client-identity integration
+  netbird: () =>
+    fetch('/api/netbird').then(j<{ settings: NetbirdSettings; has_token: boolean; peer_count: number }>),
+  saveNetbird: (s: NetbirdSettings) =>
+    fetch('/api/netbird', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<NetbirdSettings>),
+  testNetbird: (s: NetbirdSettings) =>
+    fetch('/api/netbird/test', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(s) }).then(
+      j<{ ok: boolean; error?: string; peer_count?: number }>,
     ),
 
   // cluster

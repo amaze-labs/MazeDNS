@@ -1,0 +1,240 @@
+// Package netbird enriches a client IP with a human-friendly identity. When the
+// NetBird integration is enabled it maps the IP to its NetBird peer (name +
+// hostname) via the NetBird REST API; otherwise (and as a fallback) it does a
+// reverse-DNS (PTR) lookup. This is what turns a bare "100.x.y.z" in the query
+// log into "alice-laptop" in the UI.
+package netbird
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/IPMaze/MazeDNS/internal/store"
+)
+
+// SettingsKey is the app_meta key under which the NetBird settings are persisted
+// (configured on the Settings page, not via env vars).
+const SettingsKey = "netbird_settings"
+
+// Settings is the UI-editable NetBird configuration.
+type Settings struct {
+	Enabled bool   `json:"enabled"`
+	APIURL  string `json:"api_url"` // e.g. https://api.netbird.io (or a self-hosted management URL)
+	Token   string `json:"token"`   // NetBird PAT (Authorization: Token <token>)
+}
+
+func (s Settings) baseURL() string { return strings.TrimRight(strings.TrimSpace(s.APIURL), "/") }
+
+// LoadSettings reads the persisted NetBird settings (def when unset / unparseable).
+func LoadSettings(st *store.Store, def Settings) Settings {
+	raw, err := st.GetMeta(SettingsKey)
+	if err != nil || raw == "" {
+		return def
+	}
+	var s Settings
+	if json.Unmarshal([]byte(raw), &s) != nil {
+		return def
+	}
+	return s
+}
+
+// SaveSettings persists the NetBird settings.
+func SaveSettings(st *store.Store, s Settings) error {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return st.SetMeta(SettingsKey, string(b))
+}
+
+// Identity is the resolved name for a client IP.
+type Identity struct {
+	Name   string `json:"name"`   // display name (peer name or PTR hostname)
+	Source string `json:"source"` // "netbird" | "rdns" | ""
+}
+
+// peer is the subset of a NetBird API peer object we use.
+type peer struct {
+	IP       string `json:"ip"`
+	Name     string `json:"name"`
+	DNSLabel string `json:"dns_label"`
+	Hostname string `json:"hostname"`
+}
+
+// Enricher holds the live NetBird peer map (refreshed in the background) and the
+// reverse-DNS cache, both keyed by client IP.
+type Enricher struct {
+	get func() Settings
+
+	mu    sync.RWMutex
+	peers map[string]Identity // ip -> netbird identity
+
+	rdnsMu sync.Mutex
+	rdns   map[string]rdnsEntry // ip -> cached PTR lookup
+}
+
+type rdnsEntry struct {
+	name string
+	exp  time.Time
+}
+
+// NewEnricher builds an enricher driven by the live settings getter.
+func NewEnricher(get func() Settings) *Enricher {
+	return &Enricher{get: get, peers: map[string]Identity{}, rdns: map[string]rdnsEntry{}}
+}
+
+// Run refreshes the NetBird peer map periodically until ctx is cancelled. It is a
+// no-op (clearing the map) while the integration is disabled.
+func (e *Enricher) Run(ctx context.Context) {
+	t := time.NewTicker(2 * time.Minute)
+	defer t.Stop()
+	e.refresh(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			e.refresh(ctx)
+		}
+	}
+}
+
+func (e *Enricher) refresh(ctx context.Context) {
+	s := e.get()
+	if !s.Enabled || s.baseURL() == "" || s.Token == "" {
+		e.mu.Lock()
+		e.peers = map[string]Identity{}
+		e.mu.Unlock()
+		return
+	}
+	peers, err := fetchPeers(ctx, s)
+	if err != nil {
+		return // keep the previous map on a transient error
+	}
+	m := make(map[string]Identity, len(peers))
+	for _, p := range peers {
+		if p.IP == "" {
+			continue
+		}
+		name := firstNonEmpty(p.Name, p.Hostname, p.DNSLabel)
+		m[p.IP] = Identity{Name: name, Source: "netbird"}
+	}
+	e.mu.Lock()
+	e.peers = m
+	e.mu.Unlock()
+}
+
+// Lookup resolves a client IP to an identity: a NetBird peer if known, otherwise
+// a (cached) reverse-DNS hostname. Returns a zero Identity if nothing is found.
+func (e *Enricher) Lookup(ctx context.Context, ip string) Identity {
+	ip = clientIP(ip)
+	if ip == "" {
+		return Identity{}
+	}
+	e.mu.RLock()
+	id, ok := e.peers[ip]
+	e.mu.RUnlock()
+	if ok && id.Name != "" {
+		return id
+	}
+	if name := e.reverseDNS(ctx, ip); name != "" {
+		return Identity{Name: name, Source: "rdns"}
+	}
+	return Identity{}
+}
+
+func (e *Enricher) reverseDNS(ctx context.Context, ip string) string {
+	now := time.Now()
+	e.rdnsMu.Lock()
+	if c, ok := e.rdns[ip]; ok && now.Before(c.exp) {
+		e.rdnsMu.Unlock()
+		return c.name
+	}
+	e.rdnsMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	name := ""
+	if names, err := net.DefaultResolver.LookupAddr(ctx, ip); err == nil && len(names) > 0 {
+		name = strings.TrimSuffix(names[0], ".")
+	}
+	ttl := time.Hour
+	if name == "" {
+		ttl = 10 * time.Minute // retry sooner when there's no PTR
+	}
+	e.rdnsMu.Lock()
+	if len(e.rdns) > 20000 {
+		e.rdns = map[string]rdnsEntry{}
+	}
+	e.rdns[ip] = rdnsEntry{name: name, exp: now.Add(ttl)}
+	e.rdnsMu.Unlock()
+	return name
+}
+
+// PeerCount reports how many NetBird peers are currently mapped (for the UI / test).
+func (e *Enricher) PeerCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.peers)
+}
+
+// FetchPeerCount validates settings by hitting the API once, returning the peer
+// count (used by the Settings "Test connection" button).
+func FetchPeerCount(ctx context.Context, s Settings) (int, error) {
+	if s.baseURL() == "" || s.Token == "" {
+		return 0, fmt.Errorf("API URL and token are required")
+	}
+	peers, err := fetchPeers(ctx, s)
+	if err != nil {
+		return 0, err
+	}
+	return len(peers), nil
+}
+
+func fetchPeers(ctx context.Context, s Settings) ([]peer, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL()+"/api/peers", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Token "+strings.TrimSpace(s.Token))
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("netbird: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var peers []peer
+	if err := json.Unmarshal(body, &peers); err != nil {
+		return nil, fmt.Errorf("netbird: bad response: %w", err)
+	}
+	return peers, nil
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s = strings.TrimSpace(s); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// clientIP strips a :port if present (query-log clients may be "ip:port").
+func clientIP(s string) string {
+	s = strings.TrimSpace(s)
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		return host
+	}
+	return s
+}

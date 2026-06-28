@@ -20,6 +20,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
+	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/ruleimport"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -45,6 +46,7 @@ type Server struct {
 	statsCache          *ttlCache
 	classifierAvailable bool // master only — classifier endpoints/tab are offered
 	cls                 classifierStatus
+	enricher            *netbird.Enricher
 }
 
 // classifierStatus exposes the classifier worker's runtime state to the API
@@ -59,6 +61,9 @@ type classifierStatus interface {
 
 // SetClassifierStatus wires the running classifier worker into the API.
 func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
+
+// SetEnricher wires the running NetBird/reverse-DNS client enricher into the API.
+func (s *Server) SetEnricher(e *netbird.Enricher) { s.enricher = e }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
 // served; in master mode the control-plane API and web UI are mounted, plus the
@@ -119,6 +124,10 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("DELETE /api/classifications", s.requireRole(roleAdmin, s.clearClassifications))
 		mux.HandleFunc("POST /api/classifications/decision", s.requireRole(roleAdmin, s.decideClassification))
 		mux.HandleFunc("GET /api/classifier/whois", s.requireRole(roleReadonly, s.getWhois))
+		mux.HandleFunc("GET /api/classifier/clients", s.requireRole(roleReadonly, s.getDomainClients))
+		mux.HandleFunc("GET /api/netbird", s.requireRole(roleReadonly, s.getNetbird))
+		mux.HandleFunc("PUT /api/netbird", s.requireRole(roleAdmin, s.putNetbird))
+		mux.HandleFunc("POST /api/netbird/test", s.requireRole(roleAdmin, s.testNetbird))
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))

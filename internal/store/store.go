@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS classifications (
 	block INTEGER NOT NULL DEFAULT 0,           -- model recommends blocking
 	status TEXT NOT NULL DEFAULT 'suggested',   -- suggested|approved|rejected|auto|clean
 	confidence REAL NOT NULL DEFAULT 0,
+	score INTEGER NOT NULL DEFAULT 100,         -- legitimacy 0-100 (100 = fully legit)
+	factors TEXT NOT NULL DEFAULT '[]',         -- score breakdown (JSON array)
 	reason TEXT NOT NULL DEFAULT '',
 	model TEXT NOT NULL DEFAULT '',
 	trusted INTEGER NOT NULL DEFAULT 0,
@@ -190,6 +192,8 @@ CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status)
 		`ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE classifications ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE classifications ADD COLUMN threat INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE classifications ADD COLUMN score INTEGER NOT NULL DEFAULT 100`,
+		`ALTER TABLE classifications ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

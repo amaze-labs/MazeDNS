@@ -2,22 +2,36 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
 
 // Classification is an AI verdict for a registered domain.
 type Classification struct {
-	Domain     string  `json:"domain"`
-	Category   string  `json:"category"` // ads|trackers|malware|phishing|clean|other
-	Block      bool    `json:"block"`
-	Status     string  `json:"status"` // suggested|approved|rejected|auto|clean
-	Confidence float64 `json:"confidence"`
-	Reason     string  `json:"reason"`
-	Model      string  `json:"model"`
-	Trusted    bool    `json:"trusted"` // on the trusted list — not blocked
-	Threat     bool    `json:"threat"`  // corroborated by a threat-intel list
-	UpdatedAt  int64   `json:"updated_at"`
+	Domain     string          `json:"domain"`
+	Category   string          `json:"category"` // ads|trackers|malware|phishing|clean|other
+	Block      bool            `json:"block"`
+	Status     string          `json:"status"` // suggested|approved|rejected|auto|clean
+	Confidence float64         `json:"confidence"`
+	Score      int             `json:"score"`             // legitimacy 0–100 (100 = fully legit; low = risky)
+	Factors    json.RawMessage `json:"factors,omitempty"` // the score breakdown ([]classifier.Factor as JSON)
+	Reason     string          `json:"reason"`
+	Model      string          `json:"model"`
+	Trusted    bool            `json:"trusted"` // on the trusted list — not blocked
+	Threat     bool            `json:"threat"`  // corroborated by a threat-intel list
+	UpdatedAt  int64           `json:"updated_at"`
+}
+
+// DomainClient is one client that queried a (typically flagged) domain, with how
+// often and when it was last seen — so an operator can see who's affected.
+type DomainClient struct {
+	Client   string `json:"client"`
+	Name     string `json:"name"`   // enriched display name (Netbird peer / reverse-DNS), filled by the API
+	Source   string `json:"source"` // where Name came from ("netbird" | "rdns" | "")
+	Count    int64  `json:"count"`
+	Blocked  int64  `json:"blocked"`
+	LastSeen int64  `json:"last_seen"`
 }
 
 // Enforced classification statuses block at the resolver; the rest are
@@ -62,11 +76,15 @@ func (s *Store) IsClassified(domain string) (bool, error) {
 // InsertClassification stores a new verdict, leaving any existing row (and its
 // human decision) untouched. Returns whether a row was inserted.
 func (s *Store) InsertClassification(c Classification) (bool, error) {
+	factors := string(c.Factors)
+	if factors == "" {
+		factors = "[]"
+	}
 	res, err := s.db.Exec(
-		`INSERT INTO classifications(domain, category, block, status, confidence, reason, model, trusted, threat, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO classifications(domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(domain) DO NOTHING`,
-		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Reason, c.Model, boolToInt(c.Trusted), boolToInt(c.Threat), time.Now().UnixMilli())
+		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Score, factors, c.Reason, c.Model, boolToInt(c.Trusted), boolToInt(c.Threat), time.Now().UnixMilli())
 	if err != nil {
 		return false, err
 	}
@@ -109,7 +127,7 @@ func (s *Store) ListClassifications(status string, limit, offset int) ([]Classif
 	if offset < 0 {
 		offset = 0
 	}
-	q := `SELECT domain, category, block, status, confidence, reason, model, trusted, threat, updated_at
+	q := `SELECT domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, updated_at
 	      FROM classifications`
 	var args []any
 	if status != "" {
@@ -127,13 +145,47 @@ func (s *Store) ListClassifications(status string, limit, offset int) ([]Classif
 	for rows.Next() {
 		var c Classification
 		var block, trusted, threat int
-		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Reason, &c.Model, &trusted, &threat, &c.UpdatedAt); err != nil {
+		var factors string
+		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Score, &factors, &c.Reason, &c.Model, &trusted, &threat, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Block = block != 0
 		c.Trusted = trusted != 0
 		c.Threat = threat != 0
+		if factors != "" {
+			c.Factors = json.RawMessage(factors)
+		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ClientsForDomain returns the clients that queried a registered domain (or any
+// of its subdomains), most active first — so an operator can see who is reaching
+// a flagged domain. Names carry a trailing dot in the log, so match both forms.
+func (s *Store) ClientsForDomain(domain string, limit int) ([]DomainClient, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT client, COUNT(*) c, SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END), MAX(ts)
+		 FROM query_log
+		 WHERE name = ? OR name = ? OR name LIKE ? OR name LIKE ?
+		 GROUP BY client ORDER BY c DESC LIMIT ?`,
+		domain, domain+".", "%."+domain, "%."+domain+".", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DomainClient
+	for rows.Next() {
+		var dc DomainClient
+		var blocked sql.NullInt64
+		if err := rows.Scan(&dc.Client, &dc.Count, &blocked, &dc.LastSeen); err != nil {
+			return nil, err
+		}
+		dc.Blocked = blocked.Int64
+		out = append(out, dc)
 	}
 	return out, rows.Err()
 }

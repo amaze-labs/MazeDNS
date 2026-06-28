@@ -1,0 +1,217 @@
+package classifier
+
+import (
+	"fmt"
+	"math"
+	"strings"
+)
+
+// This file implements the legitimacy scoring system. Rather than trusting the
+// model's confidence as the verdict (a small local model hallucinates "phishing
+// @ 100%" against clear evidence), every domain STARTS fully legitimate (100)
+// and each risk factor — the way a SOC analyst would weigh them — deducts from
+// that score. The model's own read is just ONE bounded factor among the static
+// signals, so it can no longer single-handedly sink a legitimate domain.
+
+// Factor is one contribution to a domain's legitimacy score. Delta is added to
+// the running score: negative raises suspicion, zero is neutral/informational.
+// The ordered list of factors is exactly what the UI shows as "what dropped the
+// score".
+type Factor struct {
+	Label  string `json:"label"`
+	Detail string `json:"detail"`
+	Delta  int    `json:"delta"`
+}
+
+// Score is the outcome of the analysis: a 0–100 legitimacy value plus the
+// factors that produced it. A domain is a block candidate below blockThreshold.
+type Score struct {
+	Legitimacy int      `json:"legitimacy"`
+	Factors    []Factor `json:"factors"`
+}
+
+const (
+	blockThreshold   = 50  // legitimacy below this -> block (if there's a threat indicator)
+	autoThreshold    = 35  // ...and below this, confident enough to auto-block
+	establishedFloor = 55  // a non-threat established domain can't be pushed below this by soft signals
+	establishedDays  = 730 // ~2 years: "established"
+)
+
+// ScoreInput is everything the scorer weighs. The model's Verdict is computed
+// WITH the static signals (trusted/threat/whois) already in hand, then folded
+// back in here as one more (bounded) factor.
+type ScoreInput struct {
+	Domain      string
+	ListTrusted bool      // on the popular/trusted-domains allowlist
+	NSTrustedOn string    // registered domain of trusted authoritative nameservers, if any
+	Threat      bool      // on a threat-intel feed
+	ThreatLabel string    // which feed/source matched (for the breakdown)
+	Whois       WhoisInfo // registration data
+	Verdict     Verdict   // the model's assessment
+}
+
+// computeScore turns the signals into a legitimacy score + an auditable factor
+// breakdown.
+func computeScore(in ScoreInput) Score {
+	// Trusted is authoritative: a domain on the popularity allowlist — or served
+	// by a trusted entity's own nameservers (which can't be faked) — cannot be
+	// malicious. This is the strongest false-positive guard, so it short-circuits
+	// to a perfect score, overriding the model and even a threat-feed hit.
+	if in.ListTrusted || in.NSTrustedOn != "" {
+		detail := "on the trusted top-domains list — cannot be malicious"
+		if in.NSTrustedOn != "" && !in.ListTrusted {
+			detail = fmt.Sprintf("authoritative nameservers on trusted infrastructure (%s) — cannot be malicious", in.NSTrustedOn)
+		}
+		return Score{Legitimacy: 100, Factors: []Factor{{Label: "Trusted", Detail: detail, Delta: 0}}}
+	}
+
+	legit := 100
+	var fs []Factor
+	add := func(label, detail string, delta int) {
+		fs = append(fs, Factor{Label: label, Detail: detail, Delta: delta})
+		legit += delta
+	}
+	note := func(label, detail string) { fs = append(fs, Factor{Label: label, Detail: detail, Delta: 0}) }
+
+	// Threat intel — strong, but (per the user) not an absolute golden rule: it is
+	// weighed alongside age and trust, not taken alone.
+	if in.Threat {
+		src := in.ThreatLabel
+		if src == "" {
+			src = "a public threat-intel feed"
+		}
+		add("Threat intel", "listed on "+src, -70)
+	}
+
+	// Domain age — the single best phishing/malware indicator (they are young and
+	// ephemeral). Established domains pay nothing.
+	switch age := in.Whois.AgeDays; {
+	case age <= 0:
+		add("Domain age", "registration date unknown", -10)
+	case age < 30:
+		add("Domain age", fmt.Sprintf("registered %d days ago — very new", age), -45)
+	case age < 90:
+		add("Domain age", fmt.Sprintf("registered %d days ago — new", age), -28)
+	case age < 180:
+		add("Domain age", fmt.Sprintf("registered %d days ago", age), -15)
+	case age < 365:
+		add("Domain age", fmt.Sprintf("registered %d days ago", age), -6)
+	default:
+		note("Domain age", fmt.Sprintf("%d days old — established", age))
+	}
+
+	// Risky TLD — some TLDs are disproportionately abused for malware/phishing.
+	if tld, risky := riskyTLD(in.Domain); risky {
+		add("Risky TLD", "."+tld+" is frequently abused for phishing/malware", -15)
+	}
+
+	// Lexical structure — random-looking, very long, punycode (homograph) or
+	// hyphen/digit-heavy names are classic DGA / look-alike patterns.
+	for _, f := range lexicalFactors(in.Domain) {
+		add(f.Label, f.Detail, f.Delta)
+	}
+
+	// Model assessment — the LLM's own read, made WITH all the signals above in
+	// hand. It contributes (up to -50) but, by being one bounded factor, it can no
+	// longer by itself sink an otherwise-legitimate domain (the false-positive fix).
+	if in.Verdict.ShouldBlock() {
+		conf := in.Verdict.Confidence
+		if conf <= 0 {
+			conf = 0.5
+		}
+		add("Model assessment", fmt.Sprintf("%s (%.0f%% confident)", in.Verdict.Category, conf*100), -int(math.Round(conf*50)))
+	} else {
+		cat := in.Verdict.Category
+		if cat == "" {
+			cat = "other"
+		}
+		note("Model assessment", cat+" — not a threat category")
+	}
+
+	// Established-domain floor — phishing/malware is overwhelmingly young, so an
+	// old domain that is NOT on a threat feed can't be dragged into block range by
+	// soft signals (model + lexical) alone.
+	if in.Whois.AgeDays >= establishedDays && !in.Threat && legit < establishedFloor {
+		add("Established floor", fmt.Sprintf("%d-day-old domain — soft signals alone don't block it", in.Whois.AgeDays), establishedFloor-legit)
+	}
+
+	if legit < 0 {
+		legit = 0
+	} else if legit > 100 {
+		legit = 100
+	}
+	return Score{Legitimacy: legit, Factors: fs}
+}
+
+// riskyTLDs is a conservative list of TLDs with disproportionate abuse rates
+// (Spamhaus / Interisle "most abused TLDs"). Membership is a soft signal only.
+var riskyTLDs = map[string]bool{
+	"zip": true, "mov": true, "top": true, "xyz": true, "tk": true, "ml": true,
+	"ga": true, "cf": true, "gq": true, "work": true, "click": true, "link": true,
+	"loan": true, "men": true, "gdn": true, "icu": true, "cam": true, "buzz": true,
+	"rest": true, "fit": true, "cyou": true, "sbs": true, "quest": true, "country": true,
+	"kim": true, "monster": true, "bar": true, "casa": true, "cfd": true, "wang": true,
+}
+
+func riskyTLD(domain string) (string, bool) {
+	i := strings.LastIndexByte(domain, '.')
+	if i < 0 {
+		return "", false
+	}
+	tld := domain[i+1:]
+	return tld, riskyTLDs[tld]
+}
+
+// lexicalFactors inspects the registered domain's primary label for look-alike /
+// machine-generated patterns. Each is a soft (small) deduction.
+func lexicalFactors(domain string) []Factor {
+	label := domain
+	if i := strings.IndexByte(domain, '.'); i >= 0 {
+		label = domain[:i]
+	}
+	var fs []Factor
+	if strings.HasPrefix(label, "xn--") {
+		fs = append(fs, Factor{"Lexical: punycode", "internationalized name (xn--) — homograph/look-alike risk", -20})
+	}
+	if n := strings.Count(label, "-"); n >= 3 {
+		fs = append(fs, Factor{"Lexical: hyphens", fmt.Sprintf("%d hyphens — common in look-alike domains", n), -8})
+	}
+	digits := 0
+	for i := 0; i < len(label); i++ {
+		if label[i] >= '0' && label[i] <= '9' {
+			digits++
+		}
+	}
+	if len(label) > 0 && (digits >= 5 || float64(digits)/float64(len(label)) > 0.33) {
+		fs = append(fs, Factor{"Lexical: digits", "digit-heavy name — common in generated/abuse domains", -8})
+	}
+	if len(label) >= 25 {
+		fs = append(fs, Factor{"Lexical: length", fmt.Sprintf("%d-character name — unusually long", len(label)), -8})
+	}
+	if len(label) >= 12 && entropy(label) > 3.8 {
+		fs = append(fs, Factor{"Lexical: randomness", "high-entropy name — looks machine-generated (DGA)", -12})
+	}
+	return fs
+}
+
+// entropy is the Shannon entropy (bits/char) of a string — high values flag
+// random-looking names.
+func entropy(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var freq [256]float64
+	for i := 0; i < len(s); i++ {
+		freq[s[i]]++
+	}
+	n := float64(len(s))
+	var h float64
+	for _, c := range freq {
+		if c == 0 {
+			continue
+		}
+		p := c / n
+		h -= p * math.Log2(p)
+	}
+	return h
+}

@@ -237,6 +237,66 @@ tr:last-child td {
   color: var(--ok);
 }
 
+/* Legitimacy scorecard: start at 100, each factor deducts. */
+.scorecard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+.score-row {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) 1fr 52px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.score-row .score-label {
+  font-weight: 500;
+}
+.score-row .score-detail {
+  color: var(--muted);
+  font-size: 13px;
+}
+.score-row .score-delta {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.score-row.base {
+  border-style: dashed;
+}
+.score-row.risk .score-delta {
+  color: var(--danger);
+}
+.score-row.up .score-delta {
+  color: var(--ok);
+}
+.score-row.total {
+  margin-top: 4px;
+  border-width: 2px;
+  font-weight: 600;
+}
+.score-row.total.allow {
+  border-color: var(--ok);
+}
+.score-row.total.info {
+  border-color: var(--accent);
+}
+.score-row.total.blocked {
+  border-color: var(--danger);
+}
+
+/* Compact table used inside the domain-detail modal. */
+.table.compact th,
+.table.compact td {
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
 /* Domain detail modal: label / value grid */
 .dd-grid {
   display: grid;

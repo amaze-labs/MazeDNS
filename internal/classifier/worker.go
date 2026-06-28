@@ -2,8 +2,10 @@ package classifier
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -242,65 +244,49 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		slog.Warn("classify failed", "domain", domain, "err", err)
 		return
 	}
-	category, block, conf, reason := v.Category, v.ShouldBlock(), v.Confidence, v.Reason
 
-	// Deterministic overrides, in priority order:
-	//  1. known threat  -> always malicious,
-	//  2. trusted (list or nameserver infrastructure) -> never blocked,
-	//  3. established (old) domain -> never AUTO-blocked on a model-only verdict.
-	switch {
-	case threat:
-		conf = maxF(conf, 0.97)
-		if !block {
-			category, block = "malware", true
-			reason = "on threat list — flagged malicious (model missed it). " + reason
-		} else {
-			reason = "confirmed on threat list. " + reason
-		}
-	case trusted:
-		if block {
-			if nsTrustedOn != "" && !listTrusted {
-				reason = fmt.Sprintf("nameservers on trusted infrastructure (%s) — legitimate, not blocked. ", nsTrustedOn) + reason
-			} else {
-				reason = "on trusted list — not blocked. " + reason
-			}
-		}
-		block = false
-	}
+	// Score the domain: start at 100% legitimate and let every risk factor deduct
+	// (the model's read is just one bounded factor). This is what actually decides
+	// the verdict — not the model's raw confidence.
+	score := computeScore(ScoreInput{
+		Domain: domain, ListTrusted: listTrusted, NSTrustedOn: nsTrustedOn,
+		Threat: threat, Whois: whois, Verdict: v,
+	})
 
-	// Established-domain guard: phishing/malware is overwhelmingly young and
-	// ephemeral, so don't AUTO-block an old domain on a model-only verdict — route
-	// it to review instead.
-	forceReview := block && !threat && whois.AgeDays > 730
-	if forceReview {
-		reason = fmt.Sprintf("established domain (%d days old) — verify before blocking. ", whois.AgeDays) + reason
+	// A block requires an actual threat indicator (the model named a security
+	// category, or a threat feed matched) AND a low legitimacy score. So young /
+	// risky-TLD legitimate domains are NOT blocked on structure alone, and a
+	// trusted/established domain stays well above the threshold.
+	candidate := v.ShouldBlock() || threat
+	block := candidate && score.Legitimacy < blockThreshold
+
+	category := v.Category
+	if threat && !v.ShouldBlock() {
+		category = "malware" // on a threat feed but the model missed it
 	}
 
 	status := store.ClassClean
 	if block {
-		if mode == ModeAuto && !forceReview {
-			status = store.ClassAuto
+		if mode == ModeAuto && score.Legitimacy < autoThreshold {
+			status = store.ClassAuto // confidently malicious -> enforce now
 		} else {
-			status = store.ClassSuggested
+			status = store.ClassSuggested // borderline -> review
 		}
 	}
+
+	factors, _ := json.Marshal(score.Factors)
+	reason := fmt.Sprintf("legitimacy %d%%. %s", score.Legitimacy, strings.TrimSpace(v.Reason))
 	inserted, err := w.store.InsertClassification(store.Classification{
 		Domain: domain, Category: category, Block: block, Status: status,
-		Confidence: conf, Reason: reason, Model: s.Model, Trusted: trusted, Threat: threat,
+		Confidence: v.Confidence, Score: score.Legitimacy, Factors: factors,
+		Reason: reason, Model: s.Model, Trusted: trusted, Threat: threat,
 	})
 	if err != nil {
 		slog.Warn("store classification failed", "domain", domain, "err", err)
 		return
 	}
-	slog.Debug("classified", "domain", domain, "category", category, "status", status, "trusted", trusted, "threat", threat)
+	slog.Debug("classified", "domain", domain, "category", category, "status", status, "legitimacy", score.Legitimacy, "trusted", trusted, "threat", threat)
 	if inserted && status == store.ClassAuto && w.reload != nil {
 		_ = w.reload()
 	}
-}
-
-func maxF(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
 }

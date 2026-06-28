@@ -99,13 +99,7 @@ export default function Classifier() {
     <div>
       {showHelp && <ClassifierHelp onClose={() => setShowHelp(false)} />}
       {selected && (
-        <DomainDetail
-          c={selected}
-          threatCount={info?.threat_count ?? 0}
-          trustedCount={info?.trusted_count ?? 0}
-          onClose={() => setSelected(null)}
-          onAction={decide}
-        />
+        <DomainDetail c={selected} onClose={() => setSelected(null)} onAction={decide} />
       )}
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         AI classification {!info && <Spinner />}
@@ -217,7 +211,7 @@ export default function Classifier() {
           <tr>
             <th>Domain</th>
             <th>Category</th>
-            <th>Confidence</th>
+            <th>Legitimacy</th>
             <th></th>
           </tr>
         </thead>
@@ -236,7 +230,11 @@ export default function Classifier() {
                   {c.threat && <span className="badge blocked" title="On a threat-intel feed (abuse.ch)" style={{ marginLeft: 6 }}>🛡</span>}
                   {c.trusted && <span className="badge allow" title="On the trusted list" style={{ marginLeft: 6 }}>✓</span>}
                 </td>
-                <td className="cls-conf">{Math.round((c.confidence || 0) * 100)}%</td>
+                <td className="cls-conf">
+                  <span className={`badge ${typeof c.score === 'number' && c.score < 50 ? 'blocked' : c.score < 70 ? 'info' : 'allow'}`}>
+                    {typeof c.score === 'number' ? c.score : 100}%
+                  </span>
+                </td>
                 <td>
                   <div className="cls-actions">
                     {!blocked && (

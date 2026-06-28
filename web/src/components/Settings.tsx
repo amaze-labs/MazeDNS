@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Settings as S, type ForwardGroup, type ClassifierSettings, type ClassifierStatus } from '../api'
+import {
+  api,
+  type Settings as S,
+  type ForwardGroup,
+  type ClassifierSettings,
+  type ClassifierStatus,
+  type NetbirdSettings,
+} from '../api'
 import Spinner from './Spinner'
 
 const linesToList = (s: string) =>
@@ -26,6 +33,14 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [testing, setTesting] = useState(false)
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
+  // NetBird client-identity integration (separate endpoint).
+  const [nb, setNb] = useState<NetbirdSettings | null>(null)
+  const [nbInfo, setNbInfo] = useState<{ has_token: boolean; peer_count: number } | null>(null)
+  const [nbSaving, setNbSaving] = useState(false)
+  const [nbOk, setNbOk] = useState(false)
+  const [nbTesting, setNbTesting] = useState(false)
+  const [nbMsg, setNbMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
   const load = async () => {
     try {
       const cur = await api.settings()
@@ -42,6 +57,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setClsInfo(st)
       })
       .catch(() => setCls(null))
+    api
+      .netbird()
+      .then((r) => {
+        setNb(r.settings)
+        setNbInfo({ has_token: r.has_token, peer_count: r.peer_count })
+      })
+      .catch(() => setNb(null))
   }
   useEffect(() => {
     load()
@@ -79,6 +101,36 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setTestMsg({ ok: false, text: e.message })
     } finally {
       setTesting(false)
+    }
+  }
+
+  const saveNetbird = async () => {
+    if (!nb) return
+    setNbSaving(true)
+    setErr('')
+    setNbOk(false)
+    try {
+      const saved = await api.saveNetbird(nb)
+      setNb(saved)
+      setNbOk(true)
+    } catch (e: any) {
+      setErr(e.message)
+    } finally {
+      setNbSaving(false)
+    }
+  }
+
+  const testNetbird = async () => {
+    if (!nb) return
+    setNbTesting(true)
+    setNbMsg(null)
+    try {
+      const r = await api.testNetbird(nb)
+      setNbMsg(r.ok ? { ok: true, text: `Connected — ${r.peer_count} peers found.` } : { ok: false, text: r.error || 'Test failed.' })
+    } catch (e: any) {
+      setNbMsg({ ok: false, text: e.message })
+    } finally {
+      setNbTesting(false)
     }
   }
 
@@ -453,6 +505,55 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             <span className="hint">Review verdicts in the AI tab.</span>
           </div>
           {testMsg && <div className={testMsg.ok ? 'ok-msg' : 'error'}>{testMsg.text}</div>}
+        </section>
+      )}
+
+      {nb && (
+        <section className="settings-card">
+          <h3>NetBird client identity</h3>
+          <label className="muted">
+            Resolve client IPs to friendly names in the dashboard and the per-domain client list. When enabled, IPs are
+            matched to their NetBird peer (name + hostname) via the NetBird API; otherwise a reverse-DNS (PTR) lookup is
+            used as a fallback.
+            {nbInfo ? ` Currently mapping ${nbInfo.peer_count} peer(s).` : ''}
+          </label>
+          {nbOk && <div className="ok-msg">NetBird settings saved.</div>}
+          <div className="field">
+            <label className="toggle">
+              <input type="checkbox" checked={nb.enabled} onChange={(e) => setNb({ ...nb, enabled: e.target.checked })} />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Enable NetBird peer lookup</span>
+            </label>
+          </div>
+          <div className="field">
+            <label>NetBird API URL</label>
+            <input
+              value={nb.api_url}
+              onChange={(e) => setNb({ ...nb, api_url: e.target.value })}
+              placeholder="https://api.netbird.io"
+            />
+          </div>
+          <div className="field">
+            <label>API token (Personal Access Token)</label>
+            <input
+              type="password"
+              value={nb.token}
+              onChange={(e) => setNb({ ...nb, token: e.target.value })}
+              placeholder={nbInfo?.has_token ? '•••••••• (unchanged)' : 'nbp_…'}
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn primary" onClick={saveNetbird} disabled={nbSaving}>
+              {nbSaving ? 'Saving…' : 'Save NetBird'}
+            </button>
+            <button className="btn" onClick={testNetbird} disabled={nbTesting}>
+              {nbTesting ? <Spinner label="Testing…" /> : 'Test connection'}
+            </button>
+            <span className="hint">Reverse-DNS fallback works even without NetBird.</span>
+          </div>
+          {nbMsg && <div className={nbMsg.ok ? 'ok-msg' : 'error'}>{nbMsg.text}</div>}
         </section>
       )}
 

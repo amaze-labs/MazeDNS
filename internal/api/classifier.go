@@ -187,6 +187,34 @@ func (s *Server) getWhois(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "whois": info})
 }
 
+// getDomainClients lists the clients that queried a domain (and its subdomains),
+// enriched with a NetBird peer name / reverse-DNS hostname when available — so an
+// operator can see who is reaching a flagged domain.
+func (s *Server) getDomainClients(w http.ResponseWriter, r *http.Request) {
+	domain := classifier.RegisteredDomain(r.URL.Query().Get("domain"))
+	if domain == "" {
+		writeError(w, http.StatusBadRequest, "valid domain is required")
+		return
+	}
+	clients, err := s.store.ClientsForDomain(domain, 100)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.enricher != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		for i := range clients {
+			id := s.enricher.Lookup(ctx, clients[i].Client)
+			clients[i].Name, clients[i].Source = id.Name, id.Source
+		}
+	}
+	if clients == nil {
+		clients = []store.DomainClient{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"domain": domain, "clients": clients})
+}
+
 // decideClassification approves or rejects a verdict. Approving makes it block;
 // rejecting means it never blocks. Either way the policy is rebuilt (and the
 // config hash changes, so workers re-sync).

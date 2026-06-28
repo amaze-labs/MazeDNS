@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Settings as S, type ForwardGroup, type ClassifierSettings } from '../api'
+import { api, type Settings as S, type ForwardGroup, type ClassifierSettings, type ClassifierStatus } from '../api'
 import Spinner from './Spinner'
 
 const linesToList = (s: string) =>
@@ -20,6 +20,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
   // Classifier settings (separate endpoint; null until loaded / if unavailable).
   const [cls, setCls] = useState<ClassifierSettings | null>(null)
+  const [clsInfo, setClsInfo] = useState<ClassifierStatus | null>(null)
   const [clsSaving, setClsSaving] = useState(false)
   const [clsOk, setClsOk] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -34,7 +35,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     } catch (e: any) {
       setErr(e.message)
     }
-    api.classifier().then((st) => setCls(st.settings)).catch(() => setCls(null))
+    api
+      .classifier()
+      .then((st) => {
+        setCls(st.settings)
+        setClsInfo(st)
+      })
+      .catch(() => setCls(null))
   }
   useEffect(() => {
     load()
@@ -383,30 +390,42 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             />
           </div>
 
-          <h4 style={{ margin: '14px 0 4px' }}>Threat-intelligence list (catch malicious domains)</h4>
+          <h4 style={{ margin: '14px 0 4px' }}>Threat-intelligence feeds (catch malicious domains)</h4>
           <p className="muted" style={{ textAlign: 'left' }}>
-            Domains on a known-malware list corroborate a malicious verdict (and are flagged even if the model missed
-            them).
+            Domains on any enabled feed corroborate a malicious verdict (and are flagged even if the model missed them).
+            Enable as many as you like — they’re merged. More feeds = broader coverage (and bigger downloads on the
+            master).
           </p>
+          {(clsInfo?.threat_feed_catalog ?? []).map((f) => (
+            <div className="field" key={f.key}>
+              <label className="toggle">
+                <input
+                  type="checkbox"
+                  checked={(cls.threat_feeds ?? []).includes(f.key)}
+                  onChange={(e) => {
+                    const cur = cls.threat_feeds ?? []
+                    setCls({
+                      ...cls,
+                      threat_feeds: e.target.checked ? [...cur, f.key] : cur.filter((k) => k !== f.key),
+                    })
+                  }}
+                />
+                <span className="track">
+                  <span className="thumb" />
+                </span>
+                <span className="toggle-label">
+                  {f.name} — {f.desc}
+                </span>
+              </label>
+            </div>
+          ))}
           <div className="field">
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={!cls.threat_disable_default}
-                onChange={(e) => setCls({ ...cls, threat_disable_default: !e.target.checked })}
-              />
-              <span className="track">
-                <span className="thumb" />
-              </span>
-              <span className="toggle-label">Use built-in public list (abuse.ch URLhaus)</span>
-            </label>
-          </div>
-          <div className="field">
-            <label>Additional custom threat list (optional) — your own URL / file path</label>
-            <input
+            <label>Additional custom threat lists (optional) — one URL / file path per line</label>
+            <textarea
+              rows={2}
               value={cls.threat_list_url}
               onChange={(e) => setCls({ ...cls, threat_list_url: e.target.value })}
-              placeholder="https://… or /path/to/threatlist.txt"
+              placeholder="https://example.com/malware-domains.txt&#10;/path/to/threatlist.txt"
             />
           </div>
           <div className="field">

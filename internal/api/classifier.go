@@ -33,11 +33,12 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		threatCount = s.cls.ThreatCount()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings":        cfg,
-		"counts":          counts,
-		"category_counts": categoryCounts,
-		"trusted_count":   trustedCount,
-		"threat_count":    threatCount,
+		"settings":            cfg,
+		"counts":              counts,
+		"category_counts":     categoryCounts,
+		"trusted_count":       trustedCount,
+		"threat_count":        threatCount,
+		"threat_feed_catalog": classifier.ThreatFeedCatalog(),
 	})
 }
 

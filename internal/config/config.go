@@ -188,10 +188,12 @@ type Classifier struct {
 	TrustedListURL        string `yaml:"trusted_list_url"`
 	TrustedTopN           int    `yaml:"trusted_top_n"`
 	TrustedDisableDefault bool   `yaml:"trusted_disable_default"`
-	// Threat list (corroborates malicious verdicts): built-in public default
-	// unless ThreatDisableDefault; ThreatListURL adds a custom source.
-	ThreatListURL        string `yaml:"threat_list_url"`
-	ThreatDisableDefault bool   `yaml:"threat_disable_default"`
+	// Threat lists (corroborate malicious verdicts): ThreatFeeds enables built-in
+	// public feeds (urlhaus, threatfox, phishing_army, hagezi_tif, …);
+	// ThreatListURL adds custom sources (one per line / comma-separated).
+	ThreatFeeds          []string `yaml:"threat_feeds"`
+	ThreatListURL        string   `yaml:"threat_list_url"`
+	ThreatDisableDefault bool     `yaml:"threat_disable_default"`
 	// WhoisEnabled enriches classifications with RDAP/WHOIS registration data
 	// (domain age etc.) as a signal for the model.
 	WhoisEnabled bool `yaml:"whois_enabled"`

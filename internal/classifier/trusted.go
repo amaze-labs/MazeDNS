@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -125,6 +126,12 @@ func parseTrusted(r io.Reader, topN int) (*TrustedSet, error) {
 		for _, tok := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
 			if tok == "" || net.ParseIP(tok) != nil {
 				continue // skip rank numbers, IPs, etc.
+			}
+			// URL feeds (e.g. OpenPhish) list full URLs — extract the host.
+			if strings.Contains(tok, "://") {
+				if u, err := url.Parse(tok); err == nil && u.Hostname() != "" {
+					tok = u.Hostname()
+				}
 			}
 			if d := RegisteredDomain(tok); d != "" && strings.ContainsRune(d, '.') {
 				set.domains[d] = struct{}{}

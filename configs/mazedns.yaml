@@ -88,8 +88,10 @@ classifier:                    # optional LLM domain classification (master only
   # Threat-intel list (corroborate malicious verdicts): a domain here boosts a
   # malicious score and is flagged even if the model missed it. Built-in public
   # default is abuse.ch URLhaus.
-  threat_disable_default: false   # set true to NOT use the built-in public threat list
-  threat_list_url: ""             # optional extra custom threat list (URL or file path)
+  # Built-in public threat-intel feeds to enable (merged). Available keys:
+  # urlhaus, threatfox, phishing_army, hagezi_tif, digitalside, openphish.
+  threat_feeds: ["urlhaus", "threatfox", "phishing_army", "hagezi_tif"]
+  threat_list_url: ""             # extra custom threat lists (one per line / comma-separated)
   # Enrich each classification with WHOIS/RDAP registration data (domain age,
   # registrar) — a strong signal for the model. One RDAP lookup per new domain.
   whois_enabled: true

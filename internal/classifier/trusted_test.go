@@ -56,11 +56,32 @@ func TestTrustedSources(t *testing.T) {
 }
 
 func TestThreatSources(t *testing.T) {
+	// Legacy settings (no ThreatFeeds): fall back to the single urlhaus default.
 	if src := threatSources(Settings{}); len(src) != 1 || src[0].url != DefaultThreatURL {
 		t.Fatalf("default threat sources: %+v", src)
 	}
 	if src := threatSources(Settings{ThreatDisableDefault: true}); len(src) != 0 {
 		t.Fatalf("disabled threat sources should be empty: %+v", src)
+	}
+	// Multiple built-in feeds + multiple custom sources, de-duplicated; unknown
+	// feed keys are skipped.
+	src := threatSources(Settings{
+		ThreatFeeds:   []string{"urlhaus", "threatfox", "nope"},
+		ThreatListURL: "https://x/a.txt\nhttps://x/b.txt , https://x/a.txt",
+	})
+	if len(src) != 4 { // urlhaus + threatfox + a.txt + b.txt (dup a.txt dropped)
+		t.Fatalf("expected 4 deduped sources, got %d: %+v", len(src), src)
+	}
+}
+
+func TestParseTrustedURLs(t *testing.T) {
+	// URL-based feeds (e.g. OpenPhish) — extract the host.
+	set, err := parseTrusted(strings.NewReader("http://evil.com/malware\nhttps://login.bad.example.org/x\n"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !set.Has("evil.com") || !set.Has("example.org") {
+		t.Errorf("URL hosts not extracted: %v", set.domains)
 	}
 }
 

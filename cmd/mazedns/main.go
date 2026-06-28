@@ -224,9 +224,14 @@ func main() {
 			TrustedListURL:        cfg.Classifier.TrustedListURL,
 			TrustedTopN:           cfg.Classifier.TrustedTopN,
 			TrustedDisableDefault: cfg.Classifier.TrustedDisableDefault,
+			ThreatFeeds:           cfg.Classifier.ThreatFeeds,
 			ThreatListURL:         cfg.Classifier.ThreatListURL,
 			ThreatDisableDefault:  cfg.Classifier.ThreatDisableDefault,
 			WhoisEnabled:          cfg.Classifier.WhoisEnabled,
+		}
+		// Default to the broad built-in feed set when none configured.
+		if defaults.ThreatFeeds == nil {
+			defaults.ThreatFeeds = classifier.DefaultThreatFeeds
 		}
 		if cur, _ := st.GetMeta(classifier.SettingsKey); cur == "" {
 			_ = classifier.SaveSettings(st, defaults)

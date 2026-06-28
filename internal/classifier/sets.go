@@ -115,15 +115,36 @@ func trustedSources(s Settings) []domainSource {
 	return out
 }
 
-// threatSources builds the threat-list sources: the built-in public default
-// (unless disabled) plus an optional custom source.
+// threatSources builds the threat-list sources: every enabled built-in feed plus
+// any custom sources, de-duplicated.
 func threatSources(s Settings) []domainSource {
-	var out []domainSource
-	if !s.ThreatDisableDefault {
-		out = append(out, domainSource{DefaultThreatURL, 0})
+	feeds := s.ThreatFeeds
+	if feeds == nil {
+		// Pre-ThreatFeeds settings: derive from the old single-default toggle.
+		if !s.ThreatDisableDefault {
+			feeds = []string{"urlhaus"}
+		}
 	}
-	if c := customSource(s.ThreatListURL); c != "" {
-		out = append(out, domainSource{c, 0})
+	seen := map[string]bool{}
+	var out []domainSource
+	add := func(url string) {
+		if url != "" && !seen[url] {
+			seen[url] = true
+			out = append(out, domainSource{url, 0})
+		}
+	}
+	for _, key := range feeds {
+		if url, ok := threatFeedURL(key); ok {
+			add(url)
+		}
+	}
+	for _, c := range splitSources(s.ThreatListURL) {
+		add(customSource(c))
 	}
 	return out
+}
+
+// splitSources splits a multi-source field on newlines, commas, and spaces.
+func splitSources(v string) []string {
+	return strings.FieldsFunc(v, func(r rune) bool { return r == '\n' || r == ',' || r == ' ' || r == '\t' })
 }

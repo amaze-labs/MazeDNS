@@ -97,9 +97,17 @@ export interface ClassifierSettings {
   trusted_list_url: string
   trusted_top_n: number
   trusted_disable_default: boolean
+  threat_feeds: string[]
   threat_list_url: string
   threat_disable_default: boolean
   whois_enabled: boolean
+}
+
+export interface ThreatFeed {
+  key: string
+  name: string
+  desc: string
+  url: string
 }
 
 export interface WhoisInfo {
@@ -120,6 +128,7 @@ export interface ClassifierStatus {
   category_counts: Record<string, number>
   trusted_count: number
   threat_count: number
+  threat_feed_catalog: ThreatFeed[]
 }
 
 export interface SeriesPoint {

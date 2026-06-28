@@ -48,11 +48,13 @@ type Settings struct {
 	TrustedListURL        string `json:"trusted_list_url"`
 	TrustedTopN           int    `json:"trusted_top_n"`
 	TrustedDisableDefault bool   `json:"trusted_disable_default"`
-	// Threat list (known-malicious domains): a domain here corroborates a
-	// malicious verdict (boosting it) and is treated as suspicious even if the
-	// model missed it. Built-in public default unless ThreatDisableDefault.
-	ThreatListURL        string `json:"threat_list_url"`
-	ThreatDisableDefault bool   `json:"threat_disable_default"`
+	// Threat lists (known-malicious domains): a domain here corroborates a
+	// malicious verdict (boosting it) and is flagged even if the model missed it.
+	// ThreatFeeds enables built-in public feeds (see ThreatFeedCatalog);
+	// ThreatListURL adds custom sources (one per line / comma-separated).
+	ThreatFeeds          []string `json:"threat_feeds"`
+	ThreatListURL        string   `json:"threat_list_url"`
+	ThreatDisableDefault bool     `json:"threat_disable_default"` // legacy (pre-ThreatFeeds)
 	// WhoisEnabled enriches each classification with the domain's registration
 	// data (via RDAP) — domain age is a strong signal for the model.
 	WhoisEnabled bool `json:"whois_enabled"`

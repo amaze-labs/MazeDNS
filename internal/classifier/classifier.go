@@ -124,15 +124,29 @@ type chatResp struct {
 	} `json:"error"`
 }
 
-// Classify returns the model's verdict for a domain.
-func (c *Client) Classify(ctx context.Context, domain string) (Verdict, error) {
+// Hints carries deterministic signals (looked up before the model runs) so the
+// model can incorporate them into its verdict and reasoning.
+type Hints struct {
+	Trusted bool // on a known-legitimate / popular-domains list
+	Threat  bool // on a known-malicious threat-intel feed
+}
+
+// Classify returns the model's verdict for a domain, informed by any hints.
+func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict, error) {
+	user := "Classify this domain: " + domain
+	if h.Threat {
+		user += "\nSignal: this domain appears on a public threat-intelligence feed of domains hosting active malware — weigh this heavily."
+	}
+	if h.Trusted {
+		user += "\nSignal: this domain is among the most popular, established domains on the internet — very unlikely to be malicious."
+	}
 	body, err := json.Marshal(chatReq{
 		Model:       c.model,
 		Temperature: 0,
 		Stream:      false,
 		Messages: []chatMessage{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "Classify this domain: " + domain},
+			{Role: "user", Content: user},
 		},
 	})
 	if err != nil {

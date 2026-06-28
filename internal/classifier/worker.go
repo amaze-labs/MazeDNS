@@ -160,6 +160,11 @@ func (w *Worker) pruneLocked() {
 // time with at least the configured gap between model calls.
 func (w *Worker) Run(ctx context.Context) {
 	slog.Info("classifier worker started")
+	// Start loading the trusted/threat lists up front so the first classified
+	// domains already have the signals (rather than racing the first lookup).
+	s := w.get()
+	w.trusted.ensure(trustedSources(s))
+	w.threat.ensure(threatSources(s))
 	for {
 		select {
 		case <-ctx.Done():
@@ -193,18 +198,22 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if done, err := w.store.IsClassified(domain); err != nil || done {
 		return // already have a verdict (or DB error) — classify once.
 	}
-	v, err := w.clientFor(s).Classify(ctx, domain)
+
+	// Look the deterministic signals up FIRST, then let the model decide with them
+	// in hand (so its category + reasoning incorporate the threat/trusted context).
+	trusted := w.trusted.has(domain)
+	threat := w.threat.has(domain)
+	v, err := w.clientFor(s).Classify(ctx, domain, Hints{Trusted: trusted, Threat: threat})
 	if err != nil {
 		slog.Warn("classify failed", "domain", domain, "err", err)
 		return
 	}
-
 	category, block, conf, reason := v.Category, v.ShouldBlock(), v.Confidence, v.Reason
-	trusted := w.trusted.has(domain)
-	threat := w.threat.has(domain)
 
-	// Threat list (known-bad) corroborates or overrides the model: it boosts a
-	// malicious score and catches false negatives the model missed.
+	// Safety rails — applied after the model as a backstop (a small local model can
+	// still hallucinate even with the hints):
+	//  - a known threat must never be left non-blocking,
+	//  - a trusted domain must never be blocked.
 	if threat {
 		conf = maxF(conf, 0.97)
 		if !block {
@@ -214,8 +223,6 @@ func (w *Worker) process(ctx context.Context, domain string) {
 			reason = "confirmed on threat list. " + reason
 		}
 	}
-	// Trusted list (known-good) wins unless the domain is also a known threat:
-	// a flagged trusted domain is neither blocked nor suggested.
 	if trusted && !threat {
 		block = false
 		reason = "on trusted list — not blocked. " + reason

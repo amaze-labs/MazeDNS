@@ -103,7 +103,7 @@ func (s *Server) testClassifier(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), in.Timeout())
 	defer cancel()
 	const sample = "doubleclick.net"
-	v, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample)
+	v, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample, classifier.Hints{})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

@@ -19,9 +19,10 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="How AI classification &amp; scoring works" onClose={onClose}>
       <p className="muted" style={{ textAlign: 'left' }}>
-        A small local model looks at every <em>new registered domain</em> your network queries and predicts what it is.
-        Two public lists then corroborate or override that prediction, and your enforcement mode decides what actually
-        happens. Nothing runs on the DNS hot path — classification is asynchronous, so resolution stays fast.
+        For every <em>new registered domain</em> your network queries, two public lists are looked up first and fed
+        into the model, so its category and reasoning are informed by them. The model then decides, a couple of safety
+        rails act as a backstop, and your enforcement mode decides what actually happens. Nothing runs on the DNS hot
+        path — classification is asynchronous, so resolution stays fast.
       </p>
 
       <h4>The scoring flow</h4>
@@ -29,21 +30,23 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         <Step>A new registered domain is seen in a query</Step>
         <Arrow />
         <Step tone="info">
-          The local model predicts a <strong>category</strong> + a <strong>confidence</strong> (0–100%)
+          Look up deterministic <strong>signals</strong> — is it on the <strong>trusted</strong> list (popular domains)
+          and/or the <strong>threat-intel</strong> list (abuse.ch)?
         </Step>
         <Arrow />
-        <Step tone="threat">On a threat-intel list? (abuse.ch URLhaus, by default)</Step>
-        <Branch tone="block" label="yes">
-          Force <strong>malicious</strong> and boost the score to <strong>≥97%</strong> — flagged even if the model
-          missed it.
+        <Step tone="mode">
+          The local model classifies it <strong>with those signals in hand</strong> → category + confidence
+        </Step>
+        <Arrow />
+        <Step>Safety rails (backstop — a small model can still err)</Step>
+        <Branch tone="block" label="threat">
+          Force <strong>malicious</strong> and boost the score to <strong>≥97%</strong> — even if the model disagreed.
+        </Branch>
+        <Branch tone="allow" label="trusted">
+          <strong>Never blocked</strong> — overrides the model (the false-positive guard).
         </Branch>
         <Arrow />
-        <Step tone="trusted">On the trusted list? (Majestic top domains, by default)</Step>
-        <Branch tone="allow" label="yes">
-          <strong>Never blocked</strong> — treated as a likely false positive (not even suggested).
-        </Branch>
-        <Arrow />
-        <Step>Is the category a security one? (ads / trackers / malware / phishing)</Step>
+        <Step>Is it a blocking verdict? (a security category, and not trusted)</Step>
         <Branch tone="info" label="no">
           Recorded as <strong>content</strong> (social, streaming, …) for visibility — never blocked.
         </Branch>
@@ -62,8 +65,8 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
       <h4>What the numbers &amp; signals mean</h4>
       <ul className="help-list">
         <li>
-          <strong>Confidence</strong> — how sure the model is. A threat-list match overrides it upward (≥97%); the
-          trusted list overrides the decision regardless of confidence.
+          <strong>Confidence</strong> — how sure the model is (it already sees the threat/trusted signals). The safety
+          rails still apply: a threat match floors it at ≥97%, and a trusted domain is never blocked regardless.
         </li>
         <li>
           <strong>🛡 threat</strong> — the domain is on a known-malware feed. Strong signal: it corroborates a malicious

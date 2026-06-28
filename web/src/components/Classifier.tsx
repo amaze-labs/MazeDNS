@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type Classification, type ClassifierStatus } from '../api'
 import Spinner from './Spinner'
+import ClassifierHelp from './ClassifierHelp'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -10,8 +11,8 @@ const MODES = [
 const STATUS_TABS = ['suggested', 'auto', 'approved', 'rejected', 'clean']
 const PAGE = 25
 const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
-// Security categories are red; legitimate content categories are neutral/blue.
-const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'clean' || c === 'other' ? 'allow' : 'info')
+// Security categories are red; "other" is neutral/green; content categories blue.
+const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'other' ? 'allow' : 'info')
 
 // Classifier is the AI domain-classification console: pick the enforcement mode,
 // review the model's verdicts, and approve/reject suggestions.
@@ -22,6 +23,7 @@ export default function Classifier() {
   const [rows, setRows] = useState<Classification[]>([])
   const [err, setErr] = useState('')
 
+  const [showHelp, setShowHelp] = useState(false)
   // Trusted-list viewer
   const [showTrusted, setShowTrusted] = useState(false)
   const [trustedSearch, setTrustedSearch] = useState('')
@@ -74,13 +76,17 @@ export default function Classifier() {
   const catCounts = Object.entries(info?.category_counts ?? {}).sort((a, b) => b[1] - a[1])
   return (
     <div>
+      {showHelp && <ClassifierHelp onClose={() => setShowHelp(false)} />}
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         AI classification {!info && <Spinner />}
+        <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowHelp(true)}>
+          Learn more
+        </button>
       </h2>
       <p className="muted" style={{ textAlign: 'left' }}>
         A local model ({info?.settings.model || '—'}) classifies newly-seen domains as ads/trackers/malware/phishing or
-        clean, so blocking is driven by the model instead of hand-maintained lists. Configure the model in{' '}
-        <strong>Settings</strong>.
+        legitimate content (social, streaming, …), so blocking is driven by the model instead of hand-maintained lists.
+        Configure the model in <strong>Settings</strong>.
         {(info?.trusted_count ?? 0) > 0 && (
           <>
             {' '}

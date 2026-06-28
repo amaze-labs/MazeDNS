@@ -30,9 +30,9 @@ var contentCategories = []string{
 	"search", "email", "finance", "technology", "cdn", "adult",
 }
 
-// validCategories is the full accepted set (security + content + clean/other).
+// validCategories is the full accepted set (security + content + "other").
 var validCategories = func() map[string]bool {
-	m := map[string]bool{"clean": true, "other": true}
+	m := map[string]bool{"other": true}
 	for c := range blockCategories {
 		m[c] = true
 	}
@@ -98,9 +98,8 @@ Legitimate content categories (describe what the domain is for; never blocked):
 - cdn: CDNs / cloud infrastructure
 - adult: adult content
 
-Fallbacks:
-- clean: legitimate but none of the above fit
-- other: unknown / cannot tell
+Fallback:
+- other: legitimate but none of the above fit, or unknown
 
 Pick the single best-fitting category.`
 

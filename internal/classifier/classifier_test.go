@@ -24,9 +24,13 @@ func TestParseVerdict(t *testing.T) {
 		t.Fatalf("plain: %+v err=%v", v, err)
 	}
 	// Wrapped in markdown / prose (models often do this).
-	v, err = parseVerdict("Sure!\n```json\n{\"category\":\"clean\",\"confidence\":0.8}\n```")
-	if err != nil || v.Category != "clean" || v.ShouldBlock() {
+	v, err = parseVerdict("Sure!\n```json\n{\"category\":\"social\",\"confidence\":0.8}\n```")
+	if err != nil || v.Category != "social" || v.ShouldBlock() {
 		t.Fatalf("wrapped: %+v err=%v", v, err)
+	}
+	// "clean" is no longer a category — it collapses to "other".
+	if v, _ := parseVerdict(`{"category":"clean"}`); v.Category != "other" {
+		t.Errorf("removed 'clean' category should map to other, got %q", v.Category)
 	}
 	// Unknown category collapses to "other" (never blocks).
 	v, _ = parseVerdict(`{"category":"weird"}`)
@@ -46,7 +50,7 @@ func TestShouldBlock(t *testing.T) {
 		}
 	}
 	// Content categories are recorded but never blocked.
-	for _, c := range []string{"clean", "other", "", "social", "streaming", "shopping", "news", "gaming"} {
+	for _, c := range []string{"other", "", "social", "streaming", "shopping", "news", "gaming"} {
 		if (Verdict{Category: c}).ShouldBlock() {
 			t.Errorf("%q should not block", c)
 		}

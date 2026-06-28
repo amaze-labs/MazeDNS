@@ -260,27 +260,29 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 	client := clientIP(w.RemoteAddr())
 
-	// Capture the client's DNSSEC intent and UDP buffer BEFORE resolving, because
-	// the forward path may add the DO bit / a larger buffer to req when DNSSEC is
-	// forced upstream — which would otherwise mask what the client actually asked.
+	// Capture the client's DNSSEC intent BEFORE resolving, because the forward path
+	// may add the DO bit to req when DNSSEC is forced upstream — which would
+	// otherwise mask what the client actually asked.
 	clientEDNS := req.IsEdns0() != nil
-	clientDO, clientUDP := false, dns.MinMsgSize // 512
+	clientDO := false
 	if o := req.IsEdns0(); o != nil {
 		clientDO = o.Do()
-		if u := int(o.UDPSize()); u > clientUDP {
-			clientUDP = u
-		}
 	}
 
 	resp, action, category := r.Resolve(req, client)
 	r.finalize(resp, clientEDNS, clientDO)
-	// For UDP clients, truncate to the client's advertised buffer. This sets the TC
-	// bit on oversized (e.g. DNSSEC-signed) answers so the client retries cleanly
-	// over TCP, instead of us emitting a large/fragmented datagram that NATs and
-	// firewalls silently drop — the usual cause of "DNSSEC makes browsing slow /
-	// some sites don't load".
+	// Cap UDP replies at the fragmentation-safe size (1232). Answers up to that —
+	// the vast majority — go out untouched in a single datagram; only genuinely
+	// large ones (e.g. DNSSEC-signed) get the TC bit so the client retries over
+	// TCP, avoiding fragmented datagrams that NATs/firewalls silently drop.
+	//
+	// We deliberately do NOT truncate down to the client's advertised buffer: a
+	// client that sends no EDNS advertises only 512, but a sub-1232 datagram is a
+	// single unfragmented packet every client receives fine — TC'ing it would force
+	// a needless extra TCP round-trip on every medium-sized answer (a big latency
+	// hit). 1232 is also under typical VPN/tunnel MTUs, so it won't fragment there.
 	if _, isUDP := w.RemoteAddr().(*net.UDPAddr); isUDP {
-		resp.Truncate(clientUDP)
+		resp.Truncate(largeUDPSize)
 	}
 	_ = w.WriteMsg(resp)
 	r.record(req, resp, action, category, client, start)

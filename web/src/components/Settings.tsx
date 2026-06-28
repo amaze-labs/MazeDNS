@@ -278,15 +278,30 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             onChange={(e) => patch({ rate_limit_qpm: Number(e.target.value) })}
           />
         </div>
+      </section>
+
+      <section className="settings-card">
+        <h3>DNSSEC</h3>
+        <label className="muted">
+          DNSSEC lets a resolver cryptographically verify that DNS answers are authentic and untampered. When enabled,
+          MazeDNS sets the DNSSEC-OK (DO) bit on upstream queries and surfaces the Authenticated Data (AD) flag in
+          responses, so signed zones are validated by your upstream resolver and the result is passed through. Use an
+          upstream that performs validation (e.g. 1.1.1.1, 9.9.9.9, 8.8.8.8).
+        </label>
         <div className="field">
           <label className="toggle">
             <input type="checkbox" checked={s.dnssec} onChange={(e) => patch({ dnssec: e.target.checked })} />
             <span className="track">
               <span className="thumb" />
             </span>
-            <span className="toggle-label">Request DNSSEC validation (set DO bit, surface AD)</span>
+            <span className="toggle-label">
+              Enable DNSSEC — set the DO bit upstream and surface the AD flag
+            </span>
           </label>
         </div>
+        <p className="muted" style={{ textAlign: 'left', marginTop: 4 }}>
+          Currently <strong>{s.dnssec ? 'enabled' : 'disabled'}</strong>. Changes apply live — no restart.
+        </p>
       </section>
 
       <section className="settings-card">

@@ -63,6 +63,12 @@ export default function DomainDetail({
         <p className="muted" style={{ textAlign: 'left' }}>WHOIS unavailable: {whoisErr}</p>
       ) : whois ? (
         <div className="dd-grid">
+          {whois.registrant && (
+            <>
+              <span className="muted">Registrant</span>
+              <span>{whois.registrant}</span>
+            </>
+          )}
           <span className="muted">Registrar</span>
           <span>{whois.registrar || '—'}</span>
           <span className="muted">Registered</span>

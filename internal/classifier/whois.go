@@ -16,7 +16,8 @@ import (
 type WhoisInfo struct {
 	Domain      string   `json:"domain"`
 	Registrar   string   `json:"registrar"`
-	Created     string   `json:"created"` // registration date (RFC3339)
+	Registrant  string   `json:"registrant"` // registrant org, when not redacted (a strong ownership signal)
+	Created     string   `json:"created"`    // registration date (RFC3339)
 	Expires     string   `json:"expires"`
 	Updated     string   `json:"updated"`
 	AgeDays     int      `json:"age_days"` // days since registration (0 if unknown)
@@ -24,25 +25,34 @@ type WhoisInfo struct {
 	Nameservers []string `json:"nameservers"`
 }
 
-// summary is a compact one-line form fed to the model as a signal (domain age is
-// a strong indicator — freshly-registered domains are disproportionately abused).
+// summary is a compact one-line form fed to the model as a signal. Domain age and
+// — crucially — ownership (registrant org and nameservers) help the model avoid
+// flagging a brand's own domain (e.g. aaplimg.com is Apple's) as phishing.
 func (w WhoisInfo) summary() string {
-	if w.Created == "" && w.Registrar == "" {
-		return ""
-	}
-	var b strings.Builder
+	var parts []string
 	if w.AgeDays > 0 {
-		fmt.Fprintf(&b, "registered %d days ago", w.AgeDays)
+		s := fmt.Sprintf("registered %d days ago", w.AgeDays)
 		if w.AgeDays < 90 {
-			b.WriteString(" (very new — treat with suspicion)")
+			s += " (very new — treat with suspicion)"
 		}
+		parts = append(parts, s)
 	} else if w.Created != "" {
-		fmt.Fprintf(&b, "registered %s", w.Created)
+		parts = append(parts, "registered "+w.Created)
+	}
+	if w.Registrant != "" {
+		parts = append(parts, fmt.Sprintf("registrant org %q", w.Registrant))
 	}
 	if w.Registrar != "" {
-		fmt.Fprintf(&b, ", registrar %q", w.Registrar)
+		parts = append(parts, fmt.Sprintf("registrar %q", w.Registrar))
 	}
-	return strings.TrimSpace(b.String())
+	if len(w.Nameservers) > 0 {
+		ns := w.Nameservers
+		if len(ns) > 4 {
+			ns = ns[:4]
+		}
+		parts = append(parts, "nameservers "+strings.Join(ns, ", "))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // rdapResp is the subset of an RDAP domain object MazeDNS reads.
@@ -104,10 +114,16 @@ func parseRDAP(domain string, rd rdapResp) WhoisInfo {
 		}
 	}
 	for _, e := range rd.Entities {
-		if containsFold(e.Roles, "registrar") {
-			if fn := vcardField(e.VcardArray, "fn"); fn != "" {
-				info.Registrar = fn
-				break
+		if info.Registrar == "" && containsFold(e.Roles, "registrar") {
+			info.Registrar = vcardField(e.VcardArray, "fn")
+		}
+		// Registrant org is the clearest ownership signal (often redacted, but
+		// present for corporate domains — e.g. "Apple Inc.").
+		if info.Registrant == "" && (containsFold(e.Roles, "registrant") || containsFold(e.Roles, "administrative")) {
+			if org := vcardField(e.VcardArray, "org"); org != "" {
+				info.Registrant = org
+			} else if fn := vcardField(e.VcardArray, "fn"); fn != "" {
+				info.Registrant = fn
 			}
 		}
 	}

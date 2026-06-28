@@ -14,9 +14,10 @@ const sampleRDAP = `{
     {"eventAction": "last changed", "eventDate": "2024-01-10T00:00:00Z"}
   ],
   "entities": [
-    {"roles": ["registrar"], "vcardArray": ["vcard", [["version",{},"text","4.0"],["fn",{},"text","Example Registrar, Inc."]]]}
+    {"roles": ["registrar"], "vcardArray": ["vcard", [["version",{},"text","4.0"],["fn",{},"text","Example Registrar, Inc."]]]},
+    {"roles": ["registrant"], "vcardArray": ["vcard", [["version",{},"text","4.0"],["fn",{},"text","Jane Doe"],["org",{},"text","Apple Inc."]]]}
   ],
-  "nameservers": [{"ldhName": "NS1.EXAMPLE.COM"}, {"ldhName": "NS2.EXAMPLE.COM"}]
+  "nameservers": [{"ldhName": "A.NS.APPLE.COM"}, {"ldhName": "B.NS.APPLE.COM"}]
 }`
 
 func TestParseRDAP(t *testing.T) {
@@ -31,14 +32,22 @@ func TestParseRDAP(t *testing.T) {
 	if info.Registrar != "Example Registrar, Inc." {
 		t.Errorf("registrar = %q", info.Registrar)
 	}
-	if len(info.Nameservers) != 2 || info.Nameservers[0] != "ns1.example.com" {
+	if len(info.Nameservers) != 2 || info.Nameservers[0] != "a.ns.apple.com" {
 		t.Errorf("nameservers = %v", info.Nameservers)
+	}
+	if info.Registrant != "Apple Inc." {
+		t.Errorf("registrant org = %q, want Apple Inc.", info.Registrant)
 	}
 	if info.AgeDays < 1500 { // registered in 2020 — comfortably old
 		t.Errorf("age_days = %d, expected a large number", info.AgeDays)
 	}
-	if !strings.Contains(info.summary(), "registrar") {
-		t.Errorf("summary missing registrar: %q", info.summary())
+	// The summary fed to the model must carry the ownership signals (registrant +
+	// nameservers) so it won't flag a brand's own domain as phishing.
+	s := info.summary()
+	for _, want := range []string{"Apple Inc.", "a.ns.apple.com", "registrar"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("summary missing %q: %q", want, s)
+		}
 	}
 }
 

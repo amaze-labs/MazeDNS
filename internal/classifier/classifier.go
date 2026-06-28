@@ -101,6 +101,13 @@ Legitimate content categories (describe what the domain is for; never blocked):
 Fallback:
 - other: legitimate but none of the above fit, or unknown
 
+Important: if registration data (WHOIS) is provided, weigh it heavily. A domain
+whose registrant organization or nameservers belong to a major company is
+legitimately owned by that company — NOT phishing — even if the name looks like
+an abbreviation or could resemble a brand (e.g. a domain on Apple's nameservers
+is Apple's own infrastructure). Only call something phishing when the
+registration clearly does NOT belong to the brand being imitated.
+
 Pick the single best-fitting category.`
 
 type chatReq struct {

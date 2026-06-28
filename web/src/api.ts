@@ -105,6 +105,7 @@ export interface ClassifierSettings {
 export interface WhoisInfo {
   domain: string
   registrar: string
+  registrant: string
   created: string
   expires: string
   updated: string

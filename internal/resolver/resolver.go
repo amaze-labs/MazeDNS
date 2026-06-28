@@ -273,19 +273,7 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	resp, action, category := r.Resolve(req, client)
-
-	// If the client didn't request DNSSEC (no DO bit) — true of nearly every stub:
-	// browsers, the OS resolver, Plex, etc. — don't burden it with the signature
-	// records we fetched. Strip them but keep the AD ("validated upstream") flag, so
-	// everyday answers stay small and fast; only clients that opt in get the full
-	// signed payload.
-	if !clientDO {
-		stripDNSSEC(resp)
-	}
-	// A client that sent no EDNS must not get an OPT record back (RFC 6891 §6.1.1).
-	if !clientEDNS {
-		removeOPT(resp)
-	}
+	r.finalize(resp, clientEDNS, clientDO)
 	// For UDP clients, truncate to the client's advertised buffer. This sets the TC
 	// bit on oversized (e.g. DNSSEC-signed) answers so the client retries cleanly
 	// over TCP, instead of us emitting a large/fragmented datagram that NATs and
@@ -447,30 +435,38 @@ func (r *Resolver) forward(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duratio
 	pending := 1
 	rest := ups[1:]
 	var lastErr error
+	var lastResp *dns.Msg // best response so far (a SERVFAIL we'd return if nothing better arrives)
+	var lastRtt time.Duration
+	launchRest := func() {
+		for _, u := range rest {
+			launch(u)
+			pending++
+		}
+		rest = nil
+		hedge.Stop()
+	}
 	for {
 		select {
 		case <-hedge.C:
-			for _, u := range rest {
-				launch(u)
-				pending++
-			}
-			rest = nil
+			launchRest()
 		case res := <-results:
 			pending--
-			if res.err == nil && res.msg != nil {
-				return res.msg, res.rtt, nil // first success wins.
-			}
-			lastErr = res.err
-			// Primary failed before the hedge fired — query the rest now.
-			if len(rest) > 0 {
-				for _, u := range rest {
-					launch(u)
-					pending++
-				}
-				rest = nil
-				hedge.Stop()
+			switch {
+			case res.err == nil && res.msg != nil && res.msg.Rcode != dns.RcodeServerFailure:
+				return res.msg, res.rtt, nil // a real answer (incl. NXDOMAIN) wins.
+			case res.err == nil && res.msg != nil:
+				// SERVFAIL: a soft failure. Remember it, but try the other upstreams —
+				// one of them may actually resolve the name.
+				lastResp, lastRtt = res.msg, res.rtt
+				launchRest()
+			default:
+				lastErr = res.err
+				launchRest() // hard error before the hedge fired — query the rest now.
 			}
 			if pending == 0 {
+				if lastResp != nil {
+					return lastResp, lastRtt, nil // everyone SERVFAILed — return the SERVFAIL.
+				}
 				if lastErr == nil {
 					lastErr = errNoUpstreams
 				}
@@ -558,6 +554,27 @@ func stripDNSSEC(m *dns.Msg) {
 	m.Extra = filter(m.Extra) // keeps OPT (not a DNSSEC type)
 	if o := m.IsEdns0(); o != nil {
 		o.SetDo(false)
+	}
+}
+
+// finalize applies the response hygiene common to every transport before the
+// reply is sent: advertise recursion, drop DNSSEC records a non-DO client can't
+// use, and keep EDNS handling RFC-correct (echo an OPT to EDNS clients — incl. on
+// synthesized answers like blocks/rewrites — and none to clients that sent none).
+func (r *Resolver) finalize(resp *dns.Msg, clientEDNS, clientDO bool) {
+	if resp == nil {
+		return
+	}
+	resp.RecursionAvailable = true // we are a recursive resolver
+	if !clientDO {
+		stripDNSSEC(resp)
+	}
+	if clientEDNS {
+		if resp.IsEdns0() == nil {
+			resp.SetEdns0(largeUDPSize, clientDO)
+		}
+	} else {
+		removeOPT(resp) // RFC 6891 §6.1.1: no OPT in the reply if the query had none
 	}
 }
 

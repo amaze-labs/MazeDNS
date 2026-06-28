@@ -13,6 +13,7 @@ type fakeUpstream struct {
 	name  string
 	delay time.Duration
 	err   error
+	rcode int // response rcode (0 = NOERROR)
 }
 
 func (f *fakeUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
@@ -24,6 +25,7 @@ func (f *fakeUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	}
 	m := new(dns.Msg)
 	m.SetReply(req)
+	m.Rcode = f.rcode
 	m.Extra = append(m.Extra, &dns.TXT{
 		Hdr: dns.RR_Header{Name: "src.", Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 1},
 		Txt: []string{f.name},
@@ -110,6 +112,63 @@ func TestForwardHedgeBeatsSlowPrimary(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
 		t.Errorf("took %v, expected the hedge to beat the slow primary", elapsed)
+	}
+}
+
+// A SERVFAIL from the primary is a soft failure: fail over to a healthy
+// secondary rather than returning the SERVFAIL.
+func TestForwardFailoverOnServfail(t *testing.T) {
+	r := New(Options{})
+	ups := []Upstream{
+		&fakeUpstream{name: "broken", rcode: dns.RcodeServerFailure},
+		&fakeUpstream{name: "backup"},
+	}
+	resp, _, err := r.forward(newReq(), ups)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := respSource(resp); got != "backup" {
+		t.Errorf("source = %q, want backup", got)
+	}
+	if resp.Rcode != dns.RcodeSuccess {
+		t.Errorf("rcode = %d, want NOERROR", resp.Rcode)
+	}
+}
+
+// If every upstream SERVFAILs, return the SERVFAIL (not an error).
+func TestForwardAllServfail(t *testing.T) {
+	r := New(Options{})
+	ups := []Upstream{
+		&fakeUpstream{name: "a", rcode: dns.RcodeServerFailure},
+		&fakeUpstream{name: "b", rcode: dns.RcodeServerFailure},
+	}
+	resp, _, err := r.forward(newReq(), ups)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if resp == nil || resp.Rcode != dns.RcodeServerFailure {
+		t.Fatalf("expected a SERVFAIL response, got %+v", resp)
+	}
+}
+
+// NXDOMAIN is a valid negative answer — it must be returned immediately, NOT
+// treated as a failure that fails over (which could mask it).
+func TestForwardNXDOMAINWinsImmediately(t *testing.T) {
+	r := New(Options{})
+	ups := []Upstream{
+		&fakeUpstream{name: "primary", rcode: dns.RcodeNameError},
+		&fakeUpstream{name: "slow", delay: 300 * time.Millisecond},
+	}
+	start := time.Now()
+	resp, _, err := r.forward(newReq(), ups)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := respSource(resp); got != "primary" || resp.Rcode != dns.RcodeNameError {
+		t.Errorf("source = %q rcode = %d, want primary NXDOMAIN", respSource(resp), resp.Rcode)
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Errorf("took %v, NXDOMAIN should return without waiting on the slow upstream", elapsed)
 	}
 }
 

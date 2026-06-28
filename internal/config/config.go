@@ -162,6 +162,13 @@ type OIDC struct {
 	Scopes       []string `yaml:"scopes"`
 	GroupsClaim  string   `yaml:"groups_claim"`
 	AdminGroup   string   `yaml:"admin_group"`
+	// DisablePasswordLogin removes local username/password login when SSO is
+	// enabled (SSO becomes the only way in). Ignored if OIDC fails to initialize,
+	// so a broken provider can't lock everyone out.
+	DisablePasswordLogin bool `yaml:"disable_password_login"`
+	// AutoLogin redirects straight to the SSO provider instead of showing the
+	// login form (the user can still log out and choose another method).
+	AutoLogin bool `yaml:"auto_login"`
 }
 
 // Classifier configures optional LLM-based domain classification against a
@@ -344,6 +351,18 @@ func applyOIDCEnv(o *OIDC) {
 	}
 	if v := envClean("MAZEDNS_OIDC_ADMIN_GROUP"); v != "" {
 		o.AdminGroup = v
+	}
+	switch strings.ToLower(envClean("MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN")) {
+	case "true", "1":
+		o.DisablePasswordLogin = true
+	case "false", "0":
+		o.DisablePasswordLogin = false
+	}
+	switch strings.ToLower(envClean("MAZEDNS_OIDC_AUTO_LOGIN")) {
+	case "true", "1":
+		o.AutoLogin = true
+	case "false", "0":
+		o.AutoLogin = false
 	}
 	// _ENABLED is applied last so it can explicitly enable or disable.
 	switch strings.ToLower(envClean("MAZEDNS_OIDC_ENABLED")) {

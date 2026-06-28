@@ -178,6 +178,8 @@ Override the baked config without mounting a file:
 | `MAZEDNS_OIDC_SCOPES` | scopes, comma/space separated (default `openid profile email`) |
 | `MAZEDNS_OIDC_GROUPS_CLAIM` / `MAZEDNS_OIDC_ADMIN_GROUP` | map a provider group to admin |
 | `MAZEDNS_OIDC_ENABLED` | `true` / `false` to force SSO on or off |
+| `MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN` | `true` = SSO only (hide/refuse local password login) |
+| `MAZEDNS_OIDC_AUTO_LOGIN` | `true` = redirect straight to SSO instead of showing the login form |
 
 ### Seeing real client IPs
 

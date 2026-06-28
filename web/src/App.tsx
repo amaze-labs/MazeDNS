@@ -8,7 +8,7 @@ import Cluster from './components/Cluster'
 import Settings from './components/Settings'
 import Account from './components/Account'
 import AccountMenu from './components/AccountMenu'
-import Login from './components/Login'
+import Login, { SKIP_AUTOLOGIN_KEY } from './components/Login'
 import Spinner from './components/Spinner'
 import { api, type SessionUser, type AuthInfo } from './api'
 
@@ -53,6 +53,8 @@ export default function App() {
   }, [])
 
   const logout = async () => {
+    // Prevent auto-login from immediately bouncing back into SSO on the next render.
+    sessionStorage.setItem(SKIP_AUTOLOGIN_KEY, '1')
     await api.logout()
     setUser(null)
   }
@@ -66,7 +68,14 @@ export default function App() {
   }
 
   if (info?.auth_enabled && !user) {
-    return <Login oidc={!!info.oidc_enabled} onLogin={() => refresh()} />
+    return (
+      <Login
+        oidc={!!info.oidc_enabled}
+        passwordDisabled={!!info.password_login_disabled}
+        autoLogin={!!info.oidc_auto_login}
+        onLogin={() => refresh()}
+      />
+    )
   }
 
   // 'account' is reached from the avatar menu, not the nav.

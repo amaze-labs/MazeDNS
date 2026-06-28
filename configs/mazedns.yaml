@@ -116,6 +116,8 @@ auth:
     scopes: []
     groups_claim: "groups"
     admin_group: ""            # members of this group get the admin role
+    disable_password_login: false  # true = SSO only (no local username/password); also MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN
+    auto_login: false              # true = redirect straight to SSO; also MAZEDNS_OIDC_AUTO_LOGIN
 
 log:
   level: "info"                # debug|info|warn|error

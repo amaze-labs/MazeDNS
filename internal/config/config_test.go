@@ -84,6 +84,25 @@ filter:
 	}
 }
 
+func TestOIDCLoginFlagsEnv(t *testing.T) {
+	p := writeConfig(t, minimalConfig)
+	t.Setenv("MAZEDNS_OIDC_ISSUER", "https://id.example.com")
+	t.Setenv("MAZEDNS_OIDC_CLIENT_ID", "mazedns")
+	t.Setenv("MAZEDNS_OIDC_REDIRECT_URL", "https://dns.example.com/api/auth/oidc/callback")
+	t.Setenv("MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN", "true")
+	t.Setenv("MAZEDNS_OIDC_AUTO_LOGIN", "1")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.Auth.OIDC.DisablePasswordLogin {
+		t.Error("MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN should disable password login")
+	}
+	if !cfg.Auth.OIDC.AutoLogin {
+		t.Error("MAZEDNS_OIDC_AUTO_LOGIN should enable auto-login")
+	}
+}
+
 // Quoted env values (a common docker-compose list-form / env_file mistake) must
 // have the surrounding quotes stripped, or the OIDC redirect_uri won't match.
 func TestOIDCEnvStripsQuotes(t *testing.T) {

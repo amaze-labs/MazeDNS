@@ -12,11 +12,19 @@ import (
 
 // OIDCProvider wraps OIDC discovery, token exchange, and id_token verification.
 type OIDCProvider struct {
-	oauth       *oauth2.Config
-	verifier    *oidc.IDTokenVerifier
-	groupsClaim string
-	adminGroup  string
+	oauth                *oauth2.Config
+	verifier             *oidc.IDTokenVerifier
+	groupsClaim          string
+	adminGroup           string
+	disablePasswordLogin bool
+	autoLogin            bool
 }
+
+// DisablePasswordLogin reports whether local password login is disabled (SSO only).
+func (p *OIDCProvider) DisablePasswordLogin() bool { return p.disablePasswordLogin }
+
+// AutoLogin reports whether the UI should redirect straight to SSO.
+func (p *OIDCProvider) AutoLogin() bool { return p.autoLogin }
 
 // OIDCClaims is the subset of id_token claims MazeDNS uses.
 type OIDCClaims struct {
@@ -49,9 +57,11 @@ func NewOIDC(ctx context.Context, cfg config.OIDC) (*OIDCProvider, error) {
 			RedirectURL:  cfg.RedirectURL,
 			Scopes:       scopes,
 		},
-		verifier:    provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
-		groupsClaim: groupsClaim,
-		adminGroup:  cfg.AdminGroup,
+		verifier:             provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		groupsClaim:          groupsClaim,
+		adminGroup:           cfg.AdminGroup,
+		disablePasswordLogin: cfg.DisablePasswordLogin,
+		autoLogin:            cfg.AutoLogin,
 	}, nil
 }
 

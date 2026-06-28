@@ -365,18 +365,26 @@ func (s *Server) authInfo(w http.ResponseWriter, _ *http.Request) {
 	if s.classifierAvailable {
 		enabled = classifier.LoadSettings(s.store, classifier.Settings{}).Enabled
 	}
+	oidcOn := s.authEnabled && s.auth.OIDCEnabled()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"auth_enabled":         s.authEnabled,
-		"oidc_enabled":         s.authEnabled && s.auth.OIDCEnabled(),
-		"cluster_enabled":      s.clusterEnabled,
-		"classifier_available": s.classifierAvailable,
-		"classifier_enabled":   enabled,
+		"auth_enabled":            s.authEnabled,
+		"oidc_enabled":            oidcOn,
+		"password_login_disabled": oidcOn && s.auth.OIDC().DisablePasswordLogin(),
+		"oidc_auto_login":         oidcOn && s.auth.OIDC().AutoLogin(),
+		"cluster_enabled":         s.clusterEnabled,
+		"classifier_available":    s.classifierAvailable,
+		"classifier_enabled":      enabled,
 	})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !s.authEnabled {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "auth disabled"})
+		return
+	}
+	// SSO-only: refuse local credential login when configured (and OIDC is up).
+	if s.auth.OIDCEnabled() && s.auth.OIDC().DisablePasswordLogin() {
+		writeError(w, http.StatusForbidden, "password login is disabled; sign in with SSO")
 		return
 	}
 	var in struct {

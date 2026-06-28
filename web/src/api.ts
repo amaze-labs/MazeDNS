@@ -66,6 +66,8 @@ export interface SessionUser {
 export interface AuthInfo {
   auth_enabled: boolean
   oidc_enabled: boolean
+  password_login_disabled: boolean
+  oidc_auto_login: boolean
   cluster_enabled: boolean
   classifier_available: boolean
   classifier_enabled: boolean

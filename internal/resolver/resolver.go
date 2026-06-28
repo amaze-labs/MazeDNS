@@ -259,7 +259,36 @@ func (r *Resolver) CacheLen() int {
 func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 	client := clientIP(w.RemoteAddr())
+
+	// Capture the client's DNSSEC intent and UDP buffer BEFORE resolving, because
+	// the forward path may add the DO bit / a larger buffer to req when DNSSEC is
+	// forced upstream — which would otherwise mask what the client actually asked.
+	clientDO, clientUDP := false, dns.MinMsgSize // 512
+	if o := req.IsEdns0(); o != nil {
+		clientDO = o.Do()
+		if u := int(o.UDPSize()); u > clientUDP {
+			clientUDP = u
+		}
+	}
+
 	resp, action, category := r.Resolve(req, client)
+
+	// If the client didn't request DNSSEC (no DO bit) — true of nearly every stub:
+	// browsers, the OS resolver, Plex, etc. — don't burden it with the signature
+	// records we fetched. Strip them but keep the AD ("validated upstream") flag, so
+	// everyday answers stay small and fast; only clients that opt in get the full
+	// signed payload.
+	if !clientDO {
+		stripDNSSEC(resp)
+	}
+	// For UDP clients, truncate to the client's advertised buffer. This sets the TC
+	// bit on oversized (e.g. DNSSEC-signed) answers so the client retries cleanly
+	// over TCP, instead of us emitting a large/fragmented datagram that NATs and
+	// firewalls silently drop — the usual cause of "DNSSEC makes browsing slow /
+	// some sites don't load".
+	if _, isUDP := w.RemoteAddr().(*net.UDPAddr); isUDP {
+		resp.Truncate(clientUDP)
+	}
 	_ = w.WriteMsg(resp)
 	r.record(req, resp, action, category, client, start)
 }
@@ -485,6 +514,38 @@ func (r *Resolver) blockedResponse(req *dns.Msg, q dns.Question, blockMode strin
 	}
 	m.Rcode = dns.RcodeNameError // NXDOMAIN
 	return m
+}
+
+// isDNSSECType reports whether t is a DNSSEC meta record that a client which
+// didn't set the DO bit has no use for.
+func isDNSSECType(t uint16) bool {
+	switch t {
+	case dns.TypeRRSIG, dns.TypeNSEC, dns.TypeNSEC3, dns.TypeNSEC3PARAM,
+		dns.TypeDNSKEY, dns.TypeDS, dns.TypeCDS, dns.TypeCDNSKEY:
+		return true
+	}
+	return false
+}
+
+// stripDNSSEC removes DNSSEC signature/meta records from a response (preserving
+// the AD flag and the OPT record, with its DO bit cleared). Used for clients that
+// didn't request DNSSEC, so they aren't sent large signed answers they can't use.
+func stripDNSSEC(m *dns.Msg) {
+	filter := func(rrs []dns.RR) []dns.RR {
+		out := rrs[:0]
+		for _, rr := range rrs {
+			if !isDNSSECType(rr.Header().Rrtype) {
+				out = append(out, rr)
+			}
+		}
+		return out
+	}
+	m.Answer = filter(m.Answer)
+	m.Ns = filter(m.Ns)
+	m.Extra = filter(m.Extra) // keeps OPT (not a DNSSEC type)
+	if o := m.IsEdns0(); o != nil {
+		o.SetDo(false)
+	}
 }
 
 func ensureDO(m *dns.Msg) {

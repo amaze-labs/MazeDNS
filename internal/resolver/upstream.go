@@ -15,10 +15,13 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 )
 
-// largeUDPSize is the EDNS/receive buffer we advertise and read with, so large
-// (e.g. DNSSEC-signed) UDP responses arrive in one datagram instead of being
-// truncated and retried over TCP.
-const largeUDPSize = 4096
+// largeUDPSize is the EDNS/receive buffer we advertise and read with. It follows
+// the DNS Flag Day 2020 recommendation of 1232 bytes: large enough for most
+// (incl. DNSSEC-signed) answers, but small enough to stay under the common 1500-
+// byte path MTU so responses are NOT IP-fragmented. Fragmented UDP is widely
+// dropped by routers/NAT/firewalls, which black-holes large answers and makes
+// resolution time out; anything bigger than this cleanly falls back to TCP.
+const largeUDPSize = 1232
 
 // dotPoolSize is the number of TLS connections kept warm per DoT upstream, so
 // queries reuse an established session instead of paying a full TLS handshake

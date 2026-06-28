@@ -104,7 +104,16 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		}
 		start := time.Now()
 		client := httpClientIP(req)
+		clientDO := false
+		if o := msg.IsEdns0(); o != nil {
+			clientDO = o.Do()
+		}
 		resp, action, category := r.Resolve(msg, client)
+		// Don't return signature records to a client that didn't ask for DNSSEC
+		// (the AD flag is kept). DoH is over HTTP, so no UDP truncation is needed.
+		if !clientDO {
+			stripDNSSEC(resp)
+		}
 		out, err := resp.Pack()
 		if err != nil {
 			http.Error(w, "pack error", http.StatusInternalServerError)

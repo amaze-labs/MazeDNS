@@ -348,26 +348,65 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               onChange={(e) => setCls({ ...cls, timeout_sec: Number(e.target.value) })}
             />
           </div>
+          <h4 style={{ margin: '14px 0 4px' }}>Trusted list (reduce false positives)</h4>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            Domains on the trusted list are never blocked, even if the model flags them.
+          </p>
           <div className="field">
-            <label>
-              Trusted domain list — reduce false positives: flagged domains on this list are never auto-blocked, only
-              suggested for review. <strong>Leave blank to use the built-in public list</strong> (Majestic Million top
-              domains, fetched automatically). Set <code>off</code> to disable, or paste your own URL / file path
-              (plain / hosts / ranked-CSV).
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={!cls.trusted_disable_default}
+                onChange={(e) => setCls({ ...cls, trusted_disable_default: !e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Use built-in public list (Majestic Million top domains)</span>
             </label>
+          </div>
+          <div className="field">
+            <label>Additional custom trusted list (optional) — your own URL / file path (plain / hosts / ranked-CSV)</label>
             <input
               value={cls.trusted_list_url}
               onChange={(e) => setCls({ ...cls, trusted_list_url: e.target.value })}
-              placeholder="blank = built-in public list · off = disable · or https://… / /path/to/list.csv"
+              placeholder="https://… or /path/to/allowlist.txt"
             />
           </div>
           <div className="field">
-            <label>Trusted list cap (0 = default) — for large ranked lists, load only the top N most popular</label>
+            <label>Built-in list cap (0 = default 100k) — load only the top N most popular</label>
             <input
               type="number"
               min={0}
               value={cls.trusted_top_n}
               onChange={(e) => setCls({ ...cls, trusted_top_n: Number(e.target.value) })}
+            />
+          </div>
+
+          <h4 style={{ margin: '14px 0 4px' }}>Threat-intelligence list (catch malicious domains)</h4>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            Domains on a known-malware list corroborate a malicious verdict (and are flagged even if the model missed
+            them).
+          </p>
+          <div className="field">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={!cls.threat_disable_default}
+                onChange={(e) => setCls({ ...cls, threat_disable_default: !e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Use built-in public list (abuse.ch URLhaus)</span>
+            </label>
+          </div>
+          <div className="field">
+            <label>Additional custom threat list (optional) — your own URL / file path</label>
+            <input
+              value={cls.threat_list_url}
+              onChange={(e) => setCls({ ...cls, threat_list_url: e.target.value })}
+              placeholder="https://… or /path/to/threatlist.txt"
             />
           </div>
           <div className="settings-actions">

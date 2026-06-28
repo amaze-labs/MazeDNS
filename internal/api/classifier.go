@@ -26,16 +26,39 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 	}
 	// Never leak the API key to the UI.
 	cfg.APIKey = ""
-	trustedCount := 0
+	trustedCount, threatCount := 0, 0
 	if s.clsTrusted != nil {
 		trustedCount = s.clsTrusted()
+	}
+	if s.clsThreat != nil {
+		threatCount = s.clsThreat()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings":        cfg,
 		"counts":          counts,
 		"category_counts": categoryCounts,
 		"trusted_count":   trustedCount,
+		"threat_count":    threatCount,
 	})
+}
+
+// getTrustedList returns a (searchable) preview of the loaded trusted domains.
+func (s *Server) getTrustedList(w http.ResponseWriter, r *http.Request) {
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 200
+	}
+	count, domains := 0, []string{}
+	if s.clsTrusted != nil {
+		count = s.clsTrusted()
+	}
+	if s.clsTrustedSearch != nil {
+		if d := s.clsTrustedSearch(search, limit); d != nil {
+			domains = d
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": count, "domains": domains})
 }
 
 // putClassifierSettings replaces the classifier settings (from the Settings UI).

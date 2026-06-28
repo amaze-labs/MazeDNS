@@ -156,6 +156,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [cats, setCats] = useState<CategoryCount[]>([])
+  const [catTraffic, setCatTraffic] = useState<CategoryCount[]>([])
   const [ins, setIns] = useState<Insights | null>(null)
   const [lat, setLat] = useState<{ nodes: string[]; points: LatencyPoint[] } | null>(null)
   const [nodes, setNodes] = useState<Node[]>([])
@@ -193,6 +194,7 @@ export default function Dashboard() {
       api.stats().then((s) => alive && setStats(s)).catch(fail)
       api.timeseries(hours, focus).then((r) => alive && setSeries(r.points)).catch(fail)
       api.categories(hours, focus).then((c) => alive && setCats(c)).catch(fail)
+      api.categoryTraffic(hours, focus).then((c) => alive && setCatTraffic(c)).catch(() => {})
       api
         .insights(hours, focus)
         .then((i) => {
@@ -244,6 +246,15 @@ export default function Dashboard() {
   // Known categories keep their fixed color; file-sourced lists (e.g. "blocklist",
   // "stevenblack") fall back to a distinct palette color rather than all-gray.
   const catData = cats.map((c, i) => ({ name: c.category, value: c.count, fill: catColors[c.category] || colorAt(i) }))
+  // Queries by content/security category (from AI classifications). Uncategorized
+  // (not yet classified) is shown muted.
+  const catTrafficData = catTraffic
+    .filter((c) => c.count > 0)
+    .map((c, i) => ({
+      name: c.category,
+      value: c.count,
+      fill: c.category === 'uncategorized' ? '#3a424d' : catColors[c.category] || colorAt(i),
+    }))
   const totals = ins?.totals
   const sourceData = totals
     ? [
@@ -482,6 +493,14 @@ export default function Dashboard() {
             <Donut data={catData} />
           </div>
         </div>
+        {catTrafficData.length > 0 && (
+          <div className="charts">
+            <div className="panel">
+              <h2>Queries by category ({rangeLabel})</h2>
+              <Donut data={catTrafficData} />
+            </div>
+          </div>
+        )}
       </Section>
 
       <Section title={`Clients — cluster-wide (${rangeLabel})`}>

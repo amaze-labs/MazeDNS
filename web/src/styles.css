@@ -193,6 +193,17 @@ tr:last-child td {
   color: var(--accent);
 }
 
+/* Inline link-style button */
+.linkbtn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+
 /* Classifier "traffic by category" chips */
 .cat-chips {
   display: flex;

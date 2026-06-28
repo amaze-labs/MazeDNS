@@ -20,12 +20,22 @@ export default function Classifier() {
   const [rows, setRows] = useState<Classification[]>([])
   const [err, setErr] = useState('')
 
+  // Trusted-list viewer
+  const [showTrusted, setShowTrusted] = useState(false)
+  const [trustedSearch, setTrustedSearch] = useState('')
+  const [trustedRows, setTrustedRows] = useState<string[]>([])
+
   const loadInfo = () => api.classifier().then(setInfo).catch((e) => setErr(e.message))
   const loadRows = () => api.classifications(tab).then(setRows).catch((e) => setErr(e.message))
 
   useEffect(() => {
     loadInfo()
   }, [])
+  useEffect(() => {
+    if (!showTrusted) return
+    const t = setTimeout(() => api.trustedList(trustedSearch, 200).then((r) => setTrustedRows(r.domains)).catch(() => {}), 300)
+    return () => clearTimeout(t)
+  }, [showTrusted, trustedSearch])
   useEffect(() => {
     loadRows()
     const id = setInterval(loadRows, 5000)
@@ -66,12 +76,42 @@ export default function Classifier() {
         {(info?.trusted_count ?? 0) > 0 && (
           <>
             {' '}
-            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains loaded — flagged matches are
-            never auto-blocked, only suggested for review.
+            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains (flagged matches are never
+            blocked).{' '}
+            <button className="linkbtn" onClick={() => setShowTrusted((v) => !v)}>
+              {showTrusted ? 'hide' : 'view'}
+            </button>
+          </>
+        )}
+        {(info?.threat_count ?? 0) > 0 && (
+          <>
+            {' '}
+            Threat list: <strong>{info?.threat_count.toLocaleString()}</strong> known-malicious domains (corroborate
+            verdicts).
           </>
         )}
       </p>
       {err && <div className="error">{err}</div>}
+
+      {showTrusted && (
+        <div className="settings-card" style={{ marginBottom: 18 }}>
+          <h3>Trusted domains ({(info?.trusted_count ?? 0).toLocaleString()})</h3>
+          <input
+            className="search"
+            placeholder="search trusted domains…"
+            value={trustedSearch}
+            onChange={(e) => setTrustedSearch(e.target.value)}
+          />
+          <div className="cat-chips" style={{ marginTop: 10 }}>
+            {trustedRows.map((d) => (
+              <span key={d} className="cat-chip badge allow">
+                {d}
+              </span>
+            ))}
+            {trustedRows.length === 0 && <span className="muted">No matches</span>}
+          </div>
+        </div>
+      )}
 
       <div className="settings-card" style={{ marginBottom: 18 }}>
         <h3>Enforcement mode</h3>
@@ -138,8 +178,13 @@ export default function Classifier() {
                 <td>
                   <span className={`badge ${catClass(c.category)}`}>{c.category}</span>
                   {c.trusted && (
-                    <span className="badge allow" title="On the trusted list — likely false positive; review before blocking.">
+                    <span className="badge allow" title="On the trusted list — not blocked.">
                       ⚠ trusted
+                    </span>
+                  )}
+                  {c.threat && (
+                    <span className="badge blocked" title="On a threat-intelligence list — corroborated malicious.">
+                      🛡 threat
                     </span>
                   )}
                 </td>

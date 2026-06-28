@@ -214,15 +214,18 @@ func main() {
 	// UI without a restart. Config seeds the persisted settings on first run.
 	if !worker {
 		defaults := classifier.Settings{
-			Enabled:        cfg.Classifier.Enabled,
-			Endpoint:       cfg.Classifier.Endpoint,
-			Model:          cfg.Classifier.Model,
-			APIKey:         cfg.Classifier.APIKey,
-			Mode:           cfg.Classifier.Mode,
-			MinGapMS:       cfg.Classifier.MinGapMS,
-			TimeoutSec:     cfg.Classifier.TimeoutSec,
-			TrustedListURL: cfg.Classifier.TrustedListURL,
-			TrustedTopN:    cfg.Classifier.TrustedTopN,
+			Enabled:               cfg.Classifier.Enabled,
+			Endpoint:              cfg.Classifier.Endpoint,
+			Model:                 cfg.Classifier.Model,
+			APIKey:                cfg.Classifier.APIKey,
+			Mode:                  cfg.Classifier.Mode,
+			MinGapMS:              cfg.Classifier.MinGapMS,
+			TimeoutSec:            cfg.Classifier.TimeoutSec,
+			TrustedListURL:        cfg.Classifier.TrustedListURL,
+			TrustedTopN:           cfg.Classifier.TrustedTopN,
+			TrustedDisableDefault: cfg.Classifier.TrustedDisableDefault,
+			ThreatListURL:         cfg.Classifier.ThreatListURL,
+			ThreatDisableDefault:  cfg.Classifier.ThreatDisableDefault,
 		}
 		if cur, _ := st.GetMeta(classifier.SettingsKey); cur == "" {
 			_ = classifier.SaveSettings(st, defaults)
@@ -332,7 +335,7 @@ func main() {
 		apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
 		apiSrv = api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled && !worker, worker, !worker)
 		if clsWorker != nil {
-			apiSrv.SetClassifierStatus(clsWorker.TrustedCount)
+			apiSrv.SetClassifierStatus(clsWorker.TrustedCount, clsWorker.ThreatCount, clsWorker.TrustedSearch)
 		}
 		go func() {
 			slog.Info("MazeDNS HTTP starting", "addr", apiAddr, "mode", mode)

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -19,6 +20,11 @@ const DefaultTrustedURL = "https://downloads.majestic.com/majestic_million.csv"
 // DefaultTrustedTopN caps how many of the default list's (ranked, most-popular-
 // first) entries are loaded, so we don't pull the full ~1M list.
 const DefaultTrustedTopN = 100000
+
+// DefaultThreatURL is the public threat-intelligence list used by default to
+// corroborate malicious verdicts. abuse.ch URLhaus publishes a free, no-auth
+// hosts file of domains hosting active malware.
+const DefaultThreatURL = "https://urlhaus.abuse.ch/downloads/hostfile/"
 
 // TrustedSet is an immutable set of registered domains considered well-known and
 // legitimate (e.g. a popularity list like Tranco/Umbrella, or a curated
@@ -41,12 +47,35 @@ func (t *TrustedSet) Has(name string) bool {
 	return ok
 }
 
-// Count returns the number of trusted registered domains.
+// Count returns the number of registered domains in the set.
 func (t *TrustedSet) Count() int {
 	if t == nil {
 		return 0
 	}
 	return len(t.domains)
+}
+
+// Search returns up to limit domains containing q (case-insensitive), sorted.
+// An empty q returns the first `limit` domains — a preview of the set.
+func (t *TrustedSet) Search(q string, limit int) []string {
+	if t == nil {
+		return nil
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	q = strings.ToLower(strings.TrimSpace(q))
+	out := make([]string, 0, limit)
+	for d := range t.domains {
+		if q == "" || strings.Contains(d, q) {
+			out = append(out, d)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // LoadTrusted builds a TrustedSet from a file path or http(s) URL. It accepts

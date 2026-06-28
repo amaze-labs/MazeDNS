@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -42,14 +43,18 @@ type Server struct {
 	clusterEnabled      bool
 	http                *http.Server
 	statsCache          *ttlCache
-	classifierAvailable bool       // master only — classifier endpoints/tab are offered
-	clsTrusted          func() int // trusted-list domain count (nil if unset)
+	classifierAvailable bool // master only — classifier endpoints/tab are offered
+	clsTrusted          func() int
+	clsThreat           func() int
+	clsTrustedSearch    func(string, int) []string
 }
 
-// SetClassifierStatus wires runtime classifier status into the API (the size of
-// the loaded trusted list, for the UI).
-func (s *Server) SetClassifierStatus(trustedCount func() int) {
+// SetClassifierStatus wires runtime classifier status into the API (loaded
+// trusted/threat list sizes and trusted-list search, for the UI).
+func (s *Server) SetClassifierStatus(trustedCount, threatCount func() int, trustedSearch func(string, int) []string) {
 	s.clsTrusted = trustedCount
+	s.clsThreat = threatCount
+	s.clsTrustedSearch = trustedSearch
 }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
@@ -77,6 +82,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		// polling and multiple widgets don't recompute the same query_log slice.
 		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.cached(s.getTimeSeries)))
 		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.cached(s.getCategories)))
+		mux.HandleFunc("GET /api/stats/category-traffic", s.requireRole(roleReadonly, s.cached(s.getCategoryTraffic)))
 		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.cached(s.getInsights)))
 		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.cached(s.getLatency)))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
@@ -102,6 +108,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// LLM domain classifier.
 		mux.HandleFunc("GET /api/classifier", s.requireRole(roleReadonly, s.getClassifier))
+		mux.HandleFunc("GET /api/classifier/trusted", s.requireRole(roleReadonly, s.getTrustedList))
 		mux.HandleFunc("PUT /api/classifier/settings", s.requireRole(roleAdmin, s.putClassifierSettings))
 		mux.HandleFunc("POST /api/classifier/test", s.requireRole(roleAdmin, s.testClassifier))
 		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))
@@ -529,6 +536,39 @@ func (s *Server) getLatency(w http.ResponseWriter, r *http.Request) {
 		names = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"step": step, "nodes": names, "points": points})
+}
+
+// getCategoryTraffic returns query volume folded into the AI content/security
+// categories (social, streaming, ads, …) for the dashboard donut. Names are
+// mapped to their registered domain and matched against the classifications;
+// unmatched volume is reported as "uncategorized".
+func (s *Server) getCategoryTraffic(w http.ResponseWriter, r *http.Request) {
+	hours := clampHours(r.URL.Query().Get("hours"))
+	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	names, err := s.store.TopQueryNames(since, parseNodes(r), 10000)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	catMap, err := s.store.ClassificationCategoryMap()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	totals := map[string]int64{}
+	for _, n := range names {
+		cat := catMap[classifier.RegisteredDomain(n.Name)]
+		if cat == "" {
+			cat = "uncategorized"
+		}
+		totals[cat] += n.Count
+	}
+	out := make([]store.CategoryCount, 0, len(totals))
+	for cat, c := range totals {
+		out = append(out, store.CategoryCount{Category: cat, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {

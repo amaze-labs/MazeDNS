@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strconv"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -44,12 +41,18 @@ type Settings struct {
 	Mode       string `json:"mode"`        // off|suggest|auto
 	MinGapMS   int    `json:"min_gap_ms"`  // min spacing between model calls
 	TimeoutSec int    `json:"timeout_sec"` // per-request timeout (local models can be slow to warm up)
-	// TrustedListURL points at a public list of known-legitimate domains (a file
-	// path or URL — plain/hosts/ranked-CSV). When the model flags a domain on
-	// this list it is treated as a likely false positive: never auto-blocked,
-	// only suggested for review. TrustedTopN caps how many entries are loaded.
-	TrustedListURL string `json:"trusted_list_url"`
-	TrustedTopN    int    `json:"trusted_top_n"`
+	// Trusted list (known-legitimate domains): a flagged domain here is never
+	// blocked. The built-in public default is used unless TrustedDisableDefault;
+	// TrustedListURL adds a custom source (file/URL); TrustedTopN caps a ranked
+	// default list.
+	TrustedListURL        string `json:"trusted_list_url"`
+	TrustedTopN           int    `json:"trusted_top_n"`
+	TrustedDisableDefault bool   `json:"trusted_disable_default"`
+	// Threat list (known-malicious domains): a domain here corroborates a
+	// malicious verdict (boosting it) and is treated as suspicious even if the
+	// model missed it. Built-in public default unless ThreatDisableDefault.
+	ThreatListURL        string `json:"threat_list_url"`
+	ThreatDisableDefault bool   `json:"threat_disable_default"`
 }
 
 func (s Settings) minGap() time.Duration {
@@ -85,19 +88,20 @@ type Worker struct {
 	client    *Client
 	clientKey string
 
-	trusted     atomic.Pointer[TrustedSet]
-	trustedSrc  atomic.Value // string: the source the current trusted set was built from
-	trustedBusy atomic.Bool
+	trusted *setHolder
+	threat  *setHolder
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
 func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worker {
 	return &Worker{
-		store:  st,
-		get:    get,
-		reload: reload,
-		queue:  make(chan string, 2048),
-		recent: make(map[string]time.Time),
+		store:   st,
+		get:     get,
+		reload:  reload,
+		queue:   make(chan string, 2048),
+		recent:  make(map[string]time.Time),
+		trusted: newSetHolder("trusted"),
+		threat:  newSetHolder("threat"),
 	}
 }
 
@@ -171,58 +175,12 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// effectiveTrusted resolves the configured trusted-list setting:
-//   - "off"/"none"/"-"  -> disabled
-//   - "" (blank)        -> the built-in public default list (no manual config)
-//   - anything else     -> that URL or file path
-func effectiveTrusted(s Settings) (url string, topN int) {
-	switch strings.ToLower(strings.TrimSpace(s.TrustedListURL)) {
-	case "off", "none", "-", "disabled":
-		return "", 0
-	case "":
-		topN = s.TrustedTopN
-		if topN <= 0 {
-			topN = DefaultTrustedTopN
-		}
-		return DefaultTrustedURL, topN
-	default:
-		return strings.TrimSpace(s.TrustedListURL), s.TrustedTopN
-	}
-}
+// TrustedCount / ThreatCount report the loaded set sizes (for the UI).
+func (w *Worker) TrustedCount() int { return w.trusted.count() }
+func (w *Worker) ThreatCount() int  { return w.threat.count() }
 
-// ensureTrusted (re)loads the trusted list in the background when the effective
-// source changes, swapping it in atomically. Never blocks the worker.
-func (w *Worker) ensureTrusted(s Settings) {
-	url, topN := effectiveTrusted(s)
-	src := url + "|" + strconv.Itoa(topN)
-	if url == "" {
-		if cur, _ := w.trustedSrc.Load().(string); cur != src {
-			w.trusted.Store(nil)
-			w.trustedSrc.Store(src)
-		}
-		return
-	}
-	if cur, _ := w.trustedSrc.Load().(string); cur == src {
-		return
-	}
-	if !w.trustedBusy.CompareAndSwap(false, true) {
-		return // a load is already in flight
-	}
-	go func() {
-		defer w.trustedBusy.Store(false)
-		set, err := LoadTrusted(url, topN)
-		if err != nil {
-			slog.Warn("trusted list load failed", "source", url, "err", err)
-			return
-		}
-		w.trusted.Store(set)
-		w.trustedSrc.Store(src)
-		slog.Info("trusted list loaded", "source", url, "domains", set.Count())
-	}()
-}
-
-// TrustedCount returns how many domains are loaded in the trusted set.
-func (w *Worker) TrustedCount() int { return w.trusted.Load().Count() }
+// TrustedSearch returns trusted domains matching q (for the trusted-list viewer).
+func (w *Worker) TrustedSearch(q string, limit int) []string { return w.trusted.search(q, limit) }
 
 func (w *Worker) process(ctx context.Context, domain string) {
 	s := w.get()
@@ -230,7 +188,8 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if !s.Enabled || mode == ModeOff {
 		return
 	}
-	w.ensureTrusted(s)
+	w.trusted.ensure(trustedSources(s))
+	w.threat.ensure(threatSources(s))
 	if done, err := w.store.IsClassified(domain); err != nil || done {
 		return // already have a verdict (or DB error) — classify once.
 	}
@@ -239,33 +198,54 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		slog.Warn("classify failed", "domain", domain, "err", err)
 		return
 	}
-	block := v.ShouldBlock()
-	reason := v.Reason
-	// False-positive guard: if the model flags a domain that's on the trusted
-	// list, never auto-block it — record it as a suggestion for human review.
-	trusted := block && w.trusted.Load().Has(domain)
+
+	category, block, conf, reason := v.Category, v.ShouldBlock(), v.Confidence, v.Reason
+	trusted := w.trusted.has(domain)
+	threat := w.threat.has(domain)
+
+	// Threat list (known-bad) corroborates or overrides the model: it boosts a
+	// malicious score and catches false negatives the model missed.
+	if threat {
+		conf = maxF(conf, 0.97)
+		if !block {
+			category, block = "malware", true
+			reason = "on threat list — flagged malicious (model missed it). " + reason
+		} else {
+			reason = "confirmed on threat list. " + reason
+		}
+	}
+	// Trusted list (known-good) wins unless the domain is also a known threat:
+	// a flagged trusted domain is neither blocked nor suggested.
+	if trusted && !threat {
+		block = false
+		reason = "on trusted list — not blocked. " + reason
+	}
+
 	status := store.ClassClean
 	if block {
-		if mode == ModeAuto && !trusted {
+		if mode == ModeAuto {
 			status = store.ClassAuto
 		} else {
 			status = store.ClassSuggested
 		}
 	}
-	if trusted {
-		reason = "on trusted list — review before blocking. " + reason
-	}
 	inserted, err := w.store.InsertClassification(store.Classification{
-		Domain: domain, Category: v.Category, Block: block, Status: status,
-		Confidence: v.Confidence, Reason: reason, Model: s.Model, Trusted: trusted,
+		Domain: domain, Category: category, Block: block, Status: status,
+		Confidence: conf, Reason: reason, Model: s.Model, Trusted: trusted, Threat: threat,
 	})
 	if err != nil {
 		slog.Warn("store classification failed", "domain", domain, "err", err)
 		return
 	}
-	slog.Debug("classified", "domain", domain, "category", v.Category, "block", block, "status", status, "trusted", trusted)
-	// An auto-block verdict takes effect immediately — rebuild the policy.
+	slog.Debug("classified", "domain", domain, "category", category, "status", status, "trusted", trusted, "threat", threat)
 	if inserted && status == store.ClassAuto && w.reload != nil {
 		_ = w.reload()
 	}
+}
+
+func maxF(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }

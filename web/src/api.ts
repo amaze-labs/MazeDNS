@@ -80,6 +80,7 @@ export interface Classification {
   reason: string
   model: string
   trusted: boolean
+  threat: boolean
   updated_at: number
 }
 
@@ -93,6 +94,9 @@ export interface ClassifierSettings {
   timeout_sec: number
   trusted_list_url: string
   trusted_top_n: number
+  trusted_disable_default: boolean
+  threat_list_url: string
+  threat_disable_default: boolean
 }
 
 export interface ClassifierStatus {
@@ -100,6 +104,7 @@ export interface ClassifierStatus {
   counts: Record<string, number>
   category_counts: Record<string, number>
   trusted_count: number
+  threat_count: number
 }
 
 export interface SeriesPoint {
@@ -270,6 +275,8 @@ export const api = {
     fetch(`/api/stats/timeseries?hours=${hours}${nodesParam(nodes)}`).then(j<{ step: number; points: SeriesPoint[] }>),
   categories: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/categories?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
+  categoryTraffic: (hours = 24, nodes?: string[]) =>
+    fetch(`/api/stats/category-traffic?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
   insights: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/insights?hours=${hours}${nodesParam(nodes)}`).then(j<Insights>),
   latency: (hours = 24, nodes?: string[]) =>
@@ -367,6 +374,11 @@ export const api = {
     ),
   setClassifierMode: (mode: string) =>
     fetch('/api/classifier/mode', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ mode }) }).then(j),
+  trustedList: (search = '', limit = 200) => {
+    const p = new URLSearchParams({ limit: String(limit) })
+    if (search) p.set('search', search)
+    return fetch(`/api/classifier/trusted?${p.toString()}`).then(j<{ count: number; domains: string[] }>)
+  },
   classifications: (status = '', limit = 200) => {
     const p = new URLSearchParams({ limit: String(limit) })
     if (status) p.set('status', status)

@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS classifications (
 	reason TEXT NOT NULL DEFAULT '',
 	model TEXT NOT NULL DEFAULT '',
 	trusted INTEGER NOT NULL DEFAULT 0,
+	threat INTEGER NOT NULL DEFAULT 0,
 	updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status);
@@ -188,6 +189,7 @@ CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status)
 		`ALTER TABLE nodes ADD COLUMN insights TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE classifications ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE classifications ADD COLUMN threat INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

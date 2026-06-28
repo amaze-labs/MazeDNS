@@ -34,18 +34,33 @@ www.github.com
 	}
 }
 
-func TestEffectiveTrusted(t *testing.T) {
-	// Blank -> built-in public default.
-	if url, topN := effectiveTrusted(Settings{}); url != DefaultTrustedURL || topN != DefaultTrustedTopN {
-		t.Errorf("blank should use default: %q %d", url, topN)
+func TestTrustedSources(t *testing.T) {
+	// Default: the built-in public list at the default cap.
+	src := trustedSources(Settings{})
+	if len(src) != 1 || src[0].url != DefaultTrustedURL || src[0].topN != DefaultTrustedTopN {
+		t.Fatalf("default trusted sources: %+v", src)
 	}
-	// "off" -> disabled.
-	if url, _ := effectiveTrusted(Settings{TrustedListURL: "off"}); url != "" {
-		t.Errorf("off should disable, got %q", url)
+	// Disable default + add custom.
+	src = trustedSources(Settings{TrustedDisableDefault: true, TrustedListURL: "https://x/list.csv"})
+	if len(src) != 1 || src[0].url != "https://x/list.csv" {
+		t.Fatalf("custom-only trusted sources: %+v", src)
 	}
-	// Custom URL is used as-is.
-	if url, topN := effectiveTrusted(Settings{TrustedListURL: "https://x/list.csv", TrustedTopN: 5}); url != "https://x/list.csv" || topN != 5 {
-		t.Errorf("custom not honored: %q %d", url, topN)
+	// Disable default, no custom -> none.
+	if src = trustedSources(Settings{TrustedDisableDefault: true}); len(src) != 0 {
+		t.Fatalf("disabled trusted sources should be empty: %+v", src)
+	}
+	// Default + custom -> both.
+	if src = trustedSources(Settings{TrustedListURL: "https://x/list.csv"}); len(src) != 2 {
+		t.Fatalf("default+custom should give two sources: %+v", src)
+	}
+}
+
+func TestThreatSources(t *testing.T) {
+	if src := threatSources(Settings{}); len(src) != 1 || src[0].url != DefaultThreatURL {
+		t.Fatalf("default threat sources: %+v", src)
+	}
+	if src := threatSources(Settings{ThreatDisableDefault: true}); len(src) != 0 {
+		t.Fatalf("disabled threat sources should be empty: %+v", src)
 	}
 }
 

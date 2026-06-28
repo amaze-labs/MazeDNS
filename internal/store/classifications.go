@@ -15,7 +15,8 @@ type Classification struct {
 	Confidence float64 `json:"confidence"`
 	Reason     string  `json:"reason"`
 	Model      string  `json:"model"`
-	Trusted    bool    `json:"trusted"` // on the trusted list — flagged for review, not auto-blocked
+	Trusted    bool    `json:"trusted"` // on the trusted list — not blocked
+	Threat     bool    `json:"threat"`  // corroborated by a threat-intel list
 	UpdatedAt  int64   `json:"updated_at"`
 }
 
@@ -62,10 +63,10 @@ func (s *Store) IsClassified(domain string) (bool, error) {
 // human decision) untouched. Returns whether a row was inserted.
 func (s *Store) InsertClassification(c Classification) (bool, error) {
 	res, err := s.db.Exec(
-		`INSERT INTO classifications(domain, category, block, status, confidence, reason, model, trusted, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?)
+		`INSERT INTO classifications(domain, category, block, status, confidence, reason, model, trusted, threat, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(domain) DO NOTHING`,
-		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Reason, c.Model, boolToInt(c.Trusted), time.Now().UnixMilli())
+		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Reason, c.Model, boolToInt(c.Trusted), boolToInt(c.Threat), time.Now().UnixMilli())
 	if err != nil {
 		return false, err
 	}
@@ -87,7 +88,7 @@ func (s *Store) ListClassifications(status string, limit int) ([]Classification,
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	q := `SELECT domain, category, block, status, confidence, reason, model, trusted, updated_at
+	q := `SELECT domain, category, block, status, confidence, reason, model, trusted, threat, updated_at
 	      FROM classifications`
 	var args []any
 	if status != "" {
@@ -104,12 +105,13 @@ func (s *Store) ListClassifications(status string, limit int) ([]Classification,
 	var out []Classification
 	for rows.Next() {
 		var c Classification
-		var block, trusted int
-		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Reason, &c.Model, &trusted, &c.UpdatedAt); err != nil {
+		var block, trusted, threat int
+		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Reason, &c.Model, &trusted, &threat, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Block = block != 0
 		c.Trusted = trusted != 0
+		c.Threat = threat != 0
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -162,6 +164,58 @@ func (s *Store) countClassificationsBy(column string) (map[string]int, error) {
 			return nil, err
 		}
 		out[k] = n
+	}
+	return out, rows.Err()
+}
+
+// ClassificationCategoryMap returns registered-domain -> category for every
+// verdict, so query volume can be folded into categories.
+func (s *Store) ClassificationCategoryMap() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT domain, category FROM classifications`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var d, c string
+		if err := rows.Scan(&d, &c); err != nil {
+			return nil, err
+		}
+		out[d] = c
+	}
+	return out, rows.Err()
+}
+
+// NameCount is a per-name query count.
+type NameCount struct {
+	Name  string
+	Count int64
+}
+
+// TopQueryNames returns the most-queried names since sinceMs (grouped by name),
+// for folding query volume into categories. limited to the top `limit`.
+func (s *Store) TopQueryNames(sinceMs int64, nodes []string, limit int) ([]NameCount, error) {
+	if limit <= 0 || limit > 50000 {
+		limit = 10000
+	}
+	nf, nargs := nodeFilterSQL(nodes)
+	args := append([]any{sinceMs}, nargs...)
+	args = append(args, limit)
+	rows, err := s.db.Query(
+		`SELECT name, COUNT(*) c FROM query_log WHERE ts >= ?`+nf+`
+		 GROUP BY name ORDER BY c DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NameCount
+	for rows.Next() {
+		var n NameCount
+		if err := rows.Scan(&n.Name, &n.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
 	}
 	return out, rows.Err()
 }

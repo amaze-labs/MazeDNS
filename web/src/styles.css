@@ -290,6 +290,11 @@ tr:last-child td {
   border-color: var(--danger);
 }
 
+/* Client IP + resolved name (NetBird peer / reverse-DNS). */
+.client-id .muted {
+  font-size: 12px;
+}
+
 /* Compact table used inside the domain-detail modal. */
 .table.compact th,
 .table.compact td {

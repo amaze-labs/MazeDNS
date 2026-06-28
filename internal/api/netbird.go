@@ -10,6 +10,36 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/netbird"
 )
 
+// resolveClients maps a batch of client IPs to display identities (NetBird peer
+// name / reverse-DNS hostname), so any table that shows a client IP can label it.
+// IPs are passed comma-separated in ?ips=. Always 200 with {ip: {name, source}}.
+func (s *Server) resolveClients(w http.ResponseWriter, r *http.Request) {
+	out := map[string]netbird.Identity{}
+	if s.enricher == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	seen := 0
+	for _, ip := range strings.Split(r.URL.Query().Get("ips"), ",") {
+		ip = strings.TrimSpace(ip)
+		if ip == "" {
+			continue
+		}
+		if _, ok := out[ip]; ok {
+			continue
+		}
+		if seen++; seen > 500 { // bound a single request
+			break
+		}
+		if id := s.enricher.Lookup(ctx, ip); id.Name != "" {
+			out[ip] = id
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // getNetbird returns the NetBird integration settings (token masked) and the
 // number of peers currently mapped.
 func (s *Server) getNetbird(w http.ResponseWriter, _ *http.Request) {

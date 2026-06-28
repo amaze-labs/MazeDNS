@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type QueryLogEntry, type Node } from '../api'
 import { RangeNodeBar, makeNodeColor } from './filters'
+import { useClientNames } from '../useClientNames'
+import ClientLabel from './ClientLabel'
 import Spinner from './Spinner'
 
 const PAGE = 50
@@ -97,6 +99,7 @@ export default function Queries() {
   }
   const arrow = (col: string) => (sort === col ? (desc ? ' ↓' : ' ↑') : '')
   const lastPage = Math.max(0, Math.ceil(total / PAGE) - 1)
+  const clientNames = useClientNames(log.map((e) => e.client))
 
   return (
     <div>
@@ -148,7 +151,7 @@ export default function Queries() {
             <tr key={e.id}>
               <td>{new Date(e.ts).toLocaleTimeString()}</td>
               <td>{e.node || 'master'}</td>
-              <td>{e.client}</td>
+              <td><ClientLabel ip={e.client} names={clientNames} /></td>
               <td>{e.name}</td>
               <td>{e.qtype}</td>
               <td>

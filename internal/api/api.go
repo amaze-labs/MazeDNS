@@ -125,6 +125,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/classifications/decision", s.requireRole(roleAdmin, s.decideClassification))
 		mux.HandleFunc("GET /api/classifier/whois", s.requireRole(roleReadonly, s.getWhois))
 		mux.HandleFunc("GET /api/classifier/clients", s.requireRole(roleReadonly, s.getDomainClients))
+		mux.HandleFunc("GET /api/clients/resolve", s.requireRole(roleReadonly, s.resolveClients))
 		mux.HandleFunc("GET /api/netbird", s.requireRole(roleReadonly, s.getNetbird))
 		mux.HandleFunc("PUT /api/netbird", s.requireRole(roleAdmin, s.putNetbird))
 		mux.HandleFunc("POST /api/netbird/test", s.requireRole(roleAdmin, s.testNetbird))

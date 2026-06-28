@@ -109,6 +109,11 @@ export interface NetbirdSettings {
   token: string
 }
 
+export interface ClientIdentity {
+  name: string // NetBird peer / reverse-DNS hostname ("" if unknown)
+  source: string // "netbird" | "rdns" | ""
+}
+
 export interface ClassifierSettings {
   enabled: boolean
   endpoint: string
@@ -446,6 +451,10 @@ export const api = {
     fetch(`/api/classifier/clients?domain=${encodeURIComponent(domain)}`).then(
       j<{ domain: string; clients: DomainClient[] }>,
     ),
+
+  // Resolve client IPs to identities (NetBird peer / reverse-DNS), batched.
+  resolveClients: (ips: string[]) =>
+    fetch(`/api/clients/resolve?ips=${encodeURIComponent(ips.join(','))}`).then(j<Record<string, ClientIdentity>>),
 
   // NetBird client-identity integration
   netbird: () =>

@@ -26,6 +26,8 @@ import {
   type LatencyPoint,
 } from '../api'
 import { RANGES, RangeNodeBar, OVERALL_COLOR, colorAt } from './filters'
+import { useClientNames } from '../useClientNames'
+import ClientLabel from './ClientLabel'
 
 const catColors: Record<string, string> = {
   ads: '#4ea1ff',
@@ -271,6 +273,7 @@ export default function Dashboard() {
     .map((n) => ({ name: n.node, value: n.total, fill: nodeColor(n.node) }))
   const clientRows = ins?.clients ?? []
   const maxClient = clientRows.reduce((m, c) => Math.max(m, c.total), 0)
+  const clientNames = useClientNames(clientRows.map((c) => c.client))
 
   const now = Date.now() / 1000
   const onlineNodes = nodes.filter((n) => n.is_master || (n.last_seen && now - n.last_seen < ONLINE_WINDOW)).length
@@ -516,7 +519,7 @@ export default function Dashboard() {
           <tbody>
             {clientRows.map((c) => (
               <tr key={c.client}>
-                <td className="name">{c.client}</td>
+                <td className="name"><ClientLabel ip={c.client} names={clientNames} /></td>
                 <td className="num">{c.total.toLocaleString()}</td>
                 <td className="num">{c.blocked.toLocaleString()}</td>
                 <td style={{ width: '40%' }}>

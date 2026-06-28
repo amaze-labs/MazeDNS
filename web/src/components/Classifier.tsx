@@ -127,7 +127,8 @@ export default function Classifier() {
         {(info?.trusted_count ?? 0) > 0 && (
           <>
             {' '}
-            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains (never blocked).{' '}
+            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains (never blocked; includes CDN /
+            cloud-edge providers).{' '}
             <button className="linkbtn" onClick={() => openList('trusted')}>
               {listView === 'trusted' ? 'hide' : 'view'}
             </button>

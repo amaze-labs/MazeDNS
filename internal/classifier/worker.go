@@ -203,13 +203,27 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// TrustedCount / ThreatCount report the loaded set sizes (for the UI).
-func (w *Worker) TrustedCount() int { return w.trusted.count() }
+// TrustedCount / ThreatCount report the loaded set sizes (for the UI). Trusted
+// includes the always-on CDN/cloud-edge allowlist.
+func (w *Worker) TrustedCount() int { return w.trusted.count() + CDNCount() }
 func (w *Worker) ThreatCount() int  { return w.threat.count() }
 
 // TrustedSearch / ThreatSearch return matching domains (for the list viewers).
-func (w *Worker) TrustedSearch(q string, limit int) []string { return w.trusted.search(q, limit) }
-func (w *Worker) ThreatSearch(q string, limit int) []string  { return w.threat.search(q, limit) }
+// Trusted results lead with matching CDN providers.
+func (w *Worker) TrustedSearch(q string, limit int) []string {
+	ql := strings.ToLower(strings.TrimSpace(q))
+	var out []string
+	for _, d := range CDNTrustedDomains {
+		if ql == "" || strings.Contains(d, ql) {
+			out = append(out, d)
+			if len(out) >= limit {
+				return out
+			}
+		}
+	}
+	return append(out, w.trusted.search(q, limit-len(out))...)
+}
+func (w *Worker) ThreatSearch(q string, limit int) []string { return w.threat.search(q, limit) }
 
 func (w *Worker) process(ctx context.Context, domain string) {
 	s := w.get()
@@ -241,12 +255,15 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// false-positive guard.
 	nsTrustedOn := ""
 	for _, ns := range whois.Nameservers {
-		if reg := RegisteredDomain(ns); reg != "" && w.trusted.has(reg) {
+		if reg := RegisteredDomain(ns); reg != "" && (w.trusted.has(reg) || IsCDN(ns)) {
 			nsTrustedOn = reg
 			break
 		}
 	}
-	trusted := listTrusted || nsTrustedOn != ""
+	// CDN / cloud-edge infrastructure is always trusted: a verdict here would apply
+	// to the whole provider (e.g. all of cloudfront.net), so it can never be blocked.
+	cdn := IsCDN(domain)
+	trusted := listTrusted || cdn || nsTrustedOn != ""
 
 	// Reputation enrichment (VirusTotal / AbuseIPDB) — corroborates the verdict and
 	// fed to the model as a signal too.
@@ -264,7 +281,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// (the model's read is just one bounded factor). This is what actually decides
 	// the verdict — not the model's raw confidence.
 	in := ScoreInput{
-		Domain: domain, ListTrusted: listTrusted, NSTrustedOn: nsTrustedOn,
+		Domain: domain, ListTrusted: listTrusted, CDN: cdn, NSTrustedOn: nsTrustedOn,
 		Threat: threat, Whois: whois, Rep: rep, Verdict: v,
 	}
 	score := computeScore(in)

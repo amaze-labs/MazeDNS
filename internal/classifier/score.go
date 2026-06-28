@@ -44,6 +44,7 @@ const (
 type ScoreInput struct {
 	Domain      string
 	ListTrusted bool       // on the popular/trusted-domains allowlist
+	CDN         bool       // a CDN / cloud-edge provider (whole provider is trusted)
 	NSTrustedOn string     // registered domain of trusted authoritative nameservers, if any
 	Threat      bool       // on a threat-intel feed
 	ThreatLabel string     // which feed/source matched (for the breakdown)
@@ -72,9 +73,12 @@ func computeScore(in ScoreInput) Score {
 	// by a trusted entity's own nameservers (which can't be faked) — cannot be
 	// malicious. This is the strongest false-positive guard, so it short-circuits
 	// to a perfect score, overriding the model and even a threat-feed hit.
-	if in.ListTrusted || in.NSTrustedOn != "" {
+	if in.ListTrusted || in.CDN || in.NSTrustedOn != "" {
 		detail := "on the trusted top-domains list — cannot be malicious"
-		if in.NSTrustedOn != "" && !in.ListTrusted {
+		switch {
+		case in.CDN && !in.ListTrusted:
+			detail = "CDN / cloud-edge infrastructure — trusted (a verdict would apply to the whole provider)"
+		case in.NSTrustedOn != "" && !in.ListTrusted:
 			detail = fmt.Sprintf("authoritative nameservers on trusted infrastructure (%s) — cannot be malicious", in.NSTrustedOn)
 		}
 		return Score{Legitimacy: 100, Factors: []Factor{{Label: "Trusted", Detail: detail, Delta: 0}}}

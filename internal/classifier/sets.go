@@ -28,33 +28,32 @@ func (h *setHolder) has(domain string) bool          { return h.set.Load().Has(d
 func (h *setHolder) count() int                      { return h.set.Load().Count() }
 func (h *setHolder) search(q string, n int) []string { return h.set.Load().Search(q, n) }
 
-// ensure reloads the set in the background if the sources changed since last load.
-func (h *setHolder) ensure(sources []domainSource) {
+// ensureSync (re)loads the set synchronously if the sources changed. The worker
+// uses this on its own goroutine so a domain is never classified against a stale
+// or not-yet-loaded list — which, with classify-once, would bake in a false
+// positive (e.g. a Netify app domain seen before its list finished loading).
+func (h *setHolder) ensureSync(sources []domainSource) {
 	key := sourcesKey(sources)
-	if len(sources) == 0 {
-		if cur, _ := h.src.Load().(string); cur != key {
-			h.set.Store(nil)
-			h.src.Store(key)
-		}
-		return
-	}
 	if cur, _ := h.src.Load().(string); cur == key {
 		return
 	}
-	if !h.busy.CompareAndSwap(false, true) {
-		return // a load is already in flight
-	}
-	go func() {
-		defer h.busy.Store(false)
-		set, err := loadSources(sources)
-		if err != nil {
-			slog.Warn(h.name+" list load failed", "err", err)
-			return
-		}
-		h.set.Store(set)
+	if len(sources) == 0 {
+		h.set.Store(nil)
 		h.src.Store(key)
-		slog.Info(h.name+" list loaded", "domains", set.Count())
-	}()
+		return
+	}
+	if !h.busy.CompareAndSwap(false, true) {
+		return // a background load is already in flight
+	}
+	defer h.busy.Store(false)
+	set, err := loadSources(sources)
+	if err != nil {
+		slog.Warn(h.name+" list load failed", "err", err)
+		return
+	}
+	h.set.Store(set)
+	h.src.Store(key)
+	slog.Info(h.name+" list loaded", "domains", set.Count())
 }
 
 func sourcesKey(sources []domainSource) string {
@@ -111,6 +110,12 @@ func trustedSources(s Settings) []domainSource {
 	}
 	if c := customSource(s.TrustedListURL); c != "" {
 		out = append(out, domainSource{c, s.TrustedTopN})
+	}
+	// Netify application-domains: known legitimate app/platform domains.
+	if s.NetifyEnabled {
+		if c := customSource(s.NetifyURL); c != "" {
+			out = append(out, domainSource{c, 0})
+		}
 	}
 	return out
 }

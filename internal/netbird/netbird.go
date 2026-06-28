@@ -28,6 +28,10 @@ type Settings struct {
 	Enabled bool   `json:"enabled"`
 	APIURL  string `json:"api_url"` // e.g. https://api.netbird.io (or a self-hosted management URL)
 	Token   string `json:"token"`   // NetBird PAT (Authorization: Token <token>)
+	// LocalDNS is an internal resolver (ip or ip:port) used for reverse-DNS of
+	// private/internal client IPs, which public DNS can't resolve. Empty = use the
+	// system resolver for everything.
+	LocalDNS string `json:"local_dns"`
 }
 
 func (s Settings) baseURL() string { return strings.TrimRight(strings.TrimSpace(s.APIURL), "/") }
@@ -159,10 +163,18 @@ func (e *Enricher) reverseDNS(ctx context.Context, ip string) string {
 	}
 	e.rdnsMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+	// Internal/private clients won't resolve on public DNS — use the configured
+	// local resolver for them when one is set.
+	resolver := net.DefaultResolver
+	if isInternalIP(ip) {
+		if local := e.get().LocalDNS; local != "" {
+			resolver = dnsResolver(local)
+		}
+	}
 	name := ""
-	if names, err := net.DefaultResolver.LookupAddr(ctx, ip); err == nil && len(names) > 0 {
+	if names, err := resolver.LookupAddr(ctx, ip); err == nil && len(names) > 0 {
 		name = strings.TrimSuffix(names[0], ".")
 	}
 	ttl := time.Hour
@@ -237,4 +249,34 @@ func clientIP(s string) string {
 		return host
 	}
 	return s
+}
+
+// isInternalIP reports whether ip is on a private/internal range — RFC1918,
+// loopback, link-local, unique-local, or the 100.64/10 CGNAT block NetBird uses.
+func isInternalIP(s string) bool {
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return false
+	}
+	if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return true // 100.64.0.0/10
+	}
+	return false
+}
+
+// dnsResolver builds a resolver that dials a specific DNS server (defaulting to
+// port 53), used for internal reverse-DNS.
+func dnsResolver(addr string) *net.Resolver {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, "53")
+	}
+	return &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, network, addr)
+		},
+	}
 }

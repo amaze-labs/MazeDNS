@@ -25,13 +25,18 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Never leak the API key to the UI.
-	cfg.APIKey = ""
+	// Never leak API keys to the UI.
+	cfg.APIKey, cfg.VTAPIKey, cfg.AbuseIPDBAPIKey = "", "", ""
 	trustedCount, threatCount := 0, 0
 	if s.cls != nil {
 		trustedCount = s.cls.TrustedCount()
 		threatCount = s.cls.ThreatCount()
 	}
+	usage, _ := s.store.LLMUsage(14)
+	if usage == nil {
+		usage = []store.LLMUsageDay{}
+	}
+	usageTotals, _ := s.store.LLMUsageTotals()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings":            cfg,
 		"counts":              counts,
@@ -39,6 +44,8 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		"trusted_count":       trustedCount,
 		"threat_count":        threatCount,
 		"threat_feed_catalog": classifier.ThreatFeedCatalog(),
+		"llm_usage":           usage,
+		"llm_usage_totals":    usageTotals,
 	})
 }
 
@@ -75,15 +82,22 @@ func (s *Server) putClassifierSettings(w http.ResponseWriter, r *http.Request) {
 	in.Mode = string(classifier.ParseMode(in.Mode))
 	in.Endpoint = strings.TrimSpace(in.Endpoint)
 	in.Model = strings.TrimSpace(in.Model)
+	// An empty key field means "leave unchanged" so masked fields round-trip.
+	prev := classifier.LoadSettings(s.store, classifier.Settings{})
 	if in.APIKey == "" {
-		prev := classifier.LoadSettings(s.store, classifier.Settings{})
 		in.APIKey = prev.APIKey
+	}
+	if in.VTAPIKey == "" {
+		in.VTAPIKey = prev.VTAPIKey
+	}
+	if in.AbuseIPDBAPIKey == "" {
+		in.AbuseIPDBAPIKey = prev.AbuseIPDBAPIKey
 	}
 	if err := classifier.SaveSettings(s.store, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	in.APIKey = ""
+	in.APIKey, in.VTAPIKey, in.AbuseIPDBAPIKey = "", "", ""
 	writeJSON(w, http.StatusOK, in)
 }
 
@@ -106,7 +120,7 @@ func (s *Server) testClassifier(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), in.Timeout())
 	defer cancel()
 	const sample = "doubleclick.net"
-	v, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample, classifier.Hints{})
+	v, _, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample, classifier.Hints{})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

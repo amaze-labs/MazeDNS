@@ -10,6 +10,16 @@ const MODES = [
   { id: 'auto', label: 'Auto-block', desc: 'Block-category verdicts take effect immediately.' },
 ]
 const STATUS_TABS = ['suggested', 'auto', 'approved', 'rejected', 'clean']
+// Clearer intent than the raw status keys: approved = you blacklisted it,
+// rejected = you whitelisted it.
+const STATUS_LABELS: Record<string, string> = {
+  suggested: 'Suggested',
+  auto: 'Auto-blocked',
+  approved: 'Blacklisted',
+  rejected: 'Whitelisted',
+  clean: 'Clean',
+}
+export const statusLabel = (s: string) => STATUS_LABELS[s] ?? s
 const PAGE = 25
 const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
 // Security categories are red; "other" is neutral/green; content categories blue.
@@ -178,6 +188,69 @@ export default function Classifier() {
         </p>
       </div>
 
+      {info && (info.llm_usage_totals?.calls ?? 0) > 0 && (
+        <div className="settings-card" style={{ marginBottom: 18 }}>
+          <h3>LLM usage</h3>
+          {(() => {
+            const t = info.llm_usage_totals
+            const avg = t.calls ? Math.round(t.latency_ms_total / t.calls) : 0
+            const tokens = t.prompt_tokens + t.completion_tokens
+            const days = [...(info.llm_usage ?? [])].reverse() // oldest -> newest
+            const maxCalls = days.reduce((m, d) => Math.max(m, d.calls), 0)
+            return (
+              <>
+                <div className="usage-tiles">
+                  <div className="usage-tile">
+                    <span className="num">{t.calls.toLocaleString()}</span>
+                    <span className="muted">model calls</span>
+                  </div>
+                  <div className="usage-tile">
+                    <span className="num">{t.errors.toLocaleString()}</span>
+                    <span className="muted">errors</span>
+                  </div>
+                  <div className="usage-tile">
+                    <span className="num">{avg} ms</span>
+                    <span className="muted">avg latency</span>
+                  </div>
+                  <div className="usage-tile">
+                    <span className="num">{tokens ? tokens.toLocaleString() : '—'}</span>
+                    <span className="muted">tokens {tokens ? `(${t.prompt_tokens.toLocaleString()}p / ${t.completion_tokens.toLocaleString()}c)` : 'n/a'}</span>
+                  </div>
+                </div>
+                {days.length > 0 && (
+                  <table className="table compact" style={{ marginTop: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>Day</th>
+                        <th>Calls</th>
+                        <th>Errors</th>
+                        <th>Avg ms</th>
+                        <th style={{ width: '40%' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {days.map((d) => (
+                        <tr key={d.day}>
+                          <td className="muted">{d.day}</td>
+                          <td>{d.calls.toLocaleString()}</td>
+                          <td>{d.errors > 0 ? <span className="badge blocked">{d.errors}</span> : '—'}</td>
+                          <td>{d.calls ? Math.round(d.latency_ms_total / d.calls) : 0}</td>
+                          <td>
+                            <div className="cbar">
+                              <span style={{ width: `${maxCalls ? (d.calls / maxCalls) * 100 : 0}%` }} />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            )
+          })()}
+        </div>
+      )}
+
       {catCounts.length > 0 && (
         <div className="settings-card" style={{ marginBottom: 18 }}>
           <h3>Traffic by category</h3>
@@ -198,7 +271,7 @@ export default function Classifier() {
       <div className="subtabs">
         {STATUS_TABS.map((st) => (
           <button key={st} className={tab === st ? 'active' : ''} onClick={() => setTab(st)}>
-            {st} {counts[st] ? `(${counts[st]})` : ''}
+            {statusLabel(st)} {counts[st] ? `(${counts[st]})` : ''}
           </button>
         ))}
       </div>

@@ -169,6 +169,14 @@ CREATE TABLE IF NOT EXISTS classifications (
 	updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status);
+CREATE TABLE IF NOT EXISTS llm_usage (
+	day TEXT PRIMARY KEY,                        -- UTC date (YYYY-MM-DD)
+	calls INTEGER NOT NULL DEFAULT 0,
+	errors INTEGER NOT NULL DEFAULT 0,
+	prompt_tokens INTEGER NOT NULL DEFAULT 0,
+	completion_tokens INTEGER NOT NULL DEFAULT 0,
+	latency_ms_total INTEGER NOT NULL DEFAULT 0
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)

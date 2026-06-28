@@ -290,6 +290,26 @@ tr:last-child td {
   border-color: var(--danger);
 }
 
+/* LLM usage tiles. */
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+.usage-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.usage-tile .num {
+  font-size: 20px;
+  font-weight: 600;
+}
+
 /* Client IP + resolved name (NetBird peer / reverse-DNS). */
 .client-id .muted {
   font-size: 12px;

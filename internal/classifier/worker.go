@@ -60,6 +60,19 @@ type Settings struct {
 	// WhoisEnabled enriches each classification with the domain's registration
 	// data (via RDAP) — domain age is a strong signal for the model.
 	WhoisEnabled bool `json:"whois_enabled"`
+	// Netify application-domains dataset: a catalog mapping domains to known
+	// applications/platforms. Treated as a trusted source so secondary/backend
+	// domains of legitimate apps (e.g. tiktokv.eu) are not flagged. The feed is
+	// account-gated, so the URL (including any token) is user-supplied.
+	NetifyEnabled bool   `json:"netify_enabled"`
+	NetifyURL     string `json:"netify_url"`
+	// Reputation enrichment (optional, key-gated): corroborate verdicts against
+	// public reputation services. A clean report raises legitimacy; a malicious
+	// one lowers it. VirusTotal checks the domain; AbuseIPDB checks its resolved IP.
+	VTEnabled        bool   `json:"vt_enabled"`
+	VTAPIKey         string `json:"vt_api_key"`
+	AbuseIPDBEnabled bool   `json:"abuseipdb_enabled"`
+	AbuseIPDBAPIKey  string `json:"abuseipdb_api_key"`
 }
 
 func (s Settings) minGap() time.Duration {
@@ -98,6 +111,7 @@ type Worker struct {
 	trusted *setHolder
 	threat  *setHolder
 	whois   *WhoisCache
+	rep     *RepCache
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -111,6 +125,7 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		trusted: newSetHolder("trusted"),
 		threat:  newSetHolder("threat"),
 		whois:   NewWhoisCache(),
+		rep:     NewRepCache(),
 	}
 }
 
@@ -177,8 +192,8 @@ func (w *Worker) Run(ctx context.Context) {
 	// Start loading the trusted/threat lists up front so the first classified
 	// domains already have the signals (rather than racing the first lookup).
 	s := w.get()
-	w.trusted.ensure(trustedSources(s))
-	w.threat.ensure(threatSources(s))
+	w.trusted.ensureSync(trustedSources(s))
+	w.threat.ensureSync(threatSources(s))
 	for {
 		select {
 		case <-ctx.Done():
@@ -208,8 +223,8 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if !s.Enabled || mode == ModeOff {
 		return
 	}
-	w.trusted.ensure(trustedSources(s))
-	w.threat.ensure(threatSources(s))
+	w.trusted.ensureSync(trustedSources(s))
+	w.threat.ensureSync(threatSources(s))
 	if done, err := w.store.IsClassified(domain); err != nil || done {
 		return // already have a verdict (or DB error) — classify once.
 	}
@@ -239,7 +254,13 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	}
 	trusted := listTrusted || nsTrustedOn != ""
 
-	v, err := w.clientFor(s).Classify(ctx, domain, Hints{Trusted: trusted, Threat: threat, Whois: whois.summary()})
+	// Reputation enrichment (VirusTotal / AbuseIPDB) — corroborates the verdict and
+	// fed to the model as a signal too.
+	rep := w.rep.Lookup(ctx, domain, s)
+
+	start := time.Now()
+	v, usage, err := w.clientFor(s).Classify(ctx, domain, Hints{Trusted: trusted, Threat: threat, Whois: whois.summary(), Reputation: rep.summary()})
+	_ = w.store.RecordLLMUsage(err != nil, usage.PromptTokens, usage.CompletionTokens, int(time.Since(start).Milliseconds()))
 	if err != nil {
 		slog.Warn("classify failed", "domain", domain, "err", err)
 		return
@@ -248,21 +269,27 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// Score the domain: start at 100% legitimate and let every risk factor deduct
 	// (the model's read is just one bounded factor). This is what actually decides
 	// the verdict — not the model's raw confidence.
-	score := computeScore(ScoreInput{
+	in := ScoreInput{
 		Domain: domain, ListTrusted: listTrusted, NSTrustedOn: nsTrustedOn,
-		Threat: threat, Whois: whois, Verdict: v,
-	})
+		Threat: threat, Whois: whois, Rep: rep, Verdict: v,
+	}
+	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security
-	// category, or a threat feed matched) AND a low legitimacy score. So young /
-	// risky-TLD legitimate domains are NOT blocked on structure alone, and a
-	// trusted/established domain stays well above the threshold.
-	candidate := v.ShouldBlock() || threat
+	// category, a threat feed matched, or a reputation service flagged it) AND a low
+	// legitimacy score. So young / risky-TLD legitimate domains are NOT blocked on
+	// structure alone, and a trusted/established domain stays well above the threshold.
+	candidate := v.ShouldBlock() || threat || in.RepMalicious()
 	block := candidate && score.Legitimacy < blockThreshold
 
 	category := v.Category
-	if threat && !v.ShouldBlock() {
-		category = "malware" // on a threat feed but the model missed it
+	if (threat || in.RepMalicious()) && !v.ShouldBlock() {
+		category = "malware" // flagged by a feed/reputation but the model missed it
+	}
+	// A clean verdict must not keep a malicious tag: if it isn't blocked, drop any
+	// security category the model assigned (it was overridden by trust/score).
+	if !block && blockCategories[category] {
+		category = "other"
 	}
 
 	status := store.ClassClean

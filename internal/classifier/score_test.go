@@ -44,11 +44,22 @@ func TestComputeScore(t *testing.T) {
 			// young deducts, but no threat indicator -> not a block candidate
 			minLegit: 1,
 		},
+		{
+			name:      "VirusTotal-malicious blocks even with a benign model verdict",
+			in:        ScoreInput{Domain: "evil.example", Whois: WhoisInfo{AgeDays: 3000}, Rep: Reputation{VTChecked: true, VTMalicious: 6}, Verdict: block("other", 0.3)},
+			wantBlock: true, maxLegit: blockThreshold - 1,
+		},
+		{
+			name: "VirusTotal-clean floors a secondary app domain the model flags (tiktokv.eu)",
+			in:   ScoreInput{Domain: "tiktokv.eu", Whois: WhoisInfo{AgeDays: 1500}, Rep: Reputation{VTChecked: true, VTHarmless: 80}, Verdict: block("phishing", 1.0)},
+			// VT-clean floor keeps it >= blockThreshold despite a confident phishing verdict
+			minLegit: reputationFloor,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := computeScore(tt.in)
-			candidate := tt.in.Verdict.ShouldBlock() || tt.in.Threat
+			candidate := tt.in.Verdict.ShouldBlock() || tt.in.Threat || tt.in.RepMalicious()
 			gotBlock := candidate && s.Legitimacy < blockThreshold
 			if gotBlock != tt.wantBlock {
 				t.Errorf("block = %v (legit %d), want %v", gotBlock, s.Legitimacy, tt.wantBlock)

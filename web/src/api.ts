@@ -107,6 +107,7 @@ export interface NetbirdSettings {
   enabled: boolean
   api_url: string
   token: string
+  local_dns: string // internal resolver for reverse-DNS of private client IPs
 }
 
 export interface ClientIdentity {
@@ -129,6 +130,21 @@ export interface ClassifierSettings {
   threat_list_url: string
   threat_disable_default: boolean
   whois_enabled: boolean
+  netify_enabled: boolean
+  netify_url: string
+  vt_enabled: boolean
+  vt_api_key: string
+  abuseipdb_enabled: boolean
+  abuseipdb_api_key: string
+}
+
+export interface LLMUsageDay {
+  day: string
+  calls: number
+  errors: number
+  prompt_tokens: number
+  completion_tokens: number
+  latency_ms_total: number
 }
 
 export interface ThreatFeed {
@@ -157,6 +173,8 @@ export interface ClassifierStatus {
   trusted_count: number
   threat_count: number
   threat_feed_catalog: ThreatFeed[]
+  llm_usage: LLMUsageDay[]
+  llm_usage_totals: LLMUsageDay
 }
 
 export interface SeriesPoint {

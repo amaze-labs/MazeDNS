@@ -10,6 +10,9 @@ const fmtTime = (ms: number) => (ms ? new Date(ms).toLocaleString() : '—')
 
 // scoreClass colours the legitimacy number: high = safe (green), low = risky (red).
 const scoreClass = (n: number) => (n >= 70 ? 'allow' : n >= 50 ? 'info' : 'blocked')
+// Clearer intent: approved = blacklisted, rejected = whitelisted.
+const statusText = (s: string) =>
+  s === 'auto' || s === 'approved' ? 'blacklisted' : s === 'rejected' ? 'whitelisted' : s
 
 // DomainDetail shows everything known about one classified domain: the legitimacy
 // scorecard (start 100, deduct per risk factor), live WHOIS/RDAP data, the clients
@@ -65,7 +68,7 @@ export default function DomainDetail({
         <span>
           <span className={`badge ${scoreClass(score)}`}>{score}% legitimate</span>
           <span className="muted" style={{ marginLeft: 8 }}>
-            {blocked ? 'blocked' : c.status === 'rejected' ? 'allowed' : c.status}
+            {statusText(c.status)}
           </span>
         </span>
         <span className="muted">Model</span>

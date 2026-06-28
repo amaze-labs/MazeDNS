@@ -34,6 +34,7 @@ const (
 	blockThreshold   = 50  // legitimacy below this -> block (if there's a threat indicator)
 	autoThreshold    = 35  // ...and below this, confident enough to auto-block
 	establishedFloor = 55  // a non-threat established domain can't be pushed below this by soft signals
+	reputationFloor  = 65  // a VirusTotal-clean domain can't be pushed below this by soft signals
 	establishedDays  = 730 // ~2 years: "established"
 )
 
@@ -42,12 +43,26 @@ const (
 // back in here as one more (bounded) factor.
 type ScoreInput struct {
 	Domain      string
-	ListTrusted bool      // on the popular/trusted-domains allowlist
-	NSTrustedOn string    // registered domain of trusted authoritative nameservers, if any
-	Threat      bool      // on a threat-intel feed
-	ThreatLabel string    // which feed/source matched (for the breakdown)
-	Whois       WhoisInfo // registration data
-	Verdict     Verdict   // the model's assessment
+	ListTrusted bool       // on the popular/trusted-domains allowlist
+	NSTrustedOn string     // registered domain of trusted authoritative nameservers, if any
+	Threat      bool       // on a threat-intel feed
+	ThreatLabel string     // which feed/source matched (for the breakdown)
+	Whois       WhoisInfo  // registration data
+	Rep         Reputation // public reputation services (VirusTotal / AbuseIPDB)
+	Verdict     Verdict    // the model's assessment
+}
+
+// RepMalicious reports whether the reputation services indicate the domain is
+// malicious (so it becomes a block candidate on its own).
+func (in ScoreInput) RepMalicious() bool {
+	return in.Rep.VTMalicious >= 2 || (in.Rep.AbuseChecked && in.Rep.AbuseScore >= 50)
+}
+
+func imin(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // computeScore turns the signals into a legitimacy score + an auditable factor
@@ -111,6 +126,23 @@ func computeScore(in ScoreInput) Score {
 		add(f.Label, f.Detail, f.Delta)
 	}
 
+	// Reputation services — third-party corroboration. A clean VirusTotal report
+	// is a meaningful "leave it alone" signal (cuts false positives on secondary
+	// app domains); a malicious one is a strong deduction.
+	if in.Rep.VTChecked {
+		switch {
+		case in.Rep.VTMalicious >= 2:
+			add("VirusTotal", fmt.Sprintf("%d vendors flag it malicious", in.Rep.VTMalicious), -imin(60, in.Rep.VTMalicious*12))
+		case in.Rep.VTSuspicious >= 3:
+			add("VirusTotal", fmt.Sprintf("%d vendors flag it suspicious", in.Rep.VTSuspicious), -imin(30, in.Rep.VTSuspicious*6))
+		case in.Rep.VTHarmless > 0:
+			note("VirusTotal", fmt.Sprintf("clean — %d vendors harmless, 0 malicious", in.Rep.VTHarmless))
+		}
+	}
+	if in.Rep.AbuseChecked && in.Rep.AbuseScore >= 25 {
+		add("AbuseIPDB", fmt.Sprintf("IP %s abuse confidence %d%% (%d reports)", in.Rep.AbuseIP, in.Rep.AbuseScore, in.Rep.AbuseReports), -imin(50, in.Rep.AbuseScore/2))
+	}
+
 	// Model assessment — the LLM's own read, made WITH all the signals above in
 	// hand. It contributes (up to -50) but, by being one bounded factor, it can no
 	// longer by itself sink an otherwise-legitimate domain (the false-positive fix).
@@ -131,8 +163,15 @@ func computeScore(in ScoreInput) Score {
 	// Established-domain floor — phishing/malware is overwhelmingly young, so an
 	// old domain that is NOT on a threat feed can't be dragged into block range by
 	// soft signals (model + lexical) alone.
-	if in.Whois.AgeDays >= establishedDays && !in.Threat && legit < establishedFloor {
+	if in.Whois.AgeDays >= establishedDays && !in.Threat && !in.RepMalicious() && legit < establishedFloor {
 		add("Established floor", fmt.Sprintf("%d-day-old domain — soft signals alone don't block it", in.Whois.AgeDays), establishedFloor-legit)
+	}
+
+	// Reputation-clean floor — a domain VirusTotal reports clean (and that no feed
+	// flags) shouldn't be sunk into block range by the model or name shape alone.
+	repClean := in.Rep.VTChecked && in.Rep.VTMalicious == 0 && in.Rep.VTSuspicious == 0 && in.Rep.VTHarmless > 0
+	if repClean && !in.Threat && !in.RepMalicious() && legit < reputationFloor {
+		add("Reputation floor", "VirusTotal reports it clean — soft signals alone don't block it", reputationFloor-legit)
 	}
 
 	if legit < 0 {

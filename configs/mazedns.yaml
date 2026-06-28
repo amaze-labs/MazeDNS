@@ -95,6 +95,18 @@ classifier:                    # optional LLM domain classification (master only
   # Enrich each classification with WHOIS/RDAP registration data (domain age,
   # registrar) — a strong signal for the model. One RDAP lookup per new domain.
   whois_enabled: true
+  # Netify application-domains catalog: maps domains to known apps/platforms.
+  # Treated as TRUSTED so secondary/backend domains of legitimate apps (e.g.
+  # tiktokv.eu) aren't flagged. The feed is account-gated — supply your URL.
+  netify_enabled: false
+  netify_url: ""                  # e.g. https://www.netify.ai/.../application-domains.csv?token=...
+  # Reputation services (optional, key-gated): corroborate verdicts. A clean
+  # report raises the legitimacy score (fewer false positives); a malicious one
+  # lowers it. VirusTotal checks the domain; AbuseIPDB checks its resolved IP.
+  vt_enabled: false
+  vt_api_key: ""
+  abuseipdb_enabled: false
+  abuseipdb_api_key: ""
 
 cluster:                       # master<->worker config replication
   enabled: false               # worker: start the sync agent (auto-enabled when master_url+node_key are set). The master's control plane is always on — enroll nodes in the UI.

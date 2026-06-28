@@ -495,6 +495,84 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               </span>
             </label>
           </div>
+
+          <h4 style={{ textAlign: 'left', marginBottom: 4 }}>Known-application catalog (false-positive reduction)</h4>
+          <div className="field">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={cls.netify_enabled}
+                onChange={(e) => setCls({ ...cls, netify_enabled: e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">
+                Netify application-domains — treat known app/platform domains (e.g. tiktokv.eu) as trusted
+              </span>
+            </label>
+          </div>
+          {cls.netify_enabled && (
+            <div className="field">
+              <label>Netify feed URL (account-gated; include your token)</label>
+              <input
+                value={cls.netify_url}
+                onChange={(e) => setCls({ ...cls, netify_url: e.target.value })}
+                placeholder="https://www.netify.ai/.../application-domains.csv?token=…"
+              />
+            </div>
+          )}
+
+          <h4 style={{ textAlign: 'left', marginBottom: 4 }}>Reputation services (corroboration)</h4>
+          <label className="muted" style={{ marginTop: 0 }}>
+            Optional third-party lookups per new domain. A clean report raises the legitimacy score (fewer false
+            positives); a malicious one lowers it. Keys are stored server-side and never shown back.
+          </label>
+          <div className="field">
+            <label className="toggle">
+              <input type="checkbox" checked={cls.vt_enabled} onChange={(e) => setCls({ ...cls, vt_enabled: e.target.checked })} />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">VirusTotal — check the domain's reputation</span>
+            </label>
+          </div>
+          {cls.vt_enabled && (
+            <div className="field">
+              <label>VirusTotal API key</label>
+              <input
+                type="password"
+                value={cls.vt_api_key}
+                onChange={(e) => setCls({ ...cls, vt_api_key: e.target.value })}
+                placeholder="leave blank to keep the saved key"
+              />
+            </div>
+          )}
+          <div className="field">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={cls.abuseipdb_enabled}
+                onChange={(e) => setCls({ ...cls, abuseipdb_enabled: e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">AbuseIPDB — check the domain's resolved IP</span>
+            </label>
+          </div>
+          {cls.abuseipdb_enabled && (
+            <div className="field">
+              <label>AbuseIPDB API key</label>
+              <input
+                type="password"
+                value={cls.abuseipdb_api_key}
+                onChange={(e) => setCls({ ...cls, abuseipdb_api_key: e.target.value })}
+                placeholder="leave blank to keep the saved key"
+              />
+            </div>
+          )}
+
           <div className="settings-actions">
             <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
               {clsSaving ? 'Saving…' : 'Save classifier'}
@@ -542,6 +620,14 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               value={nb.token}
               onChange={(e) => setNb({ ...nb, token: e.target.value })}
               placeholder={nbInfo?.has_token ? '•••••••• (unchanged)' : 'nbp_…'}
+            />
+          </div>
+          <div className="field">
+            <label>Internal DNS resolver (optional) — reverse-DNS for private/internal client IPs</label>
+            <input
+              value={nb.local_dns}
+              onChange={(e) => setNb({ ...nb, local_dns: e.target.value })}
+              placeholder="192.168.1.1  (your router / internal DNS; public IPs use the system resolver)"
             />
           </div>
           <div className="settings-actions">

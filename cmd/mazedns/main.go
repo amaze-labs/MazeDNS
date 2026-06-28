@@ -229,6 +229,12 @@ func main() {
 			ThreatListURL:         cfg.Classifier.ThreatListURL,
 			ThreatDisableDefault:  cfg.Classifier.ThreatDisableDefault,
 			WhoisEnabled:          cfg.Classifier.WhoisEnabled,
+			NetifyEnabled:         cfg.Classifier.NetifyEnabled,
+			NetifyURL:             cfg.Classifier.NetifyURL,
+			VTEnabled:             cfg.Classifier.VTEnabled,
+			VTAPIKey:              cfg.Classifier.VTAPIKey,
+			AbuseIPDBEnabled:      cfg.Classifier.AbuseIPDBEnabled,
+			AbuseIPDBAPIKey:       cfg.Classifier.AbuseIPDBAPIKey,
 		}
 		// Default to the broad built-in feed set when none configured.
 		if defaults.ThreatFeeds == nil {

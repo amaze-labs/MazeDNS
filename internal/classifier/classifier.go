@@ -126,21 +126,32 @@ type chatResp struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
+// Usage is the token accounting an OpenAI-compatible endpoint reports (0 when the
+// server doesn't return it).
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 // Hints carries deterministic signals (looked up before the model runs) so the
 // model can incorporate them into its verdict and reasoning.
 type Hints struct {
-	Trusted bool   // on a known-legitimate / popular-domains list
-	Threat  bool   // on a known-malicious threat-intel feed
-	Whois   string // one-line registration summary (e.g. "registered 5 days ago …")
+	Trusted    bool   // on a known-legitimate / popular-domains list
+	Threat     bool   // on a known-malicious threat-intel feed
+	Whois      string // one-line registration summary (e.g. "registered 5 days ago …")
+	Reputation string // reputation-service summary (VirusTotal / AbuseIPDB)
 }
 
-// Classify returns the model's verdict for a domain, informed by any hints.
-func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict, error) {
+// Classify returns the model's verdict for a domain (and the endpoint's token
+// usage), informed by any hints.
+func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict, Usage, error) {
 	user := "Classify this domain: " + domain
 	if h.Threat {
 		user += "\nSignal: this domain appears on a public threat-intelligence feed of domains hosting active malware — weigh this heavily."
@@ -150,6 +161,9 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 	}
 	if h.Whois != "" {
 		user += "\nRegistration (WHOIS): " + h.Whois + "."
+	}
+	if h.Reputation != "" {
+		user += "\nReputation services: " + h.Reputation + "."
 	}
 	body, err := json.Marshal(chatReq{
 		Model:       c.model,
@@ -161,11 +175,11 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 		},
 	})
 	if err != nil {
-		return Verdict{}, err
+		return Verdict{}, Usage{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return Verdict{}, err
+		return Verdict{}, Usage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -173,24 +187,29 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Verdict{}, err
+		return Verdict{}, Usage{}, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
-		return Verdict{}, fmt.Errorf("classifier: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var cr chatResp
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return Verdict{}, fmt.Errorf("classifier: bad response: %w", err)
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: bad response: %w", err)
 	}
 	if cr.Error != nil {
-		return Verdict{}, fmt.Errorf("classifier: %s", cr.Error.Message)
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
-		return Verdict{}, fmt.Errorf("classifier: empty response")
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: empty response")
 	}
-	return parseVerdict(cr.Choices[0].Message.Content)
+	var usage Usage
+	if cr.Usage != nil {
+		usage = *cr.Usage
+	}
+	v, err := parseVerdict(cr.Choices[0].Message.Content)
+	return v, usage, err
 }
 
 // parseVerdict extracts the JSON verdict from the model's reply, tolerating

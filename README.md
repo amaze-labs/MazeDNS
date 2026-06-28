@@ -195,6 +195,28 @@ per-client stats collapse to one client. To preserve real client IPs:
 - **Local dev on macOS/Windows:** run the binary natively (`make run-ui`) — Docker
   Desktop cannot pass the original client IP through its VM.
 
+### Host tuning (busy / container hosts)
+
+On a host that fronts many containers, the kernel-default UDP socket buffer
+(~208 KB) overflows under concurrent DNS bursts and silently drops packets —
+seen as high DNS tail latency while CPU stays low (`netstat -su` shows a growing
+`receive buffer errors`). MazeDNS requests an 8 MiB socket buffer, but the kernel
+caps it at `net.core.rmem_max`/`wmem_max`, so raise those on the host:
+
+```bash
+sudo sysctl -w net.core.rmem_max=16777216
+sudo sysctl -w net.core.rmem_default=4194304
+sudo sysctl -w net.core.wmem_max=16777216
+sudo sysctl -w net.core.netdev_max_backlog=4096
+# persist:
+printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=4194304\nnet.core.wmem_max=16777216\nnet.core.netdev_max_backlog=4096\n' \
+  | sudo tee /etc/sysctl.d/99-dns-udp.conf
+```
+
+See **[docs/troubleshooting.md](docs/troubleshooting.md)** for the full runbook
+(UDP buffers, conntrack exhaustion, the Alpine/musl ~5 s race, DoT upstreams), and
+`dev/dns-latency-debug.sh` for a read-only diagnostic that prints a verdict.
+
 ### Compose
 
 - **Dev:** `docker compose up --build` (`docker-compose.yml`) — a full local

@@ -213,28 +213,43 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	}
 
 	// Look the deterministic signals up FIRST, then let the model decide with them
-	// in hand (so its category + reasoning incorporate the threat/trusted/WHOIS
-	// context).
-	trusted := w.trusted.has(domain)
+	// in hand. Crucially, those signals can also OVERRIDE the model afterward — a
+	// small local model can still hallucinate "phishing @ 100%" against clear
+	// evidence (e.g. aaplimg.com on Apple's nameservers).
+	listTrusted := w.trusted.has(domain)
 	threat := w.threat.has(domain)
-	hints := Hints{Trusted: trusted, Threat: threat}
+	var whois WhoisInfo
 	if s.WhoisEnabled {
 		if info, werr := w.whois.Lookup(ctx, domain); werr == nil {
-			hints.Whois = info.summary()
+			whois = info
 		}
 	}
-	v, err := w.clientFor(s).Classify(ctx, domain, hints)
+	// Nameserver trust: a domain whose authoritative nameservers belong to a
+	// trusted top domain is that entity's own infrastructure (NS can't be faked),
+	// so it cannot be phishing *of* that entity. This is the strongest single
+	// false-positive guard.
+	nsTrustedOn := ""
+	for _, ns := range whois.Nameservers {
+		if reg := RegisteredDomain(ns); reg != "" && w.trusted.has(reg) {
+			nsTrustedOn = reg
+			break
+		}
+	}
+	trusted := listTrusted || nsTrustedOn != ""
+
+	v, err := w.clientFor(s).Classify(ctx, domain, Hints{Trusted: trusted, Threat: threat, Whois: whois.summary()})
 	if err != nil {
 		slog.Warn("classify failed", "domain", domain, "err", err)
 		return
 	}
 	category, block, conf, reason := v.Category, v.ShouldBlock(), v.Confidence, v.Reason
 
-	// Safety rails — applied after the model as a backstop (a small local model can
-	// still hallucinate even with the hints):
-	//  - a known threat must never be left non-blocking,
-	//  - a trusted domain must never be blocked.
-	if threat {
+	// Deterministic overrides, in priority order:
+	//  1. known threat  -> always malicious,
+	//  2. trusted (list or nameserver infrastructure) -> never blocked,
+	//  3. established (old) domain -> never AUTO-blocked on a model-only verdict.
+	switch {
+	case threat:
 		conf = maxF(conf, 0.97)
 		if !block {
 			category, block = "malware", true
@@ -242,15 +257,28 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		} else {
 			reason = "confirmed on threat list. " + reason
 		}
-	}
-	if trusted && !threat {
+	case trusted:
+		if block {
+			if nsTrustedOn != "" && !listTrusted {
+				reason = fmt.Sprintf("nameservers on trusted infrastructure (%s) — legitimate, not blocked. ", nsTrustedOn) + reason
+			} else {
+				reason = "on trusted list — not blocked. " + reason
+			}
+		}
 		block = false
-		reason = "on trusted list — not blocked. " + reason
+	}
+
+	// Established-domain guard: phishing/malware is overwhelmingly young and
+	// ephemeral, so don't AUTO-block an old domain on a model-only verdict — route
+	// it to review instead.
+	forceReview := block && !threat && whois.AgeDays > 730
+	if forceReview {
+		reason = fmt.Sprintf("established domain (%d days old) — verify before blocking. ", whois.AgeDays) + reason
 	}
 
 	status := store.ClassClean
 	if block {
-		if mode == ModeAuto {
+		if mode == ModeAuto && !forceReview {
 			status = store.ClassAuto
 		} else {
 			status = store.ClassSuggested

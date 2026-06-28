@@ -38,12 +38,17 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           The local model classifies it <strong>with those signals in hand</strong> → category + confidence
         </Step>
         <Arrow />
-        <Step>Safety rails (backstop — a small model can still err)</Step>
+        <Step>Safety rails (backstop — a small model can still err, even with the hints)</Step>
         <Branch tone="block" label="threat">
-          Force <strong>malicious</strong> and boost the score to <strong>≥97%</strong> — even if the model disagreed.
+          On a threat feed → force <strong>malicious</strong>, score <strong>≥97%</strong> — even if the model disagreed.
         </Branch>
         <Branch tone="allow" label="trusted">
-          <strong>Never blocked</strong> — overrides the model (the false-positive guard).
+          On the trusted list, <strong>or nameservers on a trusted domain</strong> (e.g. <code>apple.com</code>) →{' '}
+          <strong>never blocked</strong>. Nameservers can't be faked, so this is the strongest false-positive guard.
+        </Branch>
+        <Branch tone="allow" label="established">
+          Old/established domain (&gt;2 years) → <strong>not auto-blocked</strong> on a model-only verdict (sent to
+          review) — phishing/malware is overwhelmingly young.
         </Branch>
         <Arrow />
         <Step>Is it a blocking verdict? (a security category, and not trusted)</Step>

@@ -74,22 +74,30 @@ export default function DomainDetail({
       </div>
 
       <h4>Score breakdown — what drove the verdict</h4>
+      <p className="muted" style={{ textAlign: 'left' }}>
+        Signals are gathered first and fed to the model; the model then predicts; finally the deterministic signals can
+        override it.
+      </p>
       <div className="signals">
-        <Signal label="Model prediction" value={`${c.category} @ ${Math.round((c.confidence || 0) * 100)}%`} />
+        {/* 1. Deterministic signals (inputs, and able to override the model). */}
         <Signal
-          label={`Threat intel — abuse.ch URLhaus (${threatCount.toLocaleString()} domains)`}
-          value={c.threat ? 'Listed → forced malicious, score floored to ≥97%' : 'Not on the feed'}
+          label={`Threat intel (${threatCount.toLocaleString()} domains)`}
+          value={c.threat ? 'Listed → forced malicious, score floored to ≥97%' : 'Not on any feed'}
           dir={c.threat ? 'up' : ''}
         />
         <Signal
-          label={`Trusted list (${trustedCount.toLocaleString()} domains)`}
-          value={c.trusted ? 'Listed → never blocked (overrides the model)' : 'Not on the list'}
+          label="Trusted (allowlist / nameserver infrastructure)"
+          value={
+            c.trusted
+              ? 'Trusted → never blocked (overrides the model — see Ownership below)'
+              : `Not on the trusted list (${trustedCount.toLocaleString()} domains)`
+          }
           dir={c.trusted ? 'down' : ''}
         />
         {whois && whois.age_days > 0 ? (
           <Signal
             label="Domain age (WHOIS)"
-            value={whois.age_days < 90 ? `${whois.age_days} days — very new, suspicious` : `${whois.age_days} days — established`}
+            value={whois.age_days < 90 ? `${whois.age_days} days — very new, suspicious` : `${whois.age_days} days — established (not auto-blocked on a model-only verdict)`}
             dir={whois.age_days < 90 ? 'up' : 'down'}
           />
         ) : (
@@ -98,9 +106,13 @@ export default function DomainDetail({
         {whois && (whois.registrant || whois.nameservers?.length > 0) && (
           <Signal
             label="Ownership (WHOIS)"
-            value={whois.registrant || `nameservers: ${(whois.nameservers || []).slice(0, 2).join(', ')}`}
+            value={whois.registrant ? `registrant: ${whois.registrant}` : `nameservers: ${(whois.nameservers || []).slice(0, 3).join(', ')}`}
+            dir={c.trusted ? 'down' : ''}
           />
         )}
+        {/* 2. The model's own prediction (made with the signals in hand). */}
+        <Signal label="Model prediction" value={`${c.category} @ ${Math.round((c.confidence || 0) * 100)}%`} />
+        {/* 3. The resulting decision after overrides. */}
         <Signal
           label="Final verdict"
           value={`${blocked ? 'blocked' : c.status === 'rejected' ? 'allowed' : c.status} @ ${Math.round((c.confidence || 0) * 100)}%`}

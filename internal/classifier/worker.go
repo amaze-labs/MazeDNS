@@ -60,12 +60,6 @@ type Settings struct {
 	// WhoisEnabled enriches each classification with the domain's registration
 	// data (via RDAP) — domain age is a strong signal for the model.
 	WhoisEnabled bool `json:"whois_enabled"`
-	// Netify application-domains dataset: a catalog mapping domains to known
-	// applications/platforms. Treated as a trusted source so secondary/backend
-	// domains of legitimate apps (e.g. tiktokv.eu) are not flagged. The feed is
-	// account-gated, so the URL (including any token) is user-supplied.
-	NetifyEnabled bool   `json:"netify_enabled"`
-	NetifyURL     string `json:"netify_url"`
 	// Reputation enrichment (optional, key-gated): corroborate verdicts against
 	// public reputation services. A clean report raises legitimacy; a malicious
 	// one lowers it. VirusTotal checks the domain; AbuseIPDB checks its resolved IP.

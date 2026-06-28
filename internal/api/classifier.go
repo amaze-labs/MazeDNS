@@ -25,7 +25,9 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Never leak API keys to the UI.
+	// Never leak API keys to the UI — but tell it which ones are set so it can show
+	// a "key present" indicator.
+	hasAPIKey, hasVTKey, hasAbuseKey := cfg.APIKey != "", cfg.VTAPIKey != "", cfg.AbuseIPDBAPIKey != ""
 	cfg.APIKey, cfg.VTAPIKey, cfg.AbuseIPDBAPIKey = "", "", ""
 	trustedCount, threatCount := 0, 0
 	if s.cls != nil {
@@ -46,6 +48,9 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		"threat_feed_catalog": classifier.ThreatFeedCatalog(),
 		"llm_usage":           usage,
 		"llm_usage_totals":    usageTotals,
+		"has_api_key":         hasAPIKey,
+		"has_vt_key":          hasVTKey,
+		"has_abuseipdb_key":   hasAbuseKey,
 	})
 }
 

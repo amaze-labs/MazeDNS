@@ -381,12 +381,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             <input value={cls.model} onChange={(e) => setCls({ ...cls, model: e.target.value })} placeholder="llama3.2" />
           </div>
           <div className="field">
-            <label>API key (optional; usually empty for local models)</label>
+            <label>
+              API key (optional; usually empty for local models){' '}
+              {clsInfo?.has_api_key && <span className="badge allow">key set</span>}
+            </label>
             <input
               type="password"
               value={cls.api_key}
               onChange={(e) => setCls({ ...cls, api_key: e.target.value })}
-              placeholder="leave blank to keep current"
+              placeholder={clsInfo?.has_api_key ? '•••••••••••••• (saved — leave blank to keep)' : 'usually empty for local models'}
             />
           </div>
           <div className="field">
@@ -496,33 +499,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </label>
           </div>
 
-          <h4 style={{ textAlign: 'left', marginBottom: 4 }}>Known-application catalog (false-positive reduction)</h4>
-          <div className="field">
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={cls.netify_enabled}
-                onChange={(e) => setCls({ ...cls, netify_enabled: e.target.checked })}
-              />
-              <span className="track">
-                <span className="thumb" />
-              </span>
-              <span className="toggle-label">
-                Netify application-domains — treat known app/platform domains (e.g. tiktokv.eu) as trusted
-              </span>
-            </label>
-          </div>
-          {cls.netify_enabled && (
-            <div className="field">
-              <label>Netify feed URL (account-gated; include your token)</label>
-              <input
-                value={cls.netify_url}
-                onChange={(e) => setCls({ ...cls, netify_url: e.target.value })}
-                placeholder="https://www.netify.ai/.../application-domains.csv?token=…"
-              />
-            </div>
-          )}
-
           <h4 style={{ textAlign: 'left', marginBottom: 4 }}>Reputation services (corroboration)</h4>
           <label className="muted" style={{ marginTop: 0 }}>
             Optional third-party lookups per new domain. A clean report raises the legitimacy score (fewer false
@@ -539,12 +515,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </div>
           {cls.vt_enabled && (
             <div className="field">
-              <label>VirusTotal API key</label>
+              <label>VirusTotal API key {clsInfo?.has_vt_key && <span className="badge allow">key set</span>}</label>
               <input
                 type="password"
                 value={cls.vt_api_key}
                 onChange={(e) => setCls({ ...cls, vt_api_key: e.target.value })}
-                placeholder="leave blank to keep the saved key"
+                placeholder={clsInfo?.has_vt_key ? '•••••••••••••• (saved — leave blank to keep)' : 'paste your VirusTotal API key'}
               />
             </div>
           )}
@@ -563,12 +539,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </div>
           {cls.abuseipdb_enabled && (
             <div className="field">
-              <label>AbuseIPDB API key</label>
+              <label>AbuseIPDB API key {clsInfo?.has_abuseipdb_key && <span className="badge allow">key set</span>}</label>
               <input
                 type="password"
                 value={cls.abuseipdb_api_key}
                 onChange={(e) => setCls({ ...cls, abuseipdb_api_key: e.target.value })}
-                placeholder="leave blank to keep the saved key"
+                placeholder={clsInfo?.has_abuseipdb_key ? '•••••••••••••• (saved — leave blank to keep)' : 'paste your AbuseIPDB API key'}
               />
             </div>
           )}

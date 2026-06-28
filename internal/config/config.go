@@ -197,10 +197,6 @@ type Classifier struct {
 	// WhoisEnabled enriches classifications with RDAP/WHOIS registration data
 	// (domain age etc.) as a signal for the model.
 	WhoisEnabled bool `yaml:"whois_enabled"`
-	// Netify application-domains: known legitimate app/platform domains, treated as
-	// trusted (cuts false positives on secondary domains). Account-gated feed URL.
-	NetifyEnabled bool   `yaml:"netify_enabled"`
-	NetifyURL     string `yaml:"netify_url"`
 	// Reputation enrichment (optional, key-gated): VirusTotal (domain) + AbuseIPDB
 	// (resolved IP) corroborate verdicts.
 	VTEnabled        bool   `yaml:"vt_enabled"`

@@ -130,8 +130,6 @@ export interface ClassifierSettings {
   threat_list_url: string
   threat_disable_default: boolean
   whois_enabled: boolean
-  netify_enabled: boolean
-  netify_url: string
   vt_enabled: boolean
   vt_api_key: string
   abuseipdb_enabled: boolean
@@ -175,6 +173,9 @@ export interface ClassifierStatus {
   threat_feed_catalog: ThreatFeed[]
   llm_usage: LLMUsageDay[]
   llm_usage_totals: LLMUsageDay
+  has_api_key: boolean
+  has_vt_key: boolean
+  has_abuseipdb_key: boolean
 }
 
 export interface SeriesPoint {

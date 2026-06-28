@@ -31,7 +31,7 @@ func (h *setHolder) search(q string, n int) []string { return h.set.Load().Searc
 // ensureSync (re)loads the set synchronously if the sources changed. The worker
 // uses this on its own goroutine so a domain is never classified against a stale
 // or not-yet-loaded list — which, with classify-once, would bake in a false
-// positive (e.g. a Netify app domain seen before its list finished loading).
+// positive (e.g. a domain seen before its trusted list finished loading).
 func (h *setHolder) ensureSync(sources []domainSource) {
 	key := sourcesKey(sources)
 	if cur, _ := h.src.Load().(string); cur == key {
@@ -110,12 +110,6 @@ func trustedSources(s Settings) []domainSource {
 	}
 	if c := customSource(s.TrustedListURL); c != "" {
 		out = append(out, domainSource{c, s.TrustedTopN})
-	}
-	// Netify application-domains: known legitimate app/platform domains.
-	if s.NetifyEnabled {
-		if c := customSource(s.NetifyURL); c != "" {
-			out = append(out, domainSource{c, 0})
-		}
 	}
 	return out
 }

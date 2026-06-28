@@ -41,6 +41,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [nbTesting, setNbTesting] = useState(false)
   const [nbMsg, setNbMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
+  // Per-node internal DNS resolvers (reverse-DNS for internal clients).
+  const [rdnsNodes, setRdnsNodes] = useState<string[]>([])
+  const [rdns, setRdns] = useState<Record<string, string>>({})
+  const [rdnsSaving, setRdnsSaving] = useState(false)
+  const [rdnsOk, setRdnsOk] = useState(false)
+
   const load = async () => {
     try {
       const cur = await api.settings()
@@ -64,6 +70,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setNbInfo({ has_token: r.has_token, peer_count: r.peer_count })
       })
       .catch(() => setNb(null))
+    api
+      .reverseDns()
+      .then((r) => {
+        setRdnsNodes(r.nodes || [])
+        setRdns(r.resolvers || {})
+      })
+      .catch(() => setRdnsNodes([]))
   }
   useEffect(() => {
     load()
@@ -131,6 +144,21 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setNbMsg({ ok: false, text: e.message })
     } finally {
       setNbTesting(false)
+    }
+  }
+
+  const saveReverseDns = async () => {
+    setRdnsSaving(true)
+    setErr('')
+    setRdnsOk(false)
+    try {
+      const r = await api.saveReverseDns(rdns)
+      setRdns(r.resolvers || {})
+      setRdnsOk(true)
+    } catch (e: any) {
+      setErr(e.message)
+    } finally {
+      setRdnsSaving(false)
     }
   }
 
@@ -633,14 +661,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               placeholder={nbInfo?.has_token ? '•••••••• (unchanged)' : 'nbp_…'}
             />
           </div>
-          <div className="field">
-            <label>Internal DNS resolver (optional) — reverse-DNS for private/internal client IPs</label>
-            <input
-              value={nb.local_dns}
-              onChange={(e) => setNb({ ...nb, local_dns: e.target.value })}
-              placeholder="192.168.1.1  (your router / internal DNS; public IPs use the system resolver)"
-            />
-          </div>
           <div className="settings-actions">
             <button className="btn primary" onClick={saveNetbird} disabled={nbSaving}>
               {nbSaving ? 'Saving…' : 'Save NetBird'}
@@ -653,6 +673,36 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           {nbMsg && <div className={nbMsg.ok ? 'ok-msg' : 'error'}>{nbMsg.text}</div>}
         </section>
       )}
+
+      <section className="settings-card">
+        <h3>Reverse-DNS resolvers (internal clients)</h3>
+        <label className="muted">
+          Private/internal client IPs can't be resolved by public DNS. Set the internal DNS resolver to use for each
+          node's clients — nodes can be in different sites/LANs, so each gets its own (e.g. that site's router or AD DNS).
+          Leave blank to use the system resolver. Public IPs always use the system resolver; reverse-DNS falls back to the
+          master's resolver when a node has none.
+        </label>
+        {rdnsOk && <div className="ok-msg">Resolvers saved.</div>}
+        {rdnsNodes.map((node) => (
+          <div className="field" key={node}>
+            <label>
+              {node} {node === 'master' && <span className="muted">(this server)</span>}
+            </label>
+            <input
+              value={rdns[node] ?? ''}
+              onChange={(e) => setRdns({ ...rdns, [node]: e.target.value })}
+              placeholder="192.168.1.1  or  10.0.0.53:53  (blank = system resolver)"
+            />
+          </div>
+        ))}
+        {rdnsNodes.length === 0 && <p className="muted" style={{ textAlign: 'left' }}>No nodes found.</p>}
+        <div className="settings-actions">
+          <button className="btn primary" onClick={saveReverseDns} disabled={rdnsSaving}>
+            {rdnsSaving ? 'Saving…' : 'Save resolvers'}
+          </button>
+          <span className="hint">Used to turn internal client IPs into hostnames in the dashboard &amp; logs.</span>
+        </div>
+      </section>
 
       <section className="settings-card danger-zone">
         <h3>⚠ Danger zone — backup &amp; restore</h3>

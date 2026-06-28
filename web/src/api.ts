@@ -107,7 +107,6 @@ export interface NetbirdSettings {
   enabled: boolean
   api_url: string
   token: string
-  local_dns: string // internal resolver for reverse-DNS of private client IPs
 }
 
 export interface ClientIdentity {
@@ -483,6 +482,14 @@ export const api = {
   testNetbird: (s: NetbirdSettings) =>
     fetch('/api/netbird/test', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(s) }).then(
       j<{ ok: boolean; error?: string; peer_count?: number }>,
+    ),
+
+  // Per-node internal DNS resolvers (reverse-DNS for internal clients)
+  reverseDns: () =>
+    fetch('/api/reverse-dns').then(j<{ resolvers: Record<string, string>; nodes: string[] }>),
+  saveReverseDns: (resolvers: Record<string, string>) =>
+    fetch('/api/reverse-dns', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ resolvers }) }).then(
+      j<{ resolvers: Record<string, string> }>,
     ),
 
   // cluster

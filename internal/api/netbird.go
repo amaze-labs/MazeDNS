@@ -40,6 +40,42 @@ func (s *Server) resolveClients(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// getReverseDNS returns the per-node internal DNS resolvers plus the current node
+// list, so the UI can offer one resolver field per node (nodes can be in
+// different sites).
+func (s *Server) getReverseDNS(w http.ResponseWriter, _ *http.Request) {
+	resolvers := netbird.LoadResolvers(s.store)
+	names := []string{"master"}
+	if nodes, err := s.store.ListNodes(); err == nil {
+		for _, n := range nodes {
+			names = append(names, n.Name)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"resolvers": resolvers, "nodes": names})
+}
+
+// putReverseDNS replaces the per-node internal DNS resolver map.
+func (s *Server) putReverseDNS(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Resolvers map[string]string `json:"resolvers"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	clean := map[string]string{}
+	for node, addr := range in.Resolvers {
+		if a := strings.TrimSpace(addr); a != "" {
+			clean[node] = a
+		}
+	}
+	if err := netbird.SaveResolvers(s.store, clean); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"resolvers": clean})
+}
+
 // getNetbird returns the NetBird integration settings (token masked) and the
 // number of peers currently mapped.
 func (s *Server) getNetbird(w http.ResponseWriter, _ *http.Request) {

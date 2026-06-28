@@ -28,10 +28,6 @@ type Settings struct {
 	Enabled bool   `json:"enabled"`
 	APIURL  string `json:"api_url"` // e.g. https://api.netbird.io (or a self-hosted management URL)
 	Token   string `json:"token"`   // NetBird PAT (Authorization: Token <token>)
-	// LocalDNS is an internal resolver (ip or ip:port) used for reverse-DNS of
-	// private/internal client IPs, which public DNS can't resolve. Empty = use the
-	// system resolver for everything.
-	LocalDNS string `json:"local_dns"`
 }
 
 func (s Settings) baseURL() string { return strings.TrimRight(strings.TrimSpace(s.APIURL), "/") }
@@ -73,12 +69,17 @@ type peer struct {
 }
 
 // Enricher holds the live NetBird peer map (refreshed in the background) and the
-// reverse-DNS cache, both keyed by client IP.
+// reverse-DNS cache, both keyed by client IP. For reverse-DNS it also tracks which
+// node serves each client, so an internal client is resolved against that node's
+// site resolver (nodes can be in different sites).
 type Enricher struct {
-	get func() Settings
+	get       func() Settings
+	resolvers func() map[string]string // node name -> internal DNS resolver
+	store     *store.Store
 
 	mu    sync.RWMutex
 	peers map[string]Identity // ip -> netbird identity
+	cnode map[string]string   // client ip -> node that serves it
 
 	rdnsMu sync.Mutex
 	rdns   map[string]rdnsEntry // ip -> cached PTR lookup
@@ -89,9 +90,14 @@ type rdnsEntry struct {
 	exp  time.Time
 }
 
-// NewEnricher builds an enricher driven by the live settings getter.
-func NewEnricher(get func() Settings) *Enricher {
-	return &Enricher{get: get, peers: map[string]Identity{}, rdns: map[string]rdnsEntry{}}
+// NewEnricher builds an enricher. get supplies the live NetBird settings;
+// resolvers supplies the per-node internal DNS resolver map; st is used to learn
+// which node serves each client (for picking that node's resolver).
+func NewEnricher(get func() Settings, resolvers func() map[string]string, st *store.Store) *Enricher {
+	return &Enricher{
+		get: get, resolvers: resolvers, store: st,
+		peers: map[string]Identity{}, cnode: map[string]string{}, rdns: map[string]rdnsEntry{},
+	}
 }
 
 // Run refreshes the NetBird peer map periodically until ctx is cancelled. It is a
@@ -111,6 +117,16 @@ func (e *Enricher) Run(ctx context.Context) {
 }
 
 func (e *Enricher) refresh(ctx context.Context) {
+	// Refresh which node serves each client (used to pick that node's resolver for
+	// internal reverse-DNS). Done regardless of NetBird being enabled.
+	if e.store != nil {
+		if cn, err := e.store.ClientNodes(time.Now().Add(-24 * time.Hour).UnixMilli()); err == nil {
+			e.mu.Lock()
+			e.cnode = cn
+			e.mu.Unlock()
+		}
+	}
+
 	s := e.get()
 	if !s.Enabled || s.baseURL() == "" || s.Token == "" {
 		e.mu.Lock()
@@ -165,12 +181,13 @@ func (e *Enricher) reverseDNS(ctx context.Context, ip string) string {
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	// Internal/private clients won't resolve on public DNS — use the configured
-	// local resolver for them when one is set.
+	// Internal/private clients won't resolve on public DNS — use the internal
+	// resolver of the node that serves this client (nodes can be in different
+	// sites), falling back to the master's resolver, then the system resolver.
 	resolver := net.DefaultResolver
 	if isInternalIP(ip) {
-		if local := e.get().LocalDNS; local != "" {
-			resolver = dnsResolver(local)
+		if addr := e.resolverFor(ip); addr != "" {
+			resolver = dnsResolver(addr)
 		}
 	}
 	name := ""
@@ -188,6 +205,22 @@ func (e *Enricher) reverseDNS(ctx context.Context, ip string) string {
 	e.rdns[ip] = rdnsEntry{name: name, exp: now.Add(ttl)}
 	e.rdnsMu.Unlock()
 	return name
+}
+
+// resolverFor returns the internal DNS resolver to use for a client IP: the
+// resolver of the node that serves it, else the master's, else "".
+func (e *Enricher) resolverFor(ip string) string {
+	if e.resolvers == nil {
+		return ""
+	}
+	e.mu.RLock()
+	node := e.cnode[ip]
+	e.mu.RUnlock()
+	res := e.resolvers()
+	if node != "" && res[node] != "" {
+		return res[node]
+	}
+	return res["master"]
 }
 
 // PeerCount reports how many NetBird peers are currently mapped (for the UI / test).

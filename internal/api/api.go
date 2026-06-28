@@ -129,6 +129,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/netbird", s.requireRole(roleReadonly, s.getNetbird))
 		mux.HandleFunc("PUT /api/netbird", s.requireRole(roleAdmin, s.putNetbird))
 		mux.HandleFunc("POST /api/netbird/test", s.requireRole(roleAdmin, s.testNetbird))
+		mux.HandleFunc("GET /api/reverse-dns", s.requireRole(roleReadonly, s.getReverseDNS))
+		mux.HandleFunc("PUT /api/reverse-dns", s.requireRole(roleAdmin, s.putReverseDNS))
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))

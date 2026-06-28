@@ -257,9 +257,11 @@ func main() {
 	// hostnames in the UI). Configured live on the Settings page.
 	var enricher *netbird.Enricher
 	if !worker {
-		enricher = netbird.NewEnricher(func() netbird.Settings {
-			return netbird.LoadSettings(st, netbird.Settings{})
-		})
+		enricher = netbird.NewEnricher(
+			func() netbird.Settings { return netbird.LoadSettings(st, netbird.Settings{}) },
+			func() map[string]string { return netbird.LoadResolvers(st) },
+			st,
+		)
 		go enricher.Run(context.Background())
 	}
 

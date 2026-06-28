@@ -293,6 +293,35 @@ func (s *Store) TopQueryNames(sinceMs int64, nodes []string, limit int) ([]NameC
 	return out, rows.Err()
 }
 
+// ClientNodes maps each client IP to the node that served it the most queries
+// since sinceMs, so reverse-DNS can pick that node's local resolver (nodes can be
+// in different sites). The master's own entries (node "") are reported as "master".
+func (s *Store) ClientNodes(sinceMs int64) (map[string]string, error) {
+	rows, err := s.db.Query(
+		`SELECT client, node, COUNT(*) c FROM query_log WHERE ts >= ? GROUP BY client, node`, sinceMs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	best := map[string]int64{}
+	out := map[string]string{}
+	for rows.Next() {
+		var client, node string
+		var c int64
+		if err := rows.Scan(&client, &node, &c); err != nil {
+			return nil, err
+		}
+		if c > best[client] {
+			best[client] = c
+			if node == "" {
+				node = "master"
+			}
+			out[client] = node
+		}
+	}
+	return out, rows.Err()
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

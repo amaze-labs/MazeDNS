@@ -48,7 +48,8 @@ export default function Queries() {
     localStorage.setItem('mazedns.ql.focus', JSON.stringify(focus))
   }, [focus])
 
-  const nodeNames = useMemo(() => ['master', ...nodes.map((n) => n.name)], [nodes])
+  // clusterNodes already includes the master, so don't prepend it again.
+  const nodeNames = useMemo(() => [...new Set(nodes.map((n) => n.name))], [nodes])
   const nodeColor = useMemo(() => makeNodeColor(nodeNames), [nodeNames])
 
   useEffect(() => {

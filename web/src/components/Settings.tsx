@@ -226,13 +226,33 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <section className="settings-card">
         <h3>Upstream resolvers</h3>
-        <label className="muted">One per line, host:port (e.g. 1.1.1.1:53)</label>
+        <label className="muted">
+          One per line, tried in order. Plain DNS <code>host:port</code> (e.g. <code>1.1.1.1:53</code>), or encrypted:
+          DNS-over-TLS <code>tls://1.1.1.1:853#cloudflare-dns.com</code> or DNS-over-HTTPS{' '}
+          <code>https://dns.quad9.net/dns-query</code>. <strong>DoT/DoH is recommended</strong> — connections are pooled,
+          so large/DNSSEC-validated answers avoid UDP fragmentation and per-query handshakes (lower latency).
+        </label>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 6, margin: '6px 0' }}>
+          <span className="muted" style={{ alignSelf: 'center' }}>Quick fill (DoT):</span>
+          <button type="button" className="btn ghost" onClick={() => setUpstreams('tls://1.1.1.1:853#cloudflare-dns.com\ntls://1.0.0.1:853#cloudflare-dns.com')}>
+            Cloudflare
+          </button>
+          <button type="button" className="btn ghost" onClick={() => setUpstreams('tls://9.9.9.9:853#dns.quad9.net\ntls://149.112.112.112:853#dns.quad9.net')}>
+            Quad9
+          </button>
+          <button type="button" className="btn ghost" onClick={() => setUpstreams('tls://8.8.8.8:853#dns.google\ntls://8.8.4.4:853#dns.google')}>
+            Google
+          </button>
+        </div>
         <textarea
           rows={4}
           value={upstreams}
           onChange={(e) => setUpstreams(e.target.value)}
-          placeholder="1.1.1.1:53&#10;9.9.9.9:53"
+          placeholder="tls://1.1.1.1:853#cloudflare-dns.com&#10;tls://9.9.9.9:853#dns.quad9.net"
         />
+        <p className="hint" style={{ textAlign: 'left' }}>
+          A quick-fill replaces the box; click <strong>Save settings</strong> below to apply.
+        </p>
       </section>
 
       <section className="settings-card">

@@ -111,9 +111,21 @@ export default function Queries() {
       </p>
       {err && <div className="error">{err}</div>}
 
-      <RangeNodeBar hours={hours} setHours={setHours} focus={focus} setFocus={setFocus} nodeNames={nodeNames} color={nodeColor} />
+      <RangeNodeBar hours={hours} setHours={setHours} focus={focus} setFocus={setFocus} nodeNames={[]} color={nodeColor} />
 
       <div className="ql-filters" style={{ margin: '12px 0' }}>
+        <select
+          className="ql-select"
+          value={focus.length === 1 ? focus[0] : ''}
+          onChange={(e) => { setFocus(e.target.value ? [e.target.value] : []); setPage(0) }}
+        >
+          <option value="">All nodes</option>
+          {nodeNames.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
         <select className="ql-select" value={action} onChange={(e) => { setAction(e.target.value); setPage(0) }}>
           <option value="">All actions</option>
           {ACTIONS.map((a) => (

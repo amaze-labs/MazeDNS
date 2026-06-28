@@ -137,7 +137,8 @@ func (s *Server) setClassifierMode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	items, err := s.store.ListClassifications(status, limit)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	items, err := s.store.ListClassifications(status, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -154,7 +155,7 @@ func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request) {
 func (s *Server) decideClassification(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Domain   string `json:"domain"`
-		Decision string `json:"decision"` // "approve" | "reject"
+		Decision string `json:"decision"` // "approve" | "reject" | "dismiss"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -165,6 +166,16 @@ func (s *Server) decideClassification(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "domain is required")
 		return
 	}
+	// "dismiss" hides the suggestion once: drop the verdict so the domain can be
+	// re-evaluated (and possibly re-suggested) the next time it's queried.
+	if in.Decision == "dismiss" {
+		if err := s.store.DeleteClassification(in.Domain); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"domain": in.Domain, "status": "dismissed"})
+		return
+	}
 	var status string
 	switch in.Decision {
 	case "approve":
@@ -172,7 +183,7 @@ func (s *Server) decideClassification(w http.ResponseWriter, r *http.Request) {
 	case "reject":
 		status = store.ClassRejected
 	default:
-		writeError(w, http.StatusBadRequest, "decision must be approve or reject")
+		writeError(w, http.StatusBadRequest, "decision must be approve, reject, or dismiss")
 		return
 	}
 	if err := s.store.SetClassificationStatus(in.Domain, status); err != nil {

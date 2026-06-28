@@ -193,6 +193,38 @@ tr:last-child td {
   color: var(--accent);
 }
 
+/* Classifier verdict table */
+.cls-domain {
+  font-weight: 500;
+  word-break: break-all;
+  max-width: 220px;
+}
+.cls-conf {
+  white-space: nowrap;
+}
+.cls-signals,
+.cls-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cls-actions {
+  justify-content: flex-end;
+}
+.cls-actions .btn {
+  padding: 5px 12px;
+}
+/* Keep rows compact: clamp long reasons to two lines (full text on hover). */
+.cls-reason {
+  text-align: left;
+  max-width: 360px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* Inline link-style button */
 .linkbtn {
   background: none;

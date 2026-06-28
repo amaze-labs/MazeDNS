@@ -381,12 +381,12 @@ export const api = {
     if (search) p.set('search', search)
     return fetch(`/api/classifier/trusted?${p.toString()}`).then(j<{ count: number; domains: string[] }>)
   },
-  classifications: (status = '', limit = 200) => {
-    const p = new URLSearchParams({ limit: String(limit) })
+  classifications: (status = '', limit = 25, offset = 0) => {
+    const p = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     if (status) p.set('status', status)
     return fetch(`/api/classifications?${p.toString()}`).then(j<Classification[]>)
   },
-  decideClassification: (domain: string, decision: 'approve' | 'reject') =>
+  decideClassification: (domain: string, decision: 'approve' | 'reject' | 'dismiss') =>
     fetch('/api/classifications/decision', {
       method: 'POST',
       headers: jsonHeaders,

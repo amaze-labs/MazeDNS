@@ -8,6 +8,7 @@ const MODES = [
   { id: 'auto', label: 'Auto-block', desc: 'Block-category verdicts take effect immediately.' },
 ]
 const STATUS_TABS = ['suggested', 'auto', 'approved', 'rejected', 'clean']
+const PAGE = 25
 const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
 // Security categories are red; legitimate content categories are neutral/blue.
 const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'clean' || c === 'other' ? 'allow' : 'info')
@@ -17,6 +18,7 @@ const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'cle
 export default function Classifier() {
   const [info, setInfo] = useState<ClassifierStatus | null>(null)
   const [tab, setTab] = useState('suggested')
+  const [page, setPage] = useState(0)
   const [rows, setRows] = useState<Classification[]>([])
   const [err, setErr] = useState('')
 
@@ -26,7 +28,7 @@ export default function Classifier() {
   const [trustedRows, setTrustedRows] = useState<string[]>([])
 
   const loadInfo = () => api.classifier().then(setInfo).catch((e) => setErr(e.message))
-  const loadRows = () => api.classifications(tab).then(setRows).catch((e) => setErr(e.message))
+  const loadRows = () => api.classifications(tab, PAGE, page * PAGE).then(setRows).catch((e) => setErr(e.message))
 
   useEffect(() => {
     loadInfo()
@@ -37,10 +39,14 @@ export default function Classifier() {
     return () => clearTimeout(t)
   }, [showTrusted, trustedSearch])
   useEffect(() => {
+    setPage(0) // reset paging when switching tabs
+  }, [tab])
+  useEffect(() => {
     loadRows()
     const id = setInterval(loadRows, 5000)
     return () => clearInterval(id)
-  }, [tab])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page])
 
   const setMode = async (mode: string) => {
     try {
@@ -51,7 +57,7 @@ export default function Classifier() {
       setErr(e.message)
     }
   }
-  const decide = async (domain: string, decision: 'approve' | 'reject') => {
+  const decide = async (domain: string, decision: 'approve' | 'reject' | 'dismiss') => {
     try {
       await api.decideClassification(domain, decision)
       loadRows()
@@ -62,6 +68,8 @@ export default function Classifier() {
   }
 
   const counts = info?.counts ?? {}
+  const total = counts[tab] ?? 0
+  const lastPage = Math.max(0, Math.ceil(total / PAGE) - 1)
   // Category breakdown, most-seen first.
   const catCounts = Object.entries(info?.category_counts ?? {}).sort((a, b) => b[1] - a[1])
   return (
@@ -157,11 +165,12 @@ export default function Classifier() {
         ))}
       </div>
 
-      <table>
+      <table className="cls-table">
         <thead>
           <tr>
             <th>Domain</th>
             <th>Category</th>
+            <th>Signals</th>
             <th>Confidence</th>
             <th>Reason</th>
             <th></th>
@@ -169,37 +178,51 @@ export default function Classifier() {
         </thead>
         <tbody>
           {rows.map((c) => {
-            const enforced = c.status === 'auto' || c.status === 'approved'
-            const canBlock = c.block && !enforced // suggested/rejected -> can enforce
-            const canAllow = c.block && c.status !== 'rejected' // anything blocking -> can override
+            const blocked = c.status === 'auto' || c.status === 'approved'
             return (
               <tr key={c.domain}>
-                <td>{c.domain}</td>
+                <td className="cls-domain">{c.domain}</td>
                 <td>
                   <span className={`badge ${catClass(c.category)}`}>{c.category}</span>
-                  {c.trusted && (
-                    <span className="badge allow" title="On the trusted list — not blocked.">
-                      ⚠ trusted
-                    </span>
-                  )}
-                  {c.threat && (
-                    <span className="badge blocked" title="On a threat-intelligence list — corroborated malicious.">
-                      🛡 threat
-                    </span>
-                  )}
                 </td>
-                <td>{Math.round((c.confidence || 0) * 100)}%</td>
-                <td className="muted" style={{ textAlign: 'left' }}>{c.reason}</td>
                 <td>
-                  <div className="ql-filters">
-                    {canAllow && (
-                      <button className="btn" onClick={() => decide(c.domain, 'reject')}>
+                  <div className="cls-signals">
+                    {c.threat && (
+                      <span className="badge blocked" title="Listed on a threat-intelligence feed (abuse.ch URLhaus) — corroborated malicious.">
+                        🛡 threat
+                      </span>
+                    )}
+                    {c.trusted && (
+                      <span className="badge allow" title="On the trusted (known-legitimate) list — not blocked.">
+                        ✓ trusted
+                      </span>
+                    )}
+                    {blocked && <span className="badge blocked">blocked</span>}
+                    {c.status === 'rejected' && <span className="badge allow">allowed</span>}
+                  </div>
+                </td>
+                <td className="cls-conf">{Math.round((c.confidence || 0) * 100)}%</td>
+                <td className="muted cls-reason" title={c.reason}>
+                  {c.reason}
+                </td>
+                <td>
+                  <div className="cls-actions">
+                    {/* Block: enforce, unless already blocked. */}
+                    {!blocked && (
+                      <button className="btn primary" onClick={() => decide(c.domain, 'approve')} title="Block this domain">
+                        Block
+                      </button>
+                    )}
+                    {/* Allow: never block (hide forever from suggestions). */}
+                    {c.status !== 'rejected' && (
+                      <button className="btn" onClick={() => decide(c.domain, 'reject')} title="Allow — never block (hide forever)">
                         Allow
                       </button>
                     )}
-                    {canBlock && (
-                      <button className="btn primary" onClick={() => decide(c.domain, 'approve')}>
-                        Block
+                    {/* Dismiss: hide once; the domain may be re-suggested later. */}
+                    {c.status === 'suggested' && (
+                      <button className="btn ghost" onClick={() => decide(c.domain, 'dismiss')} title="Dismiss this suggestion (may reappear later)">
+                        Dismiss
                       </button>
                     )}
                   </div>
@@ -209,13 +232,28 @@ export default function Classifier() {
           })}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={5} className="muted">
+              <td colSpan={6} className="muted">
                 Nothing here yet
               </td>
             </tr>
           )}
         </tbody>
       </table>
+
+      {total > PAGE && (
+        <div className="pager">
+          <span className="muted">
+            {total.toLocaleString()} item{total === 1 ? '' : 's'} · page {page + 1} of {lastPage + 1}
+          </span>
+          <div className="spacer" />
+          <button className="btn" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+            ‹ Prev
+          </button>
+          <button className="btn" disabled={page >= lastPage} onClick={() => setPage((p) => Math.min(lastPage, p + 1))}>
+            Next ›
+          </button>
+        </div>
+      )}
     </div>
   )
 }

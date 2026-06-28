@@ -82,11 +82,21 @@ func (s *Store) SetClassificationStatus(domain, status string) error {
 	return err
 }
 
-// ListClassifications returns verdicts, optionally filtered by status, newest
-// first.
-func (s *Store) ListClassifications(status string, limit int) ([]Classification, error) {
+// DeleteClassification removes a verdict entirely, so the domain can be
+// re-classified the next time it's seen ("dismiss once").
+func (s *Store) DeleteClassification(domain string) error {
+	_, err := s.db.Exec(`DELETE FROM classifications WHERE domain = ?`, domain)
+	return err
+}
+
+// ListClassifications returns a page of verdicts, optionally filtered by status,
+// newest first.
+func (s *Store) ListClassifications(status string, limit, offset int) ([]Classification, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	q := `SELECT domain, category, block, status, confidence, reason, model, trusted, threat, updated_at
 	      FROM classifications`
@@ -95,8 +105,8 @@ func (s *Store) ListClassifications(status string, limit int) ([]Classification,
 		q += ` WHERE status = ?`
 		args = append(args, status)
 	}
-	q += ` ORDER BY updated_at DESC LIMIT ?`
-	args = append(args, limit)
+	q += ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err

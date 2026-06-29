@@ -125,6 +125,9 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/classifications/decision", s.requireRole(roleAdmin, s.decideClassification))
 		mux.HandleFunc("GET /api/classifier/whois", s.requireRole(roleReadonly, s.getWhois))
 		mux.HandleFunc("GET /api/classifier/clients", s.requireRole(roleReadonly, s.getDomainClients))
+		mux.HandleFunc("GET /api/clients", s.requireRole(roleReadonly, s.cached(s.getClients)))
+		mux.HandleFunc("GET /api/clients/detail", s.requireRole(roleReadonly, s.cached(s.getClientDetail)))
+		mux.HandleFunc("PUT /api/clients/name", s.requireRole(roleAdmin, s.putClientName))
 		mux.HandleFunc("GET /api/clients/resolve", s.requireRole(roleReadonly, s.resolveClients))
 		mux.HandleFunc("GET /api/netbird", s.requireRole(roleReadonly, s.getNetbird))
 		mux.HandleFunc("PUT /api/netbird", s.requireRole(roleAdmin, s.putNetbird))
@@ -730,8 +733,8 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // getQueryLog returns a filtered, sorted page of the query log. Query params:
-// ?search= (name/client substring), ?action=, ?qtype=, ?sort= (time|name|client|
-// qtype|action|rcode|ms|node), ?desc=true, ?nodes=, ?limit/?offset.
+// ?search= (name/client substring), ?action=, ?qtype=, ?category=, ?sort= (time|
+// name|client|qtype|action|category|rcode|ms|node), ?desc=true, ?nodes=, ?limit/?offset.
 func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
@@ -744,15 +747,16 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 		sinceMs = time.Now().Add(-time.Duration(h) * time.Hour).UnixMilli()
 	}
 	entries, total, err := s.store.SearchQueryLog(store.QueryLogQuery{
-		Search:  strings.TrimSpace(q.Get("search")),
-		Action:  strings.TrimSpace(q.Get("action")),
-		QType:   strings.TrimSpace(q.Get("qtype")),
-		Nodes:   parseNodes(r),
-		SinceMs: sinceMs,
-		Sort:    strings.TrimSpace(q.Get("sort")),
-		Desc:    q.Get("desc") == "true" || q.Get("desc") == "1",
-		Limit:   limit,
-		Offset:  offset,
+		Search:   strings.TrimSpace(q.Get("search")),
+		Action:   strings.TrimSpace(q.Get("action")),
+		QType:    strings.TrimSpace(q.Get("qtype")),
+		Category: strings.TrimSpace(q.Get("category")),
+		Nodes:    parseNodes(r),
+		SinceMs:  sinceMs,
+		Sort:     strings.TrimSpace(q.Get("sort")),
+		Desc:     q.Get("desc") == "true" || q.Get("desc") == "1",
+		Limit:    limit,
+		Offset:   offset,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

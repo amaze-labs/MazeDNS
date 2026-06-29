@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS classifications (
 	model TEXT NOT NULL DEFAULT '',
 	trusted INTEGER NOT NULL DEFAULT 0,
 	threat INTEGER NOT NULL DEFAULT 0,
+	note TEXT NOT NULL DEFAULT '',         -- operator review note (why allowed/blocked)
 	updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status);
@@ -202,6 +203,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 		`ALTER TABLE classifications ADD COLUMN threat INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE classifications ADD COLUMN score INTEGER NOT NULL DEFAULT 100`,
 		`ALTER TABLE classifications ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE classifications ADD COLUMN note TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

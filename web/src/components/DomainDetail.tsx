@@ -24,7 +24,7 @@ export default function DomainDetail({
 }: {
   c: Classification
   onClose: () => void
-  onAction: (domain: string, decision: 'approve' | 'reject' | 'dismiss') => void
+  onAction: (c: Classification, decision: 'approve' | 'reject' | 'dismiss') => void
 }) {
   const [whois, setWhois] = useState<WhoisInfo | null>(null)
   const [whoisErr, setWhoisErr] = useState('')
@@ -45,10 +45,14 @@ export default function DomainDetail({
   }, [c.domain])
 
   const blocked = c.status === 'auto' || c.status === 'approved'
+  const decided = blocked || c.status === 'rejected'
   const act = (d: 'approve' | 'reject' | 'dismiss') => {
-    onAction(c.domain, d)
+    onAction(c, d)
     onClose()
   }
+  // Editing an existing review keeps the same decision (block stays block,
+  // allow stays allow) but lets the operator amend the category and note.
+  const editReview = () => act(blocked ? 'approve' : 'reject')
 
   // The legitimacy score and its factor breakdown come from the backend; fall
   // back gracefully for old verdicts that predate scoring.
@@ -75,6 +79,8 @@ export default function DomainDetail({
         <span>{c.model || '—'}</span>
         <span className="muted">Summary</span>
         <span>{c.reason || '—'}</span>
+        <span className="muted">Review note</span>
+        <span>{c.note ? c.note : <span className="muted">—</span>}</span>
       </div>
 
       <h4>Legitimacy scorecard</h4>
@@ -188,13 +194,18 @@ export default function DomainDetail({
 
       <div className="settings-actions" style={{ marginTop: 18 }}>
         {!blocked && (
-          <button className="btn primary" onClick={() => act('approve')}>
+          <button className="btn danger" onClick={() => act('approve')}>
             Block
           </button>
         )}
         {c.status !== 'rejected' && (
           <button className="btn" onClick={() => act('reject')}>
             Allow
+          </button>
+        )}
+        {decided && (
+          <button className="btn ghost" onClick={editReview} title="Change the category / note for this decision">
+            Edit review
           </button>
         )}
         {c.status === 'suggested' && (

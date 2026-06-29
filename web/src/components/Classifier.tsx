@@ -3,6 +3,7 @@ import { api, type Classification, type ClassifierStatus } from '../api'
 import Spinner from './Spinner'
 import ClassifierHelp from './ClassifierHelp'
 import DomainDetail from './DomainDetail'
+import DecisionModal from './DecisionModal'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -33,16 +34,26 @@ export default function Classifier() {
   const [page, setPage] = useState(0)
   const [rows, setRows] = useState<Classification[]>([])
   const [err, setErr] = useState('')
+  // Domain search, used on the Clean tab to find a domain in a long list.
+  const [search, setSearch] = useState('')
+  const [searchQ, setSearchQ] = useState('')
 
   const [showHelp, setShowHelp] = useState(false)
   const [selected, setSelected] = useState<Classification | null>(null)
+  // Pending allow/block awaiting the category + note review modal.
+  const [pending, setPending] = useState<{ c: Classification; decision: 'approve' | 'reject' } | null>(null)
   // List viewer (trusted / threat)
   const [listView, setListView] = useState<'trusted' | 'threat' | null>(null)
   const [listSearch, setListSearch] = useState('')
   const [listRows, setListRows] = useState<string[]>([])
 
   const loadInfo = () => api.classifier().then(setInfo).catch((e) => setErr(e.message))
-  const loadRows = () => api.classifications(tab, PAGE, page * PAGE).then(setRows).catch((e) => setErr(e.message))
+  // Search only applies to the Clean tab.
+  const loadRows = () =>
+    api
+      .classifications(tab, PAGE, page * PAGE, tab === 'clean' ? searchQ : '')
+      .then(setRows)
+      .catch((e) => setErr(e.message))
 
   useEffect(() => {
     loadInfo()
@@ -62,13 +73,23 @@ export default function Classifier() {
   }
   useEffect(() => {
     setPage(0) // reset paging when switching tabs
+    setSearch('') // and clear any search carried over from another tab
+    setSearchQ('')
   }, [tab])
+  // Debounce the search box; reset to the first page on a new query.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearchQ(search.trim())
+      setPage(0)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search])
   useEffect(() => {
     loadRows()
     const id = setInterval(loadRows, 5000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, page])
+  }, [tab, page, searchQ])
 
   const setMode = async (mode: string) => {
     try {
@@ -79,14 +100,22 @@ export default function Classifier() {
       setErr(e.message)
     }
   }
-  const decide = async (domain: string, decision: 'approve' | 'reject' | 'dismiss') => {
+  const decide = async (domain: string, decision: 'approve' | 'reject' | 'dismiss', category = '', note = '') => {
     try {
-      await api.decideClassification(domain, decision)
+      await api.decideClassification(domain, decision, category, note)
       loadRows()
       loadInfo()
     } catch (e: any) {
       setErr(e.message)
     }
+  }
+  // Allow/Block go through the review modal (category + note); Dismiss is immediate.
+  const requestDecision = (c: Classification, decision: 'approve' | 'reject' | 'dismiss') => {
+    if (decision === 'dismiss') {
+      decide(c.domain, 'dismiss')
+      return
+    }
+    setPending({ c, decision })
   }
   const clearAll = async () => {
     if (!window.confirm('Delete ALL AI classifications and start fresh? Domains will be re-evaluated as they are queried again.')) return
@@ -101,15 +130,36 @@ export default function Classifier() {
   }
 
   const counts = info?.counts ?? {}
+  // When searching, the cached per-status count no longer reflects the filtered
+  // result set, so drive paging off the returned page instead.
+  const searchActive = tab === 'clean' && searchQ !== ''
   const total = counts[tab] ?? 0
-  const lastPage = Math.max(0, Math.ceil(total / PAGE) - 1)
+  const lastPage = searchActive
+    ? rows.length === PAGE
+      ? page + 1
+      : page
+    : Math.max(0, Math.ceil(total / PAGE) - 1)
+  const showPager = searchActive ? page > 0 || rows.length === PAGE : total > PAGE
   // Category breakdown, most-seen first.
   const catCounts = Object.entries(info?.category_counts ?? {}).sort((a, b) => b[1] - a[1])
   return (
     <div>
       {showHelp && <ClassifierHelp onClose={() => setShowHelp(false)} />}
       {selected && (
-        <DomainDetail c={selected} onClose={() => setSelected(null)} onAction={decide} />
+        <DomainDetail c={selected} onClose={() => setSelected(null)} onAction={requestDecision} />
+      )}
+      {pending && (
+        <DecisionModal
+          domain={pending.c.domain}
+          decision={pending.decision}
+          currentCategory={pending.c.category}
+          currentNote={pending.c.note}
+          onClose={() => setPending(null)}
+          onSubmit={async (category, note) => {
+            await decide(pending.c.domain, pending.decision, category, note)
+            setPending(null)
+          }}
+        />
       )}
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         AI classification {!info && <Spinner />}
@@ -225,16 +275,22 @@ export default function Classifier() {
                         <th>Day</th>
                         <th>Calls</th>
                         <th>Errors</th>
+                        <th>Tokens</th>
                         <th>Avg ms</th>
                         <th style={{ width: '40%' }}></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {days.map((d) => (
+                      {days.map((d) => {
+                        const dayTokens = d.prompt_tokens + d.completion_tokens
+                        return (
                         <tr key={d.day}>
                           <td className="muted">{d.day}</td>
                           <td>{d.calls.toLocaleString()}</td>
                           <td>{d.errors > 0 ? <span className="badge blocked">{d.errors}</span> : '—'}</td>
+                          <td title={dayTokens ? `${d.prompt_tokens.toLocaleString()} prompt / ${d.completion_tokens.toLocaleString()} completion` : ''}>
+                            {dayTokens ? dayTokens.toLocaleString() : '—'}
+                          </td>
                           <td>{d.calls ? Math.round(d.latency_ms_total / d.calls) : 0}</td>
                           <td>
                             <div className="cbar">
@@ -242,7 +298,8 @@ export default function Classifier() {
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -277,9 +334,20 @@ export default function Classifier() {
         ))}
       </div>
 
-      <p className="muted" style={{ textAlign: 'left' }}>
-        Click a row for full details + WHOIS.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <p className="muted" style={{ textAlign: 'left', margin: 0 }}>
+          Click a row for full details + WHOIS.
+        </p>
+        {tab === 'clean' && (
+          <input
+            className="search"
+            style={{ marginLeft: 'auto' }}
+            placeholder="search clean domains…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        )}
+      </div>
       <table className="cls-table">
         <thead>
           <tr>
@@ -312,17 +380,18 @@ export default function Classifier() {
                 <td>
                   <div className="cls-actions">
                     {!blocked && (
-                      <button className="btn primary" onClick={stop(() => decide(c.domain, 'approve'))} title="Block this domain">
+                      <button className="btn danger" onClick={stop(() => requestDecision(c, 'approve'))} title="Block this domain">
                         Block
                       </button>
                     )}
-                    {c.status !== 'rejected' && (
-                      <button className="btn" onClick={stop(() => decide(c.domain, 'reject'))} title="Allow — never block">
+                    {/* Clean domains are already allowed, so an Allow button is redundant. */}
+                    {c.status !== 'rejected' && tab !== 'clean' && (
+                      <button className="btn" onClick={stop(() => requestDecision(c, 'reject'))} title="Allow — never block">
                         Allow
                       </button>
                     )}
                     {c.status === 'suggested' && (
-                      <button className="btn ghost" onClick={stop(() => decide(c.domain, 'dismiss'))} title="Dismiss (may reappear later)">
+                      <button className="btn ghost" onClick={stop(() => requestDecision(c, 'dismiss'))} title="Dismiss (may reappear later)">
                         Dismiss
                       </button>
                     )}
@@ -341,10 +410,12 @@ export default function Classifier() {
         </tbody>
       </table>
 
-      {total > PAGE && (
+      {showPager && (
         <div className="pager">
           <span className="muted">
-            {total.toLocaleString()} item{total === 1 ? '' : 's'} · page {page + 1} of {lastPage + 1}
+            {searchActive
+              ? `page ${page + 1}`
+              : `${total.toLocaleString()} item${total === 1 ? '' : 's'} · page ${page + 1} of ${lastPage + 1}`}
           </span>
           <div className="spacer" />
           <button className="btn" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>

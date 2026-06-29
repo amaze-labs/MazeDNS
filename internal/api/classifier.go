@@ -154,13 +154,14 @@ func (s *Server) setClassifierMode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"mode": cfg.Mode})
 }
 
-// listClassifications returns verdicts, optionally filtered by ?status= and
-// limited by ?limit=.
+// listClassifications returns verdicts, optionally filtered by ?status=, a
+// ?search= domain substring, and limited by ?limit=.
 func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	items, err := s.store.ListClassifications(status, limit, offset)
+	items, err := s.store.ListClassifications(status, search, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -234,6 +235,19 @@ func (s *Server) getDomainClients(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"domain": domain, "clients": clients})
 }
 
+// validDecisionCategory checks the corrected category matches the decision:
+// blocking ("approve") wants a security category; allowing ("reject") wants a
+// non-blocking content/other category.
+func validDecisionCategory(decision, category string) bool {
+	switch decision {
+	case "approve":
+		return classifier.IsBlockCategory(category)
+	case "reject":
+		return classifier.IsContentCategory(category)
+	}
+	return false
+}
+
 // decideClassification approves or rejects a verdict. Approving makes it block;
 // rejecting means it never blocks. Either way the policy is rebuilt (and the
 // config hash changes, so workers re-sync).
@@ -241,12 +255,16 @@ func (s *Server) decideClassification(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Domain   string `json:"domain"`
 		Decision string `json:"decision"` // "approve" | "reject" | "dismiss"
+		Category string `json:"category"` // corrected category (optional)
+		Note     string `json:"note"`     // operator review note (optional)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	in.Domain = strings.ToLower(strings.TrimSpace(in.Domain))
+	in.Category = strings.ToLower(strings.TrimSpace(in.Category))
+	in.Note = strings.TrimSpace(in.Note)
 	if in.Domain == "" {
 		writeError(w, http.StatusBadRequest, "domain is required")
 		return
@@ -271,7 +289,13 @@ func (s *Server) decideClassification(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "decision must be approve, reject, or dismiss")
 		return
 	}
-	if err := s.store.SetClassificationStatus(in.Domain, status); err != nil {
+	// Guard the corrected category against the decision: blocking takes a security
+	// category, allowing takes a non-blocking (content/other) category.
+	if in.Category != "" && !validDecisionCategory(in.Decision, in.Category) {
+		writeError(w, http.StatusBadRequest, "category is not valid for this decision")
+		return
+	}
+	if err := s.store.SetClassificationDecision(in.Domain, status, in.Category, in.Note); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

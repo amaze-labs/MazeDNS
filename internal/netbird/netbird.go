@@ -77,9 +77,10 @@ type Enricher struct {
 	resolvers func() map[string]string // node name -> internal DNS resolver
 	store     *store.Store
 
-	mu    sync.RWMutex
-	peers map[string]Identity // ip -> netbird identity
-	cnode map[string]string   // client ip -> node that serves it
+	mu     sync.RWMutex
+	peers  map[string]Identity // ip -> netbird identity
+	cnode  map[string]string   // client ip -> node that serves it
+	manual map[string]string   // client ip -> operator-assigned static hostname
 
 	rdnsMu sync.Mutex
 	rdns   map[string]rdnsEntry // ip -> cached PTR lookup
@@ -96,7 +97,7 @@ type rdnsEntry struct {
 func NewEnricher(get func() Settings, resolvers func() map[string]string, st *store.Store) *Enricher {
 	return &Enricher{
 		get: get, resolvers: resolvers, store: st,
-		peers: map[string]Identity{}, cnode: map[string]string{}, rdns: map[string]rdnsEntry{},
+		peers: map[string]Identity{}, cnode: map[string]string{}, manual: map[string]string{}, rdns: map[string]rdnsEntry{},
 	}
 }
 
@@ -120,9 +121,15 @@ func (e *Enricher) refresh(ctx context.Context) {
 	// Refresh which node serves each client (used to pick that node's resolver for
 	// internal reverse-DNS). Done regardless of NetBird being enabled.
 	if e.store != nil {
+		manual := LoadClientNames(e.store)
 		if cn, err := e.store.ClientNodes(time.Now().Add(-24 * time.Hour).UnixMilli()); err == nil {
 			e.mu.Lock()
 			e.cnode = cn
+			e.manual = manual
+			e.mu.Unlock()
+		} else {
+			e.mu.Lock()
+			e.manual = manual
 			e.mu.Unlock()
 		}
 	}
@@ -158,9 +165,14 @@ func (e *Enricher) Lookup(ctx context.Context, ip string) Identity {
 	if ip == "" {
 		return Identity{}
 	}
+	// Operator-assigned static names win over everything else.
 	e.mu.RLock()
+	name := e.manual[ip]
 	id, ok := e.peers[ip]
 	e.mu.RUnlock()
+	if name != "" {
+		return Identity{Name: name, Source: "manual"}
+	}
 	if ok && id.Name != "" {
 		return id
 	}
@@ -221,6 +233,25 @@ func (e *Enricher) resolverFor(ip string) string {
 		return res[node]
 	}
 	return res["master"]
+}
+
+// SetClientName persists an operator-assigned static hostname for a client IP
+// (an empty name clears it) and updates the in-memory map immediately so the
+// change is reflected without waiting for the next refresh.
+func (e *Enricher) SetClientName(ip, name string) error {
+	if err := SaveClientName(e.store, ip, name); err != nil {
+		return err
+	}
+	ip = clientIP(ip)
+	name = strings.TrimSpace(name)
+	e.mu.Lock()
+	if name == "" {
+		delete(e.manual, ip)
+	} else {
+		e.manual[ip] = name
+	}
+	e.mu.Unlock()
+	return nil
 }
 
 // PeerCount reports how many NetBird peers are currently mapped (for the UI / test).

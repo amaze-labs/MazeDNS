@@ -16,6 +16,7 @@ export interface QueryLogEntry {
   name: string
   qtype: string
   action: string
+  category: string
   rcode: string
   elapsed_ms: number
   node: string
@@ -91,6 +92,7 @@ export interface Classification {
   model: string
   trusted: boolean
   threat: boolean
+  note: string // operator review note set when allowing/blocking
   updated_at: number
 }
 
@@ -212,6 +214,24 @@ export interface ClientStat {
 export interface DomainStat {
   name: string
   count: number
+}
+
+export interface ClientRow {
+  client: string
+  total: number
+  blocked: number
+  last_seen: number
+}
+
+export interface ClientDetail {
+  totals: WindowTotals
+  unique_domains: number
+  last_seen: number
+  avg_latency_ms: number
+  actions: CategoryCount[]
+  categories: CategoryCount[]
+  top_domains: DomainStat[]
+  top_blocked: DomainStat[]
 }
 
 export interface TypeStat {
@@ -349,6 +369,14 @@ export const api = {
     fetch(`/api/stats/category-traffic?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
   insights: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/insights?hours=${hours}${nodesParam(nodes)}`).then(j<Insights>),
+  clientList: (hours = 24, nodes?: string[], limit = 200) =>
+    fetch(`/api/clients?hours=${hours}&limit=${limit}${nodesParam(nodes)}`).then(j<{ clients: ClientRow[] }>),
+  clientDetail: (client: string, hours = 24, nodes?: string[]) =>
+    fetch(`/api/clients/detail?client=${encodeURIComponent(client)}&hours=${hours}${nodesParam(nodes)}`).then(
+      j<ClientDetail>,
+    ),
+  setClientName: (client: string, name: string) =>
+    fetch('/api/clients/name', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ client, name }) }).then(j),
   latency: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/latency?hours=${hours}${nodesParam(nodes)}`).then(
       j<{ step: number; nodes: string[]; points: LatencyPoint[] }>,
@@ -361,6 +389,7 @@ export const api = {
       nodes?: string[]
       action?: string
       qtype?: string
+      category?: string
       sort?: string
       desc?: boolean
       hours?: number
@@ -371,6 +400,7 @@ export const api = {
     if (opts.search) p.set('search', opts.search)
     if (opts.action) p.set('action', opts.action)
     if (opts.qtype) p.set('qtype', opts.qtype)
+    if (opts.category) p.set('category', opts.category)
     if (opts.sort) p.set('sort', opts.sort)
     if (opts.desc) p.set('desc', 'true')
     if (opts.nodes && opts.nodes.length) p.set('nodes', opts.nodes.join(','))
@@ -449,16 +479,22 @@ export const api = {
     if (search) p.set('search', search)
     return fetch(`/api/classifier/list?${p.toString()}`).then(j<{ count: number; domains: string[] }>)
   },
-  classifications: (status = '', limit = 25, offset = 0) => {
+  classifications: (status = '', limit = 25, offset = 0, search = '') => {
     const p = new URLSearchParams({ limit: String(limit), offset: String(offset) })
     if (status) p.set('status', status)
+    if (search) p.set('search', search)
     return fetch(`/api/classifications?${p.toString()}`).then(j<Classification[]>)
   },
-  decideClassification: (domain: string, decision: 'approve' | 'reject' | 'dismiss') =>
+  decideClassification: (
+    domain: string,
+    decision: 'approve' | 'reject' | 'dismiss',
+    category = '',
+    note = '',
+  ) =>
     fetch('/api/classifications/decision', {
       method: 'POST',
       headers: jsonHeaders,
-      body: JSON.stringify({ domain, decision }),
+      body: JSON.stringify({ domain, decision, category, note }),
     }).then(j),
   clearClassifications: () => fetch('/api/classifications', { method: 'DELETE' }).then(j<{ deleted: number }>),
   whois: (domain: string) =>

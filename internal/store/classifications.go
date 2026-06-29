@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,7 @@ type Classification struct {
 	Model      string          `json:"model"`
 	Trusted    bool            `json:"trusted"` // on the trusted list — not blocked
 	Threat     bool            `json:"threat"`  // corroborated by a threat-intel list
+	Note       string          `json:"note"`    // operator review note set when allowing/blocking
 	UpdatedAt  int64           `json:"updated_at"`
 }
 
@@ -100,6 +102,24 @@ func (s *Store) SetClassificationStatus(domain, status string) error {
 	return err
 }
 
+// SetClassificationDecision records a human review: the new status, the corrected
+// category (left unchanged when empty), and a free-text note. The block flag is
+// derived from the status so approving a domain the model called clean actually
+// enforces, and rejecting one it flagged stops enforcement.
+func (s *Store) SetClassificationDecision(domain, status, category, note string) error {
+	block := status == ClassApproved
+	_, err := s.db.Exec(
+		`UPDATE classifications
+		 SET status = ?,
+		     block = ?,
+		     note = ?,
+		     category = CASE WHEN ? = '' THEN category ELSE ? END,
+		     updated_at = ?
+		 WHERE domain = ?`,
+		status, boolToInt(block), note, category, category, time.Now().UnixMilli(), domain)
+	return err
+}
+
 // DeleteClassification removes a verdict entirely, so the domain can be
 // re-classified the next time it's seen ("dismiss once").
 func (s *Store) DeleteClassification(domain string) error {
@@ -118,21 +138,29 @@ func (s *Store) DeleteAllClassifications() (int64, error) {
 	return n, nil
 }
 
-// ListClassifications returns a page of verdicts, optionally filtered by status,
-// newest first.
-func (s *Store) ListClassifications(status string, limit, offset int) ([]Classification, error) {
+// ListClassifications returns a page of verdicts, optionally filtered by status
+// and a domain substring search, newest first.
+func (s *Store) ListClassifications(status, search string, limit, offset int) ([]Classification, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	q := `SELECT domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, updated_at
+	q := `SELECT domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, note, updated_at
 	      FROM classifications`
+	var conds []string
 	var args []any
 	if status != "" {
-		q += ` WHERE status = ?`
+		conds = append(conds, "status = ?")
 		args = append(args, status)
+	}
+	if search != "" {
+		conds = append(conds, "domain LIKE ?")
+		args = append(args, "%"+search+"%")
+	}
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, " AND ")
 	}
 	q += ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
@@ -146,7 +174,7 @@ func (s *Store) ListClassifications(status string, limit, offset int) ([]Classif
 		var c Classification
 		var block, trusted, threat int
 		var factors string
-		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Score, &factors, &c.Reason, &c.Model, &trusted, &threat, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Score, &factors, &c.Reason, &c.Model, &trusted, &threat, &c.Note, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Block = block != 0

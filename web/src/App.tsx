@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import Dashboard from './components/Dashboard'
 import Queries from './components/Queries'
+import Clients from './components/Clients'
 import Filtering from './components/Filtering'
-import Classifier from './components/Classifier'
 import Rewrites from './components/Rewrites'
 import Cluster from './components/Cluster'
 import Settings from './components/Settings'
@@ -12,14 +12,16 @@ import Login, { SKIP_AUTOLOGIN_KEY } from './components/Login'
 import Spinner from './components/Spinner'
 import { api, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'dashboard' | 'queries' | 'filtering' | 'ai' | 'rewrites' | 'cluster' | 'settings' | 'account'
-const ALL_TABS: Tab[] = ['dashboard', 'queries', 'filtering', 'ai', 'rewrites', 'cluster', 'settings', 'account']
+type Tab = 'dashboard' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'cluster' | 'settings' | 'account'
+const ALL_TABS: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites', 'cluster', 'settings', 'account']
 
 // The current tab is reflected in the URL path (/dashboard, /queries, …) so
 // pages are linkable and the browser back/forward buttons work.
 const tabFromPath = (): Tab => {
-  const seg = window.location.pathname.replace(/^\/+|\/+$/g, '') as Tab
-  return ALL_TABS.includes(seg) ? seg : 'dashboard'
+  const seg = window.location.pathname.replace(/^\/+|\/+$/g, '')
+  // AI classification moved under Filtering; keep old /ai links working.
+  if (seg === 'ai') return 'filtering'
+  return ALL_TABS.includes(seg as Tab) ? (seg as Tab) : 'dashboard'
 }
 
 export default function App() {
@@ -79,9 +81,8 @@ export default function App() {
   }
 
   // 'account' is reached from the avatar menu, not the nav.
-  const tabs: Tab[] = ['dashboard', 'queries', 'filtering']
-  if (info?.classifier_available && info?.classifier_enabled) tabs.push('ai')
-  tabs.push('rewrites')
+  const classifierOn = !!(info?.classifier_available && info?.classifier_enabled)
+  const tabs: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites']
   if (info?.cluster_enabled) tabs.push('cluster')
   tabs.push('settings')
 
@@ -109,12 +110,12 @@ export default function App() {
       <main>
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'queries' && <Queries />}
-        {tab === 'filtering' && <Filtering />}
-        {tab === 'ai' && info?.classifier_enabled && <Classifier />}
+        {tab === 'clients' && <Clients />}
+        {tab === 'filtering' && <Filtering classifier={classifierOn} />}
         {tab === 'rewrites' && <Rewrites />}
         {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
         {tab === 'settings' && <Settings onClassifierChange={() => refresh()} />}
-        {tab === 'account' && info?.auth_enabled && <Account me={user} />}
+        {tab === 'account' && info?.auth_enabled && <Account me={user} oidc={!!info.oidc_enabled} />}
       </main>
     </div>
   )

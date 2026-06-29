@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, type QueryLogEntry, type Node } from '../api'
+import { api, type QueryLogEntry, type Node, type CategoryCount } from '../api'
 import { RangeNodeBar, makeNodeColor } from './filters'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
@@ -32,10 +32,14 @@ export default function Queries() {
   const [log, setLog] = useState<QueryLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [input, setInput] = useState('')
-  const [search, setSearch] = useState('')
+  // Seed the search box from ?client= so the Clients tab can deep-link here.
+  const initialClient = new URLSearchParams(window.location.search).get('client') || ''
+  const [input, setInput] = useState(initialClient)
+  const [search, setSearch] = useState(initialClient)
   const [action, setAction] = useState('')
   const [qtype, setQtype] = useState('')
+  const [category, setCategory] = useState('')
+  const [cats, setCats] = useState<CategoryCount[]>([])
   const [sort, setSortCol] = useState('time')
   const [desc, setDesc] = useState(true)
   const [err, setErr] = useState('')
@@ -56,6 +60,11 @@ export default function Queries() {
     api.clusterNodes().then(setNodes).catch(() => setNodes([]))
   }, [])
 
+  // Classification options reflect the categories actually seen in the window.
+  useEffect(() => {
+    api.categories(hours, focus).then(setCats).catch(() => setCats([]))
+  }, [hours, focus])
+
   // Debounce the search box.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -70,7 +79,7 @@ export default function Queries() {
     setLoading(true)
     const fetchLog = () =>
       api
-        .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, sort, desc, hours })
+        .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, category, sort, desc, hours })
         .then((r) => {
           if (alive) {
             setLog(r.entries)
@@ -86,7 +95,7 @@ export default function Queries() {
       alive = false
       clearInterval(id)
     }
-  }, [page, search, focus, action, qtype, sort, desc, hours])
+  }, [page, search, focus, action, qtype, category, sort, desc, hours])
 
   // Clicking a column header sorts by it; clicking the active column flips it.
   const setSort = (col: string) => {
@@ -108,7 +117,7 @@ export default function Queries() {
         Requests {loading && <Spinner />}
       </h2>
       <p className="muted" style={{ textAlign: 'left' }}>
-        Explore the cluster-wide DNS query log. Filter by window, node, action, and type; click a column to sort.
+        Explore the cluster-wide DNS query log. Filter by window, node, action, type, and classification; click a column to sort.
       </p>
       {err && <div className="error">{err}</div>}
 
@@ -143,6 +152,14 @@ export default function Queries() {
             </option>
           ))}
         </select>
+        <select className="ql-select" value={category} onChange={(e) => { setCategory(e.target.value); setPage(0) }}>
+          <option value="">All classifications</option>
+          {cats.map((c) => (
+            <option key={c.category} value={c.category}>
+              {c.category}
+            </option>
+          ))}
+        </select>
         <input className="search" placeholder="search name or client…" value={input} onChange={(e) => setInput(e.target.value)} />
       </div>
 
@@ -155,6 +172,7 @@ export default function Queries() {
             <th className="sortable" onClick={() => setSort('name')}>Name{arrow('name')}</th>
             <th className="sortable" onClick={() => setSort('qtype')}>Type{arrow('qtype')}</th>
             <th className="sortable" onClick={() => setSort('action')}>Action{arrow('action')}</th>
+            <th className="sortable" onClick={() => setSort('category')}>Classification{arrow('category')}</th>
             <th className="sortable" onClick={() => setSort('rcode')}>Rcode{arrow('rcode')}</th>
             <th className="sortable" onClick={() => setSort('ms')}>ms{arrow('ms')}</th>
           </tr>
@@ -170,13 +188,14 @@ export default function Queries() {
               <td>
                 <span className={`badge ${e.action}`}>{e.action}</span>
               </td>
+              <td>{e.category ? <span className="badge blocked">{e.category}</span> : <span className="muted">—</span>}</td>
               <td>{e.rcode}</td>
               <td>{e.elapsed_ms.toFixed(2)}</td>
             </tr>
           ))}
           {log.length === 0 && (
             <tr>
-              <td colSpan={8} className="muted">
+              <td colSpan={9} className="muted">
                 No matching queries
               </td>
             </tr>

@@ -128,28 +128,30 @@ func (s *Store) CountQueryLog() (int64, error) {
 
 // QueryLogQuery describes a filtered, sorted, paginated query-log lookup.
 type QueryLogQuery struct {
-	Search  string   // substring match on name or client
-	Action  string   // exact action filter ("" = all)
-	QType   string   // exact query-type filter ("" = all)
-	Nodes   []string // node filter (empty = all)
-	SinceMs int64    // only entries with ts >= SinceMs (0 = no lower bound)
-	Sort    string   // column key (see queryLogSortColumns); default newest-first
-	Desc    bool     // sort descending
-	Limit   int
-	Offset  int
+	Search   string   // substring match on name or client
+	Action   string   // exact action filter ("" = all)
+	QType    string   // exact query-type filter ("" = all)
+	Category string   // exact classification/category filter ("" = all)
+	Nodes    []string // node filter (empty = all)
+	SinceMs  int64    // only entries with ts >= SinceMs (0 = no lower bound)
+	Sort     string   // column key (see queryLogSortColumns); default newest-first
+	Desc     bool     // sort descending
+	Limit    int
+	Offset   int
 }
 
 // queryLogSortColumns whitelists the user-facing sort keys -> SQL columns, so the
 // ORDER BY clause can never be injected.
 var queryLogSortColumns = map[string]string{
-	"time":   "id", // id is monotonic, a stable proxy for arrival time
-	"name":   "name",
-	"client": "client",
-	"qtype":  "qtype",
-	"action": "action",
-	"rcode":  "rcode",
-	"ms":     "elapsed_ms",
-	"node":   "node",
+	"time":     "id", // id is monotonic, a stable proxy for arrival time
+	"name":     "name",
+	"client":   "client",
+	"qtype":    "qtype",
+	"action":   "action",
+	"category": "category",
+	"rcode":    "rcode",
+	"ms":       "elapsed_ms",
+	"node":     "node",
 }
 
 // SearchQueryLog returns a filtered, sorted page of query-log entries plus the
@@ -179,6 +181,10 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 	if q.QType != "" {
 		conds = append(conds, "qtype = ?")
 		args = append(args, q.QType)
+	}
+	if q.Category != "" {
+		conds = append(conds, "category = ?")
+		args = append(args, q.Category)
 	}
 	if len(q.Nodes) > 0 {
 		ph := make([]string, len(q.Nodes))

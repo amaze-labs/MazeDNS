@@ -410,6 +410,29 @@ tr:last-child td {
 .modal-body h4 {
   margin: 18px 0 8px;
 }
+/* Form fields inside a modal (e.g. the allow/block review modal). */
+.modal-body .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.modal-body .field > label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.modal-body .field select,
+.modal-body .field textarea {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+.modal-body .field select {
+  max-width: 280px;
+}
 
 /* Scoring flow diagram (Learn more) */
 .flow {
@@ -752,6 +775,19 @@ textarea.import {
 
 .btn.ghost {
   background: transparent;
+}
+
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn.danger:hover {
+  filter: brightness(1.1);
+  border-color: var(--danger);
+  color: #fff;
 }
 
 .btn.ghost-danger {

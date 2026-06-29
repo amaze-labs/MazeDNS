@@ -42,6 +42,14 @@ var validCategories = func() map[string]bool {
 	return m
 }()
 
+// IsBlockCategory reports whether cat is a security category that warrants
+// blocking (ads/trackers/malware/phishing).
+func IsBlockCategory(cat string) bool { return blockCategories[cat] }
+
+// IsContentCategory reports whether cat is a recognised non-blocking category
+// (a content category or "other") — the categories valid when allowing a domain.
+func IsContentCategory(cat string) bool { return validCategories[cat] && !blockCategories[cat] }
+
 // Verdict is the model's classification of a single registered domain.
 type Verdict struct {
 	Category   string  `json:"category"`

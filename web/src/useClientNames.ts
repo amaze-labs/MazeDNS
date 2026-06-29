@@ -29,6 +29,14 @@ function flush() {
     })
 }
 
+// invalidateClientName drops a cached identity (e.g. after an operator sets a
+// static hostname) so the next render re-resolves it and the new name shows
+// everywhere without a full reload.
+export function invalidateClientName(ip: string) {
+  cache.delete(ip)
+  listeners.forEach((l) => l())
+}
+
 function request(ips: string[]) {
   let need = false
   for (const ip of ips) {

@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type SessionUser, type User } from '../api'
 
-export default function Account({ me }: { me: SessionUser | null }) {
-  const isAdmin = me?.role === 'admin'
+export default function Account({ me, oidc = false }: { me: SessionUser | null; oidc?: boolean }) {
+  // With SSO enabled, accounts and roles are governed by the identity provider's
+  // groups, so local user management is hidden.
+  const isAdmin = me?.role === 'admin' && !oidc
 
   // Change own password
   const [cur, setCur] = useState('')
@@ -138,6 +140,16 @@ export default function Account({ me }: { me: SessionUser | null }) {
               Update password
             </button>
           </form>
+        </section>
+      )}
+
+      {oidc && me?.role === 'admin' && (
+        <section className="settings-card">
+          <h3>Users</h3>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            Single sign-on is enabled, so accounts and roles are managed by your identity provider's groups. There is no
+            local user management here.
+          </p>
         </section>
       )}
 

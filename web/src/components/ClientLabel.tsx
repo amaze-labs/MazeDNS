@@ -13,6 +13,11 @@ export default function ClientLabel({ ip, names }: { ip: string; names: Map<stri
             netbird
           </span>
         )}
+        {id.source === 'manual' && (
+          <span className="badge allow" title="Static hostname (assigned in the Clients tab)" style={{ marginLeft: 6 }}>
+            static
+          </span>
+        )}
       </span>
     )
   }

@@ -11,7 +11,7 @@ import (
 // slice; caching the computed JSON for this long coalesces that load and keeps a
 // busy resolver's query_log aggregations from being recomputed on every poll,
 // while staying fresh enough for a live dashboard.
-const statsTTL = 10 * time.Second
+const statsTTL = 30 * time.Second
 
 // ttlCache is a tiny in-memory cache of marshaled JSON responses, keyed by the
 // full request URI (which encodes hours + node filter).

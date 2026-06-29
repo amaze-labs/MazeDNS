@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS query_log (
 	node TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(ts);
+-- Composite indexes for the windowed dashboard aggregations so they seek instead
+-- of scanning the whole (cluster-wide, up to 90-day) log: (action,ts) covers the
+-- blocked-only queries (blocked-by-category, top-blocked), (client,ts) covers the
+-- per-client breakdown (Clients tab modal).
+CREATE INDEX IF NOT EXISTS idx_query_log_action_ts ON query_log(action, ts);
+CREATE INDEX IF NOT EXISTS idx_query_log_client_ts ON query_log(client, ts);
 CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	username TEXT NOT NULL UNIQUE,

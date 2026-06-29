@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type QueryLogEntry, type Node, type CategoryCount } from '../api'
 import { RangeNodeBar, makeNodeColor } from './filters'
+import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import Spinner from './Spinner'
@@ -90,10 +91,10 @@ export default function Queries() {
         })
         .catch((e) => alive && setErr(e.message))
     fetchLog()
-    const id = setInterval(fetchLog, 5000)
+    const stop = pollWhileVisible(fetchLog, 8000)
     return () => {
       alive = false
-      clearInterval(id)
+      stop()
     }
   }, [page, search, focus, action, qtype, category, sort, desc, hours])
 

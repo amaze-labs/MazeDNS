@@ -26,6 +26,7 @@ import {
   type LatencyPoint,
 } from '../api'
 import { RANGES, RangeNodeBar, OVERALL_COLOR, colorAt } from './filters'
+import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 
@@ -210,10 +211,10 @@ export default function Dashboard() {
       api.clusterNodes().then((n) => alive && setNodes(n)).catch(() => {})
     }
     tick()
-    const id = setInterval(tick, 5000)
+    const stop = pollWhileVisible(tick, 15000)
     return () => {
       alive = false
-      clearInterval(id)
+      stop()
     }
   }, [hours, focus])
 

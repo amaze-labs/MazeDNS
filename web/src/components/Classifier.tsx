@@ -4,6 +4,7 @@ import Spinner from './Spinner'
 import ClassifierHelp from './ClassifierHelp'
 import DomainDetail from './DomainDetail'
 import DecisionModal from './DecisionModal'
+import { pollWhileVisible } from '../poll'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -86,8 +87,7 @@ export default function Classifier() {
   }, [search])
   useEffect(() => {
     loadRows()
-    const id = setInterval(loadRows, 5000)
-    return () => clearInterval(id)
+    return pollWhileVisible(loadRows, 8000)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, page, searchQ])
 

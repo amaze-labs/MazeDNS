@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Node } from '../api'
+import { pollWhileVisible } from '../poll'
 
 const ONLINE_WINDOW = 120 // seconds
 const IMAGE = 'ghcr.io/ipmaze/mazedns:latest'
@@ -53,8 +54,7 @@ export default function Cluster() {
 
   useEffect(() => {
     load()
-    const id = setInterval(load, 5000)
-    return () => clearInterval(id)
+    return pollWhileVisible(load, 10000)
   }, [])
 
   const add = async (e: FormEvent) => {

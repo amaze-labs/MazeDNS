@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type ClientRow, type Node } from '../api'
 import { RangeNodeBar, makeNodeColor } from './filters'
+import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import ClientDetail from './ClientDetail'
@@ -50,10 +51,10 @@ export default function Clients() {
         })
         .catch((e) => alive && setErr(e.message))
     fetchRows()
-    const id = setInterval(fetchRows, 5000)
+    const stop = pollWhileVisible(fetchRows, 15000)
     return () => {
       alive = false
-      clearInterval(id)
+      stop()
     }
   }, [hours, focus])
 

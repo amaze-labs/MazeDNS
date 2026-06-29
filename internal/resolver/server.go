@@ -4,7 +4,9 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"os"
 	stdruntime "runtime"
+	"strconv"
 
 	"github.com/miekg/dns"
 )
@@ -18,14 +20,31 @@ import (
 //	sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
 const udpSocketBuf = 8 << 20 // 8 MiB
 
-// maxUDPListeners bounds how many SO_REUSEPORT UDP sockets we open. Each socket
-// has its own read loop, so the kernel load-balances incoming packets across
-// cores instead of funnelling every datagram through one goroutine. Bounded so a
-// many-core box doesn't open an unreasonable number of sockets.
+// maxUDPListeners bounds how many SO_REUSEPORT UDP sockets we may open.
 const maxUDPListeners = 8
 
-// Server runs the UDP and TCP DNS listeners for a Resolver. UDP uses one socket
-// per core (up to maxUDPListeners) via SO_REUSEPORT where supported.
+// udpListeners returns how many UDP sockets to open. Multi-socket SO_REUSEPORT
+// ingestion is OPT-IN via MAZEDNS_UDP_LISTENERS (default 1 = a single socket, the
+// long-standing behavior). Set it to >1 (e.g. the core count) to spread the UDP
+// read loop across cores. Defaulting to 1 keeps the safe single-listener path
+// unless an operator explicitly enables the multi-socket path.
+func udpListeners() int {
+	v, _ := strconv.Atoi(os.Getenv("MAZEDNS_UDP_LISTENERS"))
+	if v <= 1 {
+		return 1
+	}
+	if n := stdruntime.GOMAXPROCS(0); v > n {
+		v = n
+	}
+	if v > maxUDPListeners {
+		v = maxUDPListeners
+	}
+	return v
+}
+
+// Server runs the UDP and TCP DNS listeners for a Resolver. UDP uses a single
+// socket by default, or several sharing the port via SO_REUSEPORT when
+// MAZEDNS_UDP_LISTENERS > 1.
 type Server struct {
 	addr string
 	udp  []*dns.Server
@@ -36,13 +55,7 @@ type Server struct {
 func NewServer(addr string, res *Resolver) *Server {
 	mux := dns.NewServeMux()
 	mux.HandleFunc(".", res.Handle)
-	n := stdruntime.GOMAXPROCS(0)
-	if n < 1 {
-		n = 1
-	}
-	if n > maxUDPListeners {
-		n = maxUDPListeners
-	}
+	n := udpListeners()
 	s := &Server{
 		addr: addr,
 		tcp:  &dns.Server{Addr: addr, Net: "tcp", Handler: mux},
@@ -62,10 +75,14 @@ func NewServer(addr string, res *Resolver) *Server {
 func (s *Server) ListenAndServe() error {
 	errc := make(chan error, len(s.udp)+1)
 
-	// One or more UDP sockets sharing the port via SO_REUSEPORT. The first must
-	// bind; if additional ones fail (e.g. SO_REUSEPORT unsupported), we carry on
-	// with however many came up.
-	lc := net.ListenConfig{Control: reusePortControl}
+	// With a single socket use a plain listener (the long-standing path); only set
+	// SO_REUSEPORT when several sockets must share the port. The first must bind; if
+	// additional ones fail (e.g. SO_REUSEPORT unsupported), we carry on with however
+	// many came up.
+	lc := net.ListenConfig{}
+	if len(s.udp) > 1 {
+		lc.Control = reusePortControl
+	}
 	var bound int
 	for i := range s.udp {
 		pc, err := lc.ListenPacket(context.Background(), "udp", s.addr)

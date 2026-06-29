@@ -13,13 +13,19 @@ import (
 )
 
 // stalingUpstream returns an A answer with a fixed (short) TTL and counts calls.
+// The small delay makes a refresh hold its per-name guard long enough that a
+// burst of concurrent stale hits deterministically collapses to one refresh.
 type stalingUpstream struct {
 	calls atomic.Int32
 	ttl   uint32
+	delay time.Duration
 }
 
 func (u *stalingUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	u.calls.Add(1)
+	if u.delay > 0 {
+		time.Sleep(u.delay)
+	}
 	m := new(dns.Msg)
 	m.SetReply(req)
 	q := req.Question[0]
@@ -37,7 +43,7 @@ func (u *stalingUpstream) String() string { return "staling" }
 func TestServeStaleRefresh(t *testing.T) {
 	r := New(Options{})
 	ca := cache.New(100, 0, 0) // honor the record's own 1s TTL, no clamps
-	up := &stalingUpstream{ttl: 1}
+	up := &stalingUpstream{ttl: 1, delay: 50 * time.Millisecond}
 	r.rt.Store(&runtime{defaultUpstreams: []Upstream{up}, blockMode: "nxdomain", cache: ca})
 
 	query := func() string {
@@ -56,6 +62,22 @@ func TestServeStaleRefresh(t *testing.T) {
 			t.Fatalf("upstream calls=%d, want %d", got, want)
 		}
 	}
+	// A refresh bumps the call counter mid-flight (in Exchange) but only releases
+	// its per-name guard once fully done; wait for that before the next stale cycle
+	// so a follow-up refresh isn't (correctly) suppressed by a still-running one.
+	waitRefreshDone := func() {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			empty := true
+			r.refreshing.Range(func(_, _ any) bool { empty = false; return false })
+			if empty {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		t.Fatal("background refresh did not release its guard")
+	}
 
 	// 1st query: miss -> forward -> cache.
 	if a := query(); a != "forward" {
@@ -71,6 +93,7 @@ func TestServeStaleRefresh(t *testing.T) {
 		t.Fatalf("stale query action=%q, want cache", a)
 	}
 	waitForCalls(2)
+	waitRefreshDone() // let the refresh fully settle before the next stale cycle
 
 	// A burst of concurrent stale hits must cause only ONE more refresh.
 	time.Sleep(1100 * time.Millisecond)

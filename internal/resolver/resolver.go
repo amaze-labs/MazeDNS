@@ -5,6 +5,7 @@
 package resolver
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net"
@@ -219,6 +220,35 @@ func (r *Resolver) ApplySettings(s Settings) {
 	r.rt.Store(rt)
 	slog.Info("settings applied", "upstreams", len(rt.defaultUpstreams), "forwarders", len(rt.conditional),
 		"block", rt.blockMode, "ratelimit", s.RateLimitQPM, "dnssec", s.DNSSEC, "cache", s.Cache.Enabled)
+}
+
+// MaintainUpstreams keeps DoT upstream connections warm so a cache miss on a
+// low-traffic node doesn't pay a TLS handshake (which roughly doubles forward
+// latency). It always reads the current runtime, so it follows live settings
+// changes — upstreams dropped by ApplySettings simply stop being warmed and are
+// garbage-collected. Runs until ctx is cancelled; start it once after New.
+func (r *Resolver) MaintainUpstreams(ctx context.Context) {
+	t := time.NewTicker(dotKeepaliveInterval)
+	defer t.Stop()
+	warm := func(ups []Upstream) {
+		for _, u := range ups {
+			if d, ok := u.(*dotUpstream); ok {
+				go d.keepWarm() // independent so one slow/dead upstream can't delay the others
+			}
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			rt := r.rt.Load()
+			warm(rt.defaultUpstreams)
+			for _, cf := range rt.conditional {
+				warm(cf.ups)
+			}
+		}
+	}
 }
 
 // SetPolicy atomically swaps the active filtering/rewrite policy.

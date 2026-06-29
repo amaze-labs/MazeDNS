@@ -42,6 +42,12 @@ const dotIdleTimeout = 10 * time.Second
 // timeout so it never exceeds the overall budget.
 const dotProbeTimeout = 2 * time.Second
 
+// dotKeepaliveInterval is how often the resolver refreshes an idle DoT connection
+// to keep it warm (see MaintainUpstreams). It is kept below dotIdleTimeout — and
+// below typical server keep-alive / NAT idle windows — so a low-traffic node
+// always has a live TLS session ready and never pays a handshake on a cache miss.
+const dotKeepaliveInterval = 5 * time.Second
+
 // Upstream resolves a query against a single upstream server.
 type Upstream interface {
 	Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error)
@@ -190,6 +196,34 @@ func (u *dotUpstream) putConn(c *dns.Conn) {
 	default:
 		c.Close() // pool full — let the extra connection go.
 	}
+}
+
+// keepWarm makes sure the pool holds at least one live TLS connection: it refreshes
+// a pooled connection with a cheap query (which also keeps the server/NAT flow
+// alive), or dials a fresh one. Called periodically so an idle upstream doesn't pay
+// a handshake on the next real query. Best-effort: any error just drops the dead
+// connection and the next tick retries.
+func (u *dotUpstream) keepWarm() {
+	conn := u.getConn()
+	if conn == nil {
+		c, err := u.client.Dial(u.addr)
+		if err != nil {
+			return
+		}
+		// A freshly dialled connection is already warm; pool it as-is.
+		u.putConn(c)
+		return
+	}
+	m := new(dns.Msg)
+	m.SetQuestion(".", dns.TypeNS)
+	if _, _, err := u.probe.ExchangeWithConn(m, conn); err != nil {
+		conn.Close()
+		if c, err := u.client.Dial(u.addr); err == nil {
+			u.putConn(c) // replace the dead connection with a warm one
+		}
+		return
+	}
+	u.putConn(conn)
 }
 
 func (u *dotUpstream) String() string { return "tls://" + u.addr }

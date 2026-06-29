@@ -126,6 +126,9 @@ func main() {
 	// Operational settings: the DB is the source of truth, seeded from the config
 	// file on first run, then managed live from the UI.
 	res.ApplySettings(loadOrSeedSettings(st, cfg))
+	// Keep DoT upstream connections warm so cache-miss forwards don't pay a TLS
+	// handshake on low-traffic nodes.
+	go res.MaintainUpstreams(context.Background())
 	// Restore any active block-pause across restarts.
 	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {
 		res.SetBlockPausedUntil(ts)

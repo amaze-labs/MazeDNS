@@ -28,6 +28,20 @@ const largeUDPSize = 1232
 // each time.
 const dotPoolSize = 4
 
+// dotIdleTimeout bounds how long a pooled TLS connection may sit idle before we
+// treat it as likely-dead and discard it instead of reusing it. DoT servers and
+// stateful firewalls/NATs silently drop idle TCP flows; reusing one that has been
+// dropped makes the next query block on a read until the per-query timeout. Keep
+// this comfortably under typical server keep-alive / NAT idle windows.
+const dotIdleTimeout = 10 * time.Second
+
+// dotProbeTimeout is the short read budget for a *reused* pooled connection. A
+// warm DoT server answers in well under this, so if a pooled connection has gone
+// stale within the idle window we fail over to a fresh dial in ~dotProbeTimeout
+// instead of stalling for the full per-query timeout. Capped at the upstream
+// timeout so it never exceeds the overall budget.
+const dotProbeTimeout = 2 * time.Second
+
 // Upstream resolves a query against a single upstream server.
 type Upstream interface {
 	Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error)
@@ -56,10 +70,17 @@ func ParseUpstream(spec string, timeout time.Duration) (Upstream, error) {
 		if server == "" {
 			server, _, _ = net.SplitHostPort(host)
 		}
+		probeTimeout := dotProbeTimeout
+		if timeout > 0 && timeout < probeTimeout {
+			probeTimeout = timeout
+		}
 		return &dotUpstream{
 			addr:   host,
 			client: &dns.Client{Net: "tcp-tls", Timeout: timeout, TLSConfig: &tls.Config{ServerName: server}},
-			pool:   make(chan *dns.Conn, dotPoolSize),
+			// probe never dials (only used with an already-open pooled conn), so it
+			// needs no Net/TLSConfig — just a short read deadline for fast failover.
+			probe: &dns.Client{Timeout: probeTimeout},
+			pool:  make(chan pooledConn, dotPoolSize),
 		}, nil
 	case strings.HasPrefix(spec, "tcp://"):
 		return newPlain(ensurePort(strings.TrimPrefix(spec, "tcp://"), "53"), "tcp", timeout), nil
@@ -106,45 +127,66 @@ func (u *plainUpstream) String() string { return u.proto + "://" + u.addr }
 // avoid a handshake per query.
 type dotUpstream struct {
 	addr   string
-	client *dns.Client
-	pool   chan *dns.Conn
+	client *dns.Client // full per-query timeout; used for fresh dials + exchange
+	probe  *dns.Client // short read budget; used only with a reused pooled conn
+	pool   chan pooledConn
+}
+
+// pooledConn is a warm TLS connection plus when it was last returned to the pool,
+// so we can discard it once it has been idle long enough to likely be dead.
+type pooledConn struct {
+	conn     *dns.Conn
+	lastUsed time.Time
 }
 
 func (u *dotUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	// Try a warm pooled connection first; on any error it may be stale, so fall
-	// back to a fresh dial and retry once.
+	// Measure the whole operation (including any time wasted on a stale pooled
+	// connection before failing over) so the reported rtt reflects real latency.
+	start := time.Now()
+	// Try a warm pooled connection first, but with a short read deadline: if it has
+	// gone stale we fail over to a fresh dial in ~dotProbeTimeout instead of blocking
+	// for the full per-query timeout.
 	if conn := u.getConn(); conn != nil {
-		if resp, rtt, err := u.client.ExchangeWithConn(req, conn); err == nil {
+		if resp, _, err := u.probe.ExchangeWithConn(req, conn); err == nil {
 			u.putConn(conn)
-			return resp, rtt, nil
+			return resp, time.Since(start), nil
 		}
 		conn.Close()
 	}
 	conn, err := u.client.Dial(u.addr)
 	if err != nil {
-		return nil, 0, err
+		return nil, time.Since(start), err
 	}
-	resp, rtt, err := u.client.ExchangeWithConn(req, conn)
+	resp, _, err := u.client.ExchangeWithConn(req, conn)
 	if err != nil {
 		conn.Close()
-		return nil, 0, err
+		return nil, time.Since(start), err
 	}
 	u.putConn(conn)
-	return resp, rtt, nil
+	return resp, time.Since(start), nil
 }
 
+// getConn returns a warm pooled connection, discarding any that have been idle
+// past dotIdleTimeout (and are therefore likely dropped). Returns nil if the pool
+// has no usable connection, so the caller dials fresh.
 func (u *dotUpstream) getConn() *dns.Conn {
-	select {
-	case c := <-u.pool:
-		return c
-	default:
-		return nil
+	for {
+		select {
+		case pc := <-u.pool:
+			if time.Since(pc.lastUsed) > dotIdleTimeout {
+				pc.conn.Close()
+				continue
+			}
+			return pc.conn
+		default:
+			return nil
+		}
 	}
 }
 
 func (u *dotUpstream) putConn(c *dns.Conn) {
 	select {
-	case u.pool <- c:
+	case u.pool <- pooledConn{conn: c, lastUsed: time.Now()}:
 	default:
 		c.Close() // pool full — let the extra connection go.
 	}

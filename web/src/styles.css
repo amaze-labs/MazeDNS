@@ -775,6 +775,67 @@ textarea.import {
   font-size: 15px;
 }
 
+/* Collapsible settings sections: <details class="settings-card"><summary>… */
+details.settings-card {
+  padding: 0;
+}
+details.settings-card > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 20px;
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+details.settings-card > summary::-webkit-details-marker {
+  display: none;
+}
+details.settings-card > summary::before {
+  content: '▸';
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 0.12s ease;
+}
+details.settings-card[open] > summary::before {
+  transform: rotate(90deg);
+}
+details.settings-card[open] > summary {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+/* the content after <summary> gets the usual card padding */
+details.settings-card > summary ~ * {
+  margin-left: 20px;
+  margin-right: 20px;
+}
+details.settings-card > .settings-actions:last-child,
+details.settings-card > div:last-child {
+  margin-bottom: 16px;
+}
+
+/* Single sticky save bar for the whole Settings page. */
+.settings-savebar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  margin: 20px 0 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.3);
+}
+.settings-savebar .ok-inline {
+  color: var(--ok);
+  margin-right: auto;
+}
+
 .settings-card > label.muted {
   display: block;
   margin-bottom: 8px;

@@ -29,30 +29,18 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // Classifier settings (separate endpoint; null until loaded / if unavailable).
   const [cls, setCls] = useState<ClassifierSettings | null>(null)
   const [clsInfo, setClsInfo] = useState<ClassifierStatus | null>(null)
-  const [clsSaving, setClsSaving] = useState(false)
-  const [clsOk, setClsOk] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   // NetBird client-identity integration (separate endpoint).
   const [nb, setNb] = useState<NetbirdSettings | null>(null)
   const [nbInfo, setNbInfo] = useState<{ has_token: boolean; peer_count: number } | null>(null)
-  const [nbSaving, setNbSaving] = useState(false)
-  const [nbOk, setNbOk] = useState(false)
   const [nbTesting, setNbTesting] = useState(false)
   const [nbMsg, setNbMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
-  // Per-node internal DNS resolvers (reverse-DNS for internal clients).
-  const [rdnsNodes, setRdnsNodes] = useState<string[]>([])
-  const [rdns, setRdns] = useState<Record<string, string>>({})
-  const [rdnsSaving, setRdnsSaving] = useState(false)
-  const [rdnsOk, setRdnsOk] = useState(false)
 
   // VictoriaMetrics metrics export.
   const [vm, setVm] = useState<VMExportSettings | null>(null)
   const [vmHasPassword, setVmHasPassword] = useState(false)
-  const [vmSaving, setVmSaving] = useState(false)
-  const [vmOk, setVmOk] = useState(false)
 
   const load = async () => {
     try {
@@ -78,13 +66,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       })
       .catch(() => setNb(null))
     api
-      .reverseDns()
-      .then((r) => {
-        setRdnsNodes(r.nodes || [])
-        setRdns(r.resolvers || {})
-      })
-      .catch(() => setRdnsNodes([]))
-    api
       .metricsExport()
       .then((r) => {
         setVm(r.settings)
@@ -95,23 +76,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   useEffect(() => {
     load()
   }, [])
-
-  const saveClassifier = async () => {
-    if (!cls) return
-    setClsSaving(true)
-    setErr('')
-    setClsOk(false)
-    try {
-      const saved = await api.saveClassifierSettings(cls)
-      setCls(saved)
-      setClsOk(true)
-      onClassifierChange?.()
-    } catch (e: any) {
-      setErr(e.message)
-    } finally {
-      setClsSaving(false)
-    }
-  }
 
   const testClassifier = async () => {
     if (!cls) return
@@ -131,22 +95,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     }
   }
 
-  const saveNetbird = async () => {
-    if (!nb) return
-    setNbSaving(true)
-    setErr('')
-    setNbOk(false)
-    try {
-      const saved = await api.saveNetbird(nb)
-      setNb(saved)
-      setNbOk(true)
-    } catch (e: any) {
-      setErr(e.message)
-    } finally {
-      setNbSaving(false)
-    }
-  }
-
   const testNetbird = async () => {
     if (!nb) return
     setNbTesting(true)
@@ -158,38 +106,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setNbMsg({ ok: false, text: e.message })
     } finally {
       setNbTesting(false)
-    }
-  }
-
-  const saveMetricsExport = async () => {
-    if (!vm) return
-    setVmSaving(true)
-    setErr('')
-    setVmOk(false)
-    try {
-      const saved = await api.saveMetricsExport(vm)
-      setVm(saved)
-      setVmHasPassword(saved.password !== '' || vmHasPassword)
-      setVmOk(true)
-    } catch (e: any) {
-      setErr(e.message)
-    } finally {
-      setVmSaving(false)
-    }
-  }
-
-  const saveReverseDns = async () => {
-    setRdnsSaving(true)
-    setErr('')
-    setRdnsOk(false)
-    try {
-      const r = await api.saveReverseDns(rdns)
-      setRdns(r.resolvers || {})
-      setRdnsOk(true)
-    } catch (e: any) {
-      setErr(e.message)
-    } finally {
-      setRdnsSaving(false)
     }
   }
 
@@ -249,7 +165,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     }
   }
 
-  const save = async () => {
+  // saveAll persists every settings section with a single button: operational
+  // settings, then the AI classifier, NetBird, and metrics export (each only if
+  // present). Stops at the first failure and reports one result.
+  const saveAll = async () => {
     setSaving(true)
     setErr('')
     setOk(false)
@@ -265,6 +184,17 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setS(saved)
       setUpstreams((saved.upstreams || []).join('\n'))
       setForwarders(saved.forwarders || [])
+
+      if (cls) {
+        setCls(await api.saveClassifierSettings(cls))
+        onClassifierChange?.()
+      }
+      if (nb) setNb(await api.saveNetbird(nb))
+      if (vm) {
+        const v = await api.saveMetricsExport(vm)
+        setVm(v)
+        setVmHasPassword(v.password !== '' || vmHasPassword)
+      }
       setOk(true)
     } catch (e: any) {
       setErr(e.message)
@@ -281,10 +211,9 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         Bootstrap options (listen addresses, TLS, admin credentials, SSO) stay in the config file / env.
       </p>
       {err && <div className="error">{err}</div>}
-      {ok && <div className="ok-msg">Saved and applied.</div>}
 
-      <section className="settings-card">
-        <h3>Upstream resolvers</h3>
+      <details className="settings-card" open>
+        <summary>Upstream resolvers</summary>
         <label className="muted">
           One per line, tried in order. Plain DNS <code>host:port</code> (e.g. <code>1.1.1.1:53</code>), or encrypted:
           DNS-over-TLS <code>tls://1.1.1.1:853#cloudflare-dns.com</code> or DNS-over-HTTPS{' '}
@@ -310,12 +239,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           placeholder="tls://1.1.1.1:853#cloudflare-dns.com&#10;tls://9.9.9.9:853#dns.quad9.net"
         />
         <p className="hint" style={{ textAlign: 'left' }}>
-          A quick-fill replaces the box; click <strong>Save settings</strong> below to apply.
+          A quick-fill replaces the box; click <strong>Save changes</strong> below to apply.
         </p>
-      </section>
+      </details>
 
-      <section className="settings-card">
-        <h3>Conditional forwarders</h3>
+      <details className="settings-card" open>
+        <summary>Conditional forwarders</summary>
         <label className="muted">Route queries for a domain suffix to specific upstreams.</label>
         {forwarders.map((g, i) => (
           <div className="row" key={i}>
@@ -337,10 +266,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <button className="btn ghost" onClick={addFwd}>
           + Add forwarder
         </button>
-      </section>
+      </details>
 
-      <section className="settings-card">
-        <h3>Filtering & protocol</h3>
+      <details className="settings-card" open>
+        <summary>Filtering &amp; protocol</summary>
         <div className="field">
           <label>Block response</label>
           <select value={s.block_response} onChange={(e) => patch({ block_response: e.target.value })}>
@@ -357,10 +286,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             onChange={(e) => patch({ rate_limit_qpm: Number(e.target.value) })}
           />
         </div>
-      </section>
+      </details>
 
-      <section className="settings-card">
-        <h3>DNSSEC</h3>
+      <details className="settings-card" open>
+        <summary>DNSSEC</summary>
         <label className="muted">
           DNSSEC lets a resolver cryptographically verify that DNS answers are authentic and untampered. When enabled,
           MazeDNS sets the DNSSEC-OK (DO) bit on upstream queries and surfaces the Authenticated Data (AD) flag in
@@ -381,10 +310,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <p className="muted" style={{ textAlign: 'left', marginTop: 4 }}>
           Currently <strong>{s.dnssec ? 'enabled' : 'disabled'}</strong>. Changes apply live — no restart.
         </p>
-      </section>
+      </details>
 
-      <section className="settings-card">
-        <h3>Cache</h3>
+      <details className="settings-card" open>
+        <summary>Cache</summary>
         <div className="field">
           <label className="toggle">
             <input
@@ -425,26 +354,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             onChange={(e) => patchCache({ max_ttl_sec: Number(e.target.value) })}
           />
         </div>
-      </section>
-
-      <div className="settings-actions">
-        <button className="btn primary" onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : 'Save & apply'}
-        </button>
-        <button className="btn ghost-danger" onClick={load} disabled={saving}>
-          Reset
-        </button>
-        <span className="hint">Changes apply live — no restart.</span>
-      </div>
+      </details>
 
       {cls && (
-        <section className="settings-card">
-          <h3>AI classification (local LLM)</h3>
+        <details className="settings-card" open>
+          <summary>AI classification (local LLM)</summary>
           <label className="muted">
             Classify newly-seen domains with a local OpenAI-compatible model (Ollama, llama.cpp, LM Studio) instead of
             maintaining blocklists. Runs on the master; auto-blocks also propagate to workers.
           </label>
-          {clsOk && <div className="ok-msg">Classifier settings saved.</div>}
           <div className="field">
             <label className="toggle">
               <input type="checkbox" checked={cls.enabled} onChange={(e) => setCls({ ...cls, enabled: e.target.checked })} />
@@ -644,28 +562,24 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           )}
 
           <div className="settings-actions">
-            <button className="btn primary" onClick={saveClassifier} disabled={clsSaving}>
-              {clsSaving ? 'Saving…' : 'Save classifier'}
-            </button>
             <button className="btn" onClick={testClassifier} disabled={testing}>
               {testing ? <Spinner label="Testing…" /> : 'Test connection'}
             </button>
             <span className="hint">Review verdicts in the AI tab.</span>
           </div>
           {testMsg && <div className={testMsg.ok ? 'ok-msg' : 'error'}>{testMsg.text}</div>}
-        </section>
+        </details>
       )}
 
       {nb && (
-        <section className="settings-card">
-          <h3>NetBird client identity</h3>
+        <details className="settings-card" open>
+          <summary>NetBird client identity</summary>
           <label className="muted">
             Resolve client IPs to friendly names in the dashboard and the per-domain client list. When enabled, IPs are
             matched to their NetBird peer (name + hostname) via the NetBird API; otherwise a reverse-DNS (PTR) lookup is
             used as a fallback.
             {nbInfo ? ` Currently mapping ${nbInfo.peer_count} peer(s).` : ''}
           </label>
-          {nbOk && <div className="ok-msg">NetBird settings saved.</div>}
           <div className="field">
             <label className="toggle">
               <input type="checkbox" checked={nb.enabled} onChange={(e) => setNb({ ...nb, enabled: e.target.checked })} />
@@ -693,28 +607,23 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             />
           </div>
           <div className="settings-actions">
-            <button className="btn primary" onClick={saveNetbird} disabled={nbSaving}>
-              {nbSaving ? 'Saving…' : 'Save NetBird'}
-            </button>
             <button className="btn" onClick={testNetbird} disabled={nbTesting}>
               {nbTesting ? <Spinner label="Testing…" /> : 'Test connection'}
             </button>
-            <span className="hint">Reverse-DNS fallback works even without NetBird.</span>
           </div>
           {nbMsg && <div className={nbMsg.ok ? 'ok-msg' : 'error'}>{nbMsg.text}</div>}
-        </section>
+        </details>
       )}
 
       {vm && (
-        <section className="settings-card">
-          <h3>Metrics export — VictoriaMetrics</h3>
+        <details className="settings-card" open>
+          <summary>Metrics export — VictoriaMetrics</summary>
           <label className="muted">
             Push this node's Prometheus metrics to a VictoriaMetrics instance on an interval (its
             <code> /api/v1/import/prometheus </code> endpoint). Each node pushes its own metrics, labelled with the
             instance below, so a cluster aggregates in VM without VM having to scrape every node. Changes apply on the
             next push cycle.
           </label>
-          {vmOk && <div className="ok-msg">Metrics export settings saved.</div>}
           <div className="field">
             <label className="toggle">
               <input type="checkbox" checked={vm.enabled} onChange={(e) => setVm({ ...vm, enabled: e.target.checked })} />
@@ -766,46 +675,11 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               placeholder={vmHasPassword ? '•••••••• (unchanged)' : ''}
             />
           </div>
-          <div className="settings-actions">
-            <button className="btn primary" onClick={saveMetricsExport} disabled={vmSaving}>
-              {vmSaving ? 'Saving…' : 'Save metrics export'}
-            </button>
-          </div>
-        </section>
+        </details>
       )}
 
-      <section className="settings-card">
-        <h3>Reverse-DNS resolvers (internal clients)</h3>
-        <label className="muted">
-          Private/internal client IPs can't be resolved by public DNS. Set the internal DNS resolver to use for each
-          node's clients — nodes can be in different sites/LANs, so each gets its own (e.g. that site's router or AD DNS).
-          Leave blank to use the system resolver. Public IPs always use the system resolver; reverse-DNS falls back to the
-          master's resolver when a node has none.
-        </label>
-        {rdnsOk && <div className="ok-msg">Resolvers saved.</div>}
-        {rdnsNodes.map((node) => (
-          <div className="field" key={node}>
-            <label>
-              {node} {node === 'master' && <span className="muted">(this server)</span>}
-            </label>
-            <input
-              value={rdns[node] ?? ''}
-              onChange={(e) => setRdns({ ...rdns, [node]: e.target.value })}
-              placeholder="192.168.1.1  or  10.0.0.53:53  (blank = system resolver)"
-            />
-          </div>
-        ))}
-        {rdnsNodes.length === 0 && <p className="muted" style={{ textAlign: 'left' }}>No nodes found.</p>}
-        <div className="settings-actions">
-          <button className="btn primary" onClick={saveReverseDns} disabled={rdnsSaving}>
-            {rdnsSaving ? 'Saving…' : 'Save resolvers'}
-          </button>
-          <span className="hint">Used to turn internal client IPs into hostnames in the dashboard &amp; logs.</span>
-        </div>
-      </section>
-
-      <section className="settings-card danger-zone">
-        <h3>⚠ Danger zone — backup &amp; restore</h3>
+      <details className="settings-card danger-zone">
+        <summary>⚠ Danger zone — backup &amp; restore</summary>
         <label className="muted">
           Export downloads settings, rules, and rewrites as one JSON file. Import restores it —
           <em> merge</em> upserts on top of what's here; <em> replace</em> wipes all rules and rewrites first
@@ -833,7 +707,18 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])}
           />
         </div>
-      </section>
+      </details>
+
+      {/* One global save for every section above. */}
+      <div className="settings-savebar">
+        {ok && <span className="ok-inline">Saved &amp; applied.</span>}
+        <button className="btn ghost-danger" onClick={load} disabled={saving}>
+          Reset
+        </button>
+        <button className="btn primary" onClick={saveAll} disabled={saving}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
     </div>
   )
 }

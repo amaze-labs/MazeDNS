@@ -11,6 +11,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -147,6 +148,9 @@ type Resolver struct {
 	pol      atomic.Pointer[Policy]
 	// sf coalesces concurrent cache-miss forwards for the same question.
 	sf singleflight
+	// refreshing tracks serve-stale background refreshes in flight, keyed by the
+	// forward key, so a stale name is refreshed by exactly one goroutine.
+	refreshing sync.Map
 	// pauseUntil is the unix time until which blocking is suspended (0 = active).
 	pauseUntil atomic.Int64
 	// maintenance, when set, drains this node: every query is answered SERVFAIL so
@@ -391,11 +395,15 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		wantSigned = true
 	}
 
-	// 4. Cache.
+	// 4. Cache. A stale hit (expired but within the serve-stale window) is served
+	// immediately while a fresh answer is fetched in the background.
 	if rt.cache != nil {
-		if cached, ok := rt.cache.Get(q, wantSigned); ok {
+		if cached, ok, stale := rt.cache.Get(q, wantSigned); ok {
 			cached.Id = req.Id
 			r.stats.Cached.Add(1)
+			if stale {
+				r.refreshStale(rt, req, q, name, wantSigned)
+			}
 			return cached, "cache", ""
 		}
 	}
@@ -450,6 +458,32 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 			Action: action, Category: category, Rcode: rcode, Elapsed: time.Since(start),
 		})
 	}
+}
+
+// refreshStale fetches a fresh answer for a stale (expired-but-served) cache entry
+// in the background, so the next query gets a current record. Exactly one refresh
+// runs per name (guarded by r.refreshing), and the upstream fetch is coalesced
+// through the same single-flight as normal misses. Off the client's latency path.
+func (r *Resolver) refreshStale(rt *runtime, req *dns.Msg, q dns.Question, name string, wantSigned bool) {
+	key := forwardKey(q, wantSigned)
+	if _, busy := r.refreshing.LoadOrStore(key, struct{}{}); busy {
+		return // a refresh for this name is already in flight
+	}
+	// Copy the request synchronously so the goroutine can't race the caller's msg.
+	rc := req.Copy()
+	if rt.forceDNSSEC {
+		ensureDO(rc)
+	}
+	go func() {
+		defer r.refreshing.Delete(key)
+		r.sf.Do(key, func() (*dns.Msg, time.Duration, error) {
+			m, rtt, err := r.forward(rc, upstreamsFor(rt, name))
+			if err == nil && m != nil && rt.cache != nil {
+				rt.cache.Set(q, wantSigned, m)
+			}
+			return m, rtt, err
+		})
+	}()
 }
 
 func upstreamsFor(rt *runtime, name string) []Upstream {

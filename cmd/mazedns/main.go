@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,6 +41,15 @@ func main() {
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
 	modeFlag := flag.String("mode", "", "run mode: master (default, with web UI) or worker")
 	flag.Parse()
+
+	// Cache-heavy, allocation-heavy (every cache hit copies a message), so default
+	// to a less aggressive GC unless the operator set GOGC. Halving collection
+	// frequency trades a little memory (already bounded by the cache size) for fewer
+	// GC cycles and less tail-latency jitter. GOMEMLIMIT is honored by the runtime
+	// automatically when set.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(200)
+	}
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {

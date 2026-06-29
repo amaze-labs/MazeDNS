@@ -26,7 +26,7 @@ func (s *Store) CreateSession(token string, userID int64, username, role string,
 // GetSession returns a non-expired session, or (nil, nil) if missing or expired.
 func (s *Store) GetSession(token string) (*Session, error) {
 	se := &Session{}
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT token, user_id, username, role, expires_at FROM sessions WHERE token=?`, token).
 		Scan(&se.Token, &se.UserID, &se.Username, &se.Role, &se.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {

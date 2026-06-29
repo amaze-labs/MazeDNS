@@ -9,7 +9,7 @@ import (
 // been saved yet.
 func (s *Store) GetSettings() (string, error) {
 	var data string
-	err := s.db.QueryRow(`SELECT data FROM settings WHERE id=1`).Scan(&data)
+	err := s.read.QueryRow(`SELECT data FROM settings WHERE id=1`).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

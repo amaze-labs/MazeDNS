@@ -21,7 +21,7 @@ type User struct {
 // CountUsers returns the number of users.
 func (s *Store) CountUsers() (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	err := s.read.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
 }
 
@@ -39,7 +39,7 @@ func (s *Store) CreateLocalUser(username, passwordHash, role string) (int64, err
 
 // ListUsers returns all users ordered by username.
 func (s *Store) ListUsers() ([]User, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT id, username, role, source, updated_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
@@ -59,14 +59,14 @@ func (s *Store) ListUsers() ([]User, error) {
 // CountAdmins returns the number of admin users (used to protect the last admin).
 func (s *Store) CountAdmins() (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n)
+	err := s.read.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n)
 	return n, err
 }
 
 // GetUserByID returns the user, or (nil, nil) if not found.
 func (s *Store) GetUserByID(id int64) (*User, error) {
 	u := &User{}
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT id, username, role, source, avatar_url, subject, password_hash, updated_at FROM users WHERE id=?`, id).
 		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -99,7 +99,7 @@ func (s *Store) DeleteUser(id int64) error {
 // GetUserByUsername returns the user, or (nil, nil) if not found.
 func (s *Store) GetUserByUsername(username string) (*User, error) {
 	u := &User{}
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT id, username, role, source, avatar_url, subject, password_hash, updated_at FROM users WHERE username=?`,
 		username).
 		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.Subject, &u.PasswordHash, &u.UpdatedAt)

@@ -132,7 +132,7 @@ type WindowSummary struct {
 func (s *Store) WindowSummary(sinceMs int64, nodes []string) (WindowSummary, error) {
 	nf, nargs := nodeFilterSQL(nodes)
 	var ws WindowSummary
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT
 		   COUNT(*),
 		   COALESCE(SUM(action='blocked'), 0),
@@ -164,7 +164,7 @@ func (s *Store) QueryTimeSeries(sinceMs int64, stepSec int, nodes []string) ([]S
 	}
 	step := int64(stepSec)
 	nf, nargs := nodeFilterSQL(nodes)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT (ts/1000/?)*? AS bucket, action, COUNT(*), COALESCE(SUM(elapsed_ms),0)
 		 FROM query_log WHERE ts >= ?`+nf+` GROUP BY bucket, action`,
 		append([]any{step, step, sinceMs}, nargs...)...)
@@ -234,7 +234,7 @@ func (s *Store) LatencyTimeSeries(sinceMs int64, stepSec int, nodes []string) ([
 	}
 	step := int64(stepSec)
 	nf, nargs := nodeFilterSQL(nodes)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT (ts/1000/?)*? AS bucket, CASE WHEN node='' THEN 'master' ELSE node END AS n,
 		        COUNT(*), COALESCE(SUM(elapsed_ms),0)
 		 FROM query_log WHERE ts >= ?`+nf+` GROUP BY bucket, n`,
@@ -300,7 +300,7 @@ func (s *Store) LatencyTimeSeries(sinceMs int64, stepSec int, nodes []string) ([
 // BlockedByCategory returns blocked-query counts grouped by category since sinceMs.
 func (s *Store) BlockedByCategory(sinceMs int64, nodes []string) ([]CategoryCount, error) {
 	nf, nargs := nodeFilterSQL(nodes)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT CASE WHEN category='' THEN 'custom' ELSE category END AS cat, COUNT(*)
 		 FROM query_log WHERE action='blocked' AND ts >= ?`+nf+` GROUP BY cat ORDER BY COUNT(*) DESC`,
 		append([]any{sinceMs}, nargs...)...)
@@ -328,7 +328,7 @@ func (s *Store) QueriesByClient(sinceMs int64, limit int, nodes []string) ([]Cli
 	nf, nargs := nodeFilterSQL(nodes)
 	args := append([]any{sinceMs}, nargs...)
 	args = append(args, limit)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT client,
 		        COUNT(*) AS total,
 		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END) AS blocked
@@ -363,7 +363,7 @@ func (s *Store) TopDomains(sinceMs int64, limit int, blockedOnly bool, nodes []s
 	q += nf + ` GROUP BY name ORDER BY c DESC LIMIT ?`
 	args := append([]any{sinceMs}, nargs...)
 	args = append(args, limit)
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.read.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,7 @@ func (s *Store) TopDomains(sinceMs int64, limit int, blockedOnly bool, nodes []s
 // QueryTypeBreakdown returns query counts grouped by record type since sinceMs.
 func (s *Store) QueryTypeBreakdown(sinceMs int64, nodes []string) ([]TypeStat, error) {
 	nf, nargs := nodeFilterSQL(nodes)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT qtype, COUNT(*) c FROM query_log WHERE ts >= ?`+nf+` GROUP BY qtype ORDER BY c DESC`,
 		append([]any{sinceMs}, nargs...)...)
 	if err != nil {
@@ -404,7 +404,7 @@ func (s *Store) QueryTypeBreakdown(sinceMs int64, nodes []string) ([]TypeStat, e
 // unified log ("" node is reported as "master").
 func (s *Store) QueriesByNode(sinceMs int64, nodes []string) ([]NodeQueryCount, error) {
 	nf, nargs := nodeFilterSQL(nodes)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT CASE WHEN node='' THEN 'master' ELSE node END AS n,
 		        COUNT(*),
 		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END)
@@ -429,7 +429,7 @@ func (s *Store) QueriesByNode(sinceMs int64, nodes []string) ([]NodeQueryCount, 
 func (s *Store) ClientCount(sinceMs int64, nodes []string) (int64, error) {
 	nf, nargs := nodeFilterSQL(nodes)
 	var n int64
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT COUNT(DISTINCT client) FROM query_log WHERE ts >= ? AND client <> ''`+nf,
 		append([]any{sinceMs}, nargs...)...).Scan(&n)
 	return n, err
@@ -439,7 +439,7 @@ func (s *Store) ClientCount(sinceMs int64, nodes []string) (int64, error) {
 func (s *Store) AvgLatencyMS(sinceMs int64, nodes []string) (float64, error) {
 	nf, nargs := nodeFilterSQL(nodes)
 	var v sql.NullFloat64
-	if err := s.db.QueryRow(
+	if err := s.read.QueryRow(
 		`SELECT AVG(elapsed_ms) FROM query_log WHERE ts >= ?`+nf,
 		append([]any{sinceMs}, nargs...)...).Scan(&v); err != nil {
 		return 0, err

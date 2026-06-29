@@ -4,15 +4,20 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite")
 )
 
-// Store wraps the SQLite database.
+// Store wraps the SQLite database. WAL mode lets one writer and many readers run
+// concurrently, so we keep two connection pools: a single-connection writer (db)
+// and a small read pool (read). Heavy dashboard aggregations run on the read pool
+// without blocking the query-log writer, and vice-versa.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB // single writer (INSERT/UPDATE/DELETE/DDL + transactions)
+	read *sql.DB // concurrent readers (standalone SELECTs)
 }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.
@@ -38,37 +43,52 @@ type Rewrite struct {
 
 // Open opens (creating if needed) the SQLite database at path and runs migrations.
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// PRAGMAs are set in the DSN so they apply to *every* connection (including each
+	// connection in the read pool). WAL + NORMAL sync are the safe fast pairing; the
+	// bigger page cache + memory-mapped reads + in-memory temp B-trees cut the I/O
+	// thrash of the dashboard's GROUP BY/COUNT scans over a large query_log.
+	dsn := path + "?" + strings.Join([]string{
+		"_pragma=busy_timeout(5000)",
+		"_pragma=journal_mode(WAL)",
+		"_pragma=foreign_keys(1)",
+		"_pragma=synchronous(NORMAL)",
+		"_pragma=cache_size(-65536)",   // 64 MiB page cache (negative = KiB)
+		"_pragma=mmap_size(268435456)", // 256 MiB memory-mapped I/O
+		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
+	}, "&")
+
+	write, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	db.SetMaxOpenConns(1) // serialize access — simplest correct behavior for SQLite
-	s := &Store{db: db}
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL;",
-		"PRAGMA busy_timeout=5000;",
-		"PRAGMA foreign_keys=ON;",
-		// Performance: the dashboard runs GROUP BY/COUNT scans over a large query_log.
-		// The default ~2MB page cache thrashes; a bigger cache + memory-mapped reads +
-		// in-memory temp B-trees (for GROUP BY/ORDER BY) cut that I/O dramatically.
-		// synchronous=NORMAL is the safe, fast choice under WAL.
-		"PRAGMA synchronous=NORMAL;",
-		"PRAGMA cache_size=-65536;",   // 64 MiB page cache (negative = KiB)
-		"PRAGMA mmap_size=268435456;", // 256 MiB memory-mapped I/O
-		"PRAGMA temp_store=MEMORY;",   // GROUP BY/ORDER BY temporaries in RAM
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			return nil, fmt.Errorf("pragma %q: %w", pragma, err)
-		}
+	write.SetMaxOpenConns(1) // SQLite allows a single writer
+
+	read, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		_ = write.Close()
+		return nil, fmt.Errorf("open db (read pool): %w", err)
 	}
+	n := runtime.GOMAXPROCS(0)
+	if n < 4 {
+		n = 4
+	}
+	if n > 8 {
+		n = 8
+	}
+	read.SetMaxOpenConns(n) // WAL allows concurrent readers
+
+	s := &Store{db: write, read: read}
 	if err := s.migrate(); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close closes both connection pools.
+func (s *Store) Close() error {
+	_ = s.read.Close()
+	return s.db.Close()
+}
 
 func (s *Store) migrate() error {
 	const schema = `
@@ -230,7 +250,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 
 // ListRules returns all rules ordered by domain.
 func (s *Store) ListRules() ([]Rule, error) {
-	rows, err := s.db.Query(`SELECT id, action, domain, category, enabled, list_id, updated_at FROM rules ORDER BY domain`)
+	rows, err := s.read.Query(`SELECT id, action, domain, category, enabled, list_id, updated_at FROM rules ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +280,7 @@ func (s *Store) AddRule(action, domain, category string) (int64, error) {
 		return 0, err
 	}
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM rules WHERE action=? AND domain=?`, action, domain).Scan(&id)
+	err := s.read.QueryRow(`SELECT id FROM rules WHERE action=? AND domain=?`, action, domain).Scan(&id)
 	return id, err
 }
 
@@ -314,7 +334,7 @@ func (s *Store) ClearRules() error {
 
 // ListRewrites returns all rewrites ordered by domain.
 func (s *Store) ListRewrites() ([]Rewrite, error) {
-	rows, err := s.db.Query(`SELECT id, domain, rrtype, value, enabled, updated_at FROM rewrites ORDER BY domain`)
+	rows, err := s.read.Query(`SELECT id, domain, rrtype, value, enabled, updated_at FROM rewrites ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +361,7 @@ func (s *Store) AddRewrite(domain, rrtype, value string) (int64, error) {
 		return 0, err
 	}
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM rewrites WHERE domain=? AND rrtype=?`, domain, rrtype).Scan(&id)
+	err := s.read.QueryRow(`SELECT id FROM rewrites WHERE domain=? AND rrtype=?`, domain, rrtype).Scan(&id)
 	return id, err
 }
 

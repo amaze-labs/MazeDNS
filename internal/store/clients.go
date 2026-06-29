@@ -24,7 +24,7 @@ func (s *Store) ClientList(sinceMs int64, limit int, nodes []string) ([]ClientRo
 	nf, nargs := nodeFilterSQL(nodes)
 	args := append([]any{sinceMs}, nargs...)
 	args = append(args, limit)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT client,
 		        COUNT(*) AS total,
 		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END) AS blocked,
@@ -71,7 +71,7 @@ func (s *Store) ClientDetailStats(client string, sinceMs int64, nodes []string) 
 	where := ` FROM query_log WHERE ts >= ?` + nf + ` AND client = ?`
 
 	// Per-action totals + unique domains + avg latency + last seen, in one pass.
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT
 		   COUNT(*),
 		   COALESCE(SUM(action='blocked'), 0),
@@ -112,7 +112,7 @@ func (s *Store) ClientDetailStats(client string, sinceMs int64, nodes []string) 
 
 // scanCategoryCounts runs a "label, count" query into []CategoryCount.
 func scanCategoryCounts(s *Store, query string, args []any) ([]CategoryCount, error) {
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.read.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func scanCategoryCounts(s *Store, query string, args []any) ([]CategoryCount, er
 
 // scanDomainStats runs a "name, count" query into []DomainStat.
 func scanDomainStats(s *Store, query string, args []any) ([]DomainStat, error) {
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.read.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

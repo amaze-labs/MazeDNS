@@ -39,7 +39,7 @@ func (s *Store) CreateList(name, source, url, category string, intervalSec int) 
 
 // ListLists returns all lists (with a live rule count) ordered by name.
 func (s *Store) ListLists() ([]List, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT l.id, l.name, l.source, l.url, l.category, l.enabled, l.interval_sec,
 		        l.last_fetch, l.last_error, l.updated_at,
 		        (SELECT COUNT(*) FROM rules r WHERE r.list_id = l.id) AS rule_count
@@ -63,7 +63,7 @@ func (s *Store) ListLists() ([]List, error) {
 // GetList returns one list, or (nil, nil) if not found.
 func (s *Store) GetList(id int64) (*List, error) {
 	l := &List{}
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT id, name, source, url, category, enabled, interval_sec, last_fetch, last_error, updated_at
 		 FROM lists WHERE id=?`, id).
 		Scan(&l.ID, &l.Name, &l.Source, &l.URL, &l.Category, &l.Enabled, &l.IntervalSec,
@@ -79,7 +79,7 @@ func (s *Store) GetList(id int64) (*List, error) {
 
 // DueURLLists returns enabled URL lists whose refresh interval has elapsed.
 func (s *Store) DueURLLists(now int64) ([]List, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT id, name, source, url, category, enabled, interval_sec, last_fetch, last_error, updated_at
 		 FROM lists
 		 WHERE source='url' AND enabled=1 AND interval_sec > 0 AND (last_fetch + interval_sec) <= ?`, now)
@@ -176,7 +176,7 @@ func (s *Store) ReplaceListRules(listID int64, category string, rules []Rule) (i
 
 // RulesByList returns the rules owned by a list, ordered by domain.
 func (s *Store) RulesByList(listID int64) ([]Rule, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT id, action, domain, category, enabled, list_id, updated_at
 		 FROM rules WHERE list_id=? ORDER BY domain`, listID)
 	if err != nil {
@@ -196,7 +196,7 @@ func (s *Store) RulesByList(listID int64) ([]Rule, error) {
 
 // ManualRules returns rules that are not part of any list (list_id = 0).
 func (s *Store) ManualRules() ([]Rule, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT id, action, domain, category, enabled, list_id, updated_at
 		 FROM rules WHERE list_id=0 ORDER BY domain`)
 	if err != nil {
@@ -217,7 +217,7 @@ func (s *Store) ManualRules() ([]Rule, error) {
 // ActiveRules returns the rules that should be enforced: enabled, and either
 // manual (list_id=0) or belonging to an enabled list.
 func (s *Store) ActiveRules() ([]Rule, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT r.id, r.action, r.domain, r.category, r.enabled, r.list_id, r.updated_at
 		 FROM rules r LEFT JOIN lists l ON r.list_id = l.id
 		 WHERE r.enabled=1 AND (r.list_id=0 OR l.enabled=1)
@@ -240,7 +240,7 @@ func (s *Store) ActiveRules() ([]Rule, error) {
 // GetMetaInt returns an integer meta value (0 if the key is absent).
 func (s *Store) GetMetaInt(key string) (int64, error) {
 	var v int64
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&v)
+	err := s.read.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -257,7 +257,7 @@ func (s *Store) SetMetaInt(key string, v int64) error {
 // GetBlockPausedUntil returns the unix time until which blocking is paused (0 = active).
 func (s *Store) GetBlockPausedUntil() (int64, error) {
 	var v int64
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key='block_paused_until'`).Scan(&v)
+	err := s.read.QueryRow(`SELECT value FROM meta WHERE key='block_paused_until'`).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}

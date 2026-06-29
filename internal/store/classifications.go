@@ -49,7 +49,7 @@ const (
 // GetMeta reads a text app-setting (empty string if unset).
 func (s *Store) GetMeta(key string) (string, error) {
 	var v string
-	err := s.db.QueryRow(`SELECT value FROM app_meta WHERE key = ?`, key).Scan(&v)
+	err := s.read.QueryRow(`SELECT value FROM app_meta WHERE key = ?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -68,7 +68,7 @@ func (s *Store) SetMeta(key, value string) error {
 // classifies each registered domain at most once).
 func (s *Store) IsClassified(domain string) (bool, error) {
 	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM classifications WHERE domain = ?`, domain).Scan(&one)
+	err := s.read.QueryRow(`SELECT 1 FROM classifications WHERE domain = ?`, domain).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -164,7 +164,7 @@ func (s *Store) ListClassifications(status, search string, limit, offset int) ([
 	}
 	q += ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.read.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (s *Store) ClientsForDomain(domain string, limit int) ([]DomainClient, erro
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT client, COUNT(*) c, SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END), MAX(ts)
 		 FROM query_log
 		 WHERE name = ? OR name = ? OR name LIKE ? OR name LIKE ?
@@ -221,7 +221,7 @@ func (s *Store) ClientsForDomain(domain string, limit int) ([]DomainClient, erro
 // ActiveAIBlocked returns the domains whose verdict is currently enforced
 // (auto-blocked or user-approved). Used when building the resolver policy.
 func (s *Store) ActiveAIBlocked() ([]Classification, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT domain, category FROM classifications
 		 WHERE block = 1 AND status IN ('approved', 'auto')`)
 	if err != nil {
@@ -252,7 +252,7 @@ func (s *Store) ClassificationCategoryCounts() (map[string]int, error) {
 
 func (s *Store) countClassificationsBy(column string) (map[string]int, error) {
 	// column is a fixed identifier (never user input), so it's safe to interpolate.
-	rows, err := s.db.Query(`SELECT ` + column + `, COUNT(*) FROM classifications GROUP BY ` + column)
+	rows, err := s.read.Query(`SELECT ` + column + `, COUNT(*) FROM classifications GROUP BY ` + column)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (s *Store) countClassificationsBy(column string) (map[string]int, error) {
 // ClassificationCategoryMap returns registered-domain -> category for every
 // verdict, so query volume can be folded into categories.
 func (s *Store) ClassificationCategoryMap() (map[string]string, error) {
-	rows, err := s.db.Query(`SELECT domain, category FROM classifications`)
+	rows, err := s.read.Query(`SELECT domain, category FROM classifications`)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (s *Store) TopQueryNames(sinceMs int64, nodes []string, limit int) ([]NameC
 	nf, nargs := nodeFilterSQL(nodes)
 	args := append([]any{sinceMs}, nargs...)
 	args = append(args, limit)
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT name, COUNT(*) c FROM query_log WHERE ts >= ?`+nf+`
 		 GROUP BY name ORDER BY c DESC LIMIT ?`, args...)
 	if err != nil {
@@ -325,7 +325,7 @@ func (s *Store) TopQueryNames(sinceMs int64, nodes []string, limit int) ([]NameC
 // since sinceMs, so reverse-DNS can pick that node's local resolver (nodes can be
 // in different sites). The master's own entries (node "") are reported as "master".
 func (s *Store) ClientNodes(sinceMs int64) (map[string]string, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT client, node, COUNT(*) c FROM query_log WHERE ts >= ? GROUP BY client, node`, sinceMs)
 	if err != nil {
 		return nil, err

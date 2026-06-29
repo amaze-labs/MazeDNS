@@ -37,7 +37,7 @@ func (s *Store) LLMUsage(days int) ([]LLMUsageDay, error) {
 	if days <= 0 || days > 365 {
 		days = 30
 	}
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT day, calls, errors, prompt_tokens, completion_tokens, latency_ms_total
 		 FROM llm_usage ORDER BY day DESC LIMIT ?`, days)
 	if err != nil {
@@ -59,7 +59,7 @@ func (s *Store) LLMUsage(days int) ([]LLMUsageDay, error) {
 func (s *Store) LLMUsageTotals() (LLMUsageDay, error) {
 	var d LLMUsageDay
 	d.Day = "all"
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT COALESCE(SUM(calls),0), COALESCE(SUM(errors),0), COALESCE(SUM(prompt_tokens),0),
 		        COALESCE(SUM(completion_tokens),0), COALESCE(SUM(latency_ms_total),0) FROM llm_usage`,
 	).Scan(&d.Calls, &d.Errors, &d.PromptTokens, &d.CompletionTokens, &d.LatencyMsTotal)

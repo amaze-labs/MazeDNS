@@ -205,7 +205,7 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 	}
 	n := &Node{}
 	var maintenance int
-	err := s.db.QueryRow(
+	err := s.read.QueryRow(
 		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance
 		 FROM nodes WHERE key_hash=?`, keyHash).
 		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance)
@@ -239,7 +239,7 @@ func (s *Store) SetNodeInsights(name, data string) error {
 // AllNodeInsights returns the latest insights reported by each node, keyed by
 // node name (skipping nodes that haven't reported any).
 func (s *Store) AllNodeInsights() (map[string]Insights, error) {
-	rows, err := s.db.Query(`SELECT name, insights FROM nodes WHERE insights <> ''`)
+	rows, err := s.read.Query(`SELECT name, insights FROM nodes WHERE insights <> ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (s *Store) AllNodeInsights() (map[string]Insights, error) {
 
 // ListNodes returns all enrolled nodes (with their latest stats) ordered by name.
 func (s *Store) ListNodes() ([]Node, error) {
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT name, key_prefix, address, version, last_seen, created_at,
 		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance
 		 FROM nodes ORDER BY name`)

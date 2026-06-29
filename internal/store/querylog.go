@@ -80,7 +80,7 @@ func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64,
 	if limit <= 0 || limit > 10000 {
 		limit = 5000
 	}
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node
 		 FROM query_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
 	if err != nil {
@@ -105,7 +105,7 @@ func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64,
 // MaxQueryLogID returns the highest query-log id (0 if empty).
 func (s *Store) MaxQueryLogID() (int64, error) {
 	var id int64
-	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM query_log`).Scan(&id)
+	err := s.read.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM query_log`).Scan(&id)
 	return id, err
 }
 
@@ -122,7 +122,7 @@ func (s *Store) PruneQueryLog(beforeMs int64) (int64, error) {
 // CountQueryLog returns the total number of logged queries.
 func (s *Store) CountQueryLog() (int64, error) {
 	var n int64
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM query_log`).Scan(&n)
+	err := s.read.QueryRow(`SELECT COUNT(*) FROM query_log`).Scan(&n)
 	return n, err
 }
 
@@ -214,10 +214,10 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 	}
 
 	var total int64
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM query_log`+where, args...).Scan(&total); err != nil {
+	if err := s.read.QueryRow(`SELECT COUNT(*) FROM query_log`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.db.Query(
+	rows, err := s.read.Query(
 		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node
 		 FROM query_log`+where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, q.Limit, q.Offset)...)

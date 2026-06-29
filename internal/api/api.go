@@ -668,20 +668,21 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	if byNode == nil {
 		byNode = []store.NodeQueryCount{}
 	}
-	totals, err := s.store.WindowedTotals(since, nodes)
+	// Totals, unique clients, and mean latency in a single pass.
+	summary, err := s.store.WindowSummary(since, nodes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"unique_clients": in.UniqueClients,
-		"avg_latency_ms": in.AvgLatencyMS,
+		"unique_clients": summary.UniqueClients,
+		"avg_latency_ms": summary.AvgLatencyMS,
 		"clients":        in.Clients,
 		"top_queried":    in.TopQueried,
 		"top_blocked":    in.TopBlocked,
 		"qtypes":         in.QTypes,
 		"by_node":        byNode,
-		"totals":         totals,
+		"totals":         summary.Totals,
 	})
 }
 

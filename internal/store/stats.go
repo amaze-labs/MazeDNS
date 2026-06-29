@@ -70,8 +70,10 @@ type Insights struct {
 	QTypes        []TypeStat   `json:"qtypes"`
 }
 
-// ComputeInsights gathers all windowed breakdowns since sinceMs (top `limit`
-// clients/domains). Slices are never nil.
+// ComputeInsights gathers the windowed top-N breakdowns since sinceMs (top `limit`
+// clients/domains). The scalar aggregates (totals, unique clients, mean latency)
+// come from WindowSummary in a single pass, so they are not recomputed here.
+// Slices are never nil.
 func (s *Store) ComputeInsights(sinceMs int64, limit int, nodes []string) (Insights, error) {
 	var in Insights
 	var err error
@@ -84,15 +86,6 @@ func (s *Store) ComputeInsights(sinceMs int64, limit int, nodes []string) (Insig
 	if in.TopBlocked, err = s.TopDomains(sinceMs, limit, true, nodes); err != nil {
 		return in, err
 	}
-	if in.QTypes, err = s.QueryTypeBreakdown(sinceMs, nodes); err != nil {
-		return in, err
-	}
-	if in.UniqueClients, err = s.ClientCount(sinceMs, nodes); err != nil {
-		return in, err
-	}
-	if in.AvgLatencyMS, err = s.AvgLatencyMS(sinceMs, nodes); err != nil {
-		return in, err
-	}
 	if in.Clients == nil {
 		in.Clients = []ClientStat{}
 	}
@@ -102,9 +95,7 @@ func (s *Store) ComputeInsights(sinceMs int64, limit int, nodes []string) (Insig
 	if in.TopBlocked == nil {
 		in.TopBlocked = []DomainStat{}
 	}
-	if in.QTypes == nil {
-		in.QTypes = []TypeStat{}
-	}
+	in.QTypes = []TypeStat{}
 	return in, nil
 }
 
@@ -124,8 +115,23 @@ type WindowTotals struct {
 // nodes (empty = all). Action values match the resolver: blocked, cache,
 // forward, rewrite, error.
 func (s *Store) WindowedTotals(sinceMs int64, nodes []string) (WindowTotals, error) {
+	ws, err := s.WindowSummary(sinceMs, nodes)
+	return ws.Totals, err
+}
+
+// WindowSummary bundles the windowed scalar aggregates the dashboard needs — the
+// per-action totals, the unique-client count, and the mean latency — computed in a
+// single pass over the query_log instead of three separate full-window scans.
+type WindowSummary struct {
+	Totals        WindowTotals `json:"totals"`
+	UniqueClients int64        `json:"unique_clients"`
+	AvgLatencyMS  float64      `json:"avg_latency_ms"`
+}
+
+// WindowSummary computes the windowed scalar aggregates in one scan.
+func (s *Store) WindowSummary(sinceMs int64, nodes []string) (WindowSummary, error) {
 	nf, nargs := nodeFilterSQL(nodes)
-	var t WindowTotals
+	var ws WindowSummary
 	err := s.db.QueryRow(
 		`SELECT
 		   COUNT(*),
@@ -133,11 +139,14 @@ func (s *Store) WindowedTotals(sinceMs int64, nodes []string) (WindowTotals, err
 		   COALESCE(SUM(action='cache'), 0),
 		   COALESCE(SUM(action='forward'), 0),
 		   COALESCE(SUM(action='rewrite'), 0),
-		   COALESCE(SUM(action='error'), 0)
+		   COALESCE(SUM(action='error'), 0),
+		   COUNT(DISTINCT client),
+		   COALESCE(AVG(elapsed_ms), 0)
 		 FROM query_log WHERE ts >= ?`+nf,
 		append([]any{sinceMs}, nargs...)...,
-	).Scan(&t.Total, &t.Blocked, &t.Cached, &t.Forwarded, &t.Rewritten, &t.Errors)
-	return t, err
+	).Scan(&ws.Totals.Total, &ws.Totals.Blocked, &ws.Totals.Cached, &ws.Totals.Forwarded,
+		&ws.Totals.Rewritten, &ws.Totals.Errors, &ws.UniqueClients, &ws.AvgLatencyMS)
+	return ws, err
 }
 
 // CategoryCount is a blocked-query count for a category.

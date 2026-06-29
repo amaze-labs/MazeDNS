@@ -48,6 +48,14 @@ func Open(path string) (*Store, error) {
 		"PRAGMA journal_mode=WAL;",
 		"PRAGMA busy_timeout=5000;",
 		"PRAGMA foreign_keys=ON;",
+		// Performance: the dashboard runs GROUP BY/COUNT scans over a large query_log.
+		// The default ~2MB page cache thrashes; a bigger cache + memory-mapped reads +
+		// in-memory temp B-trees (for GROUP BY/ORDER BY) cut that I/O dramatically.
+		// synchronous=NORMAL is the safe, fast choice under WAL.
+		"PRAGMA synchronous=NORMAL;",
+		"PRAGMA cache_size=-65536;",   // 64 MiB page cache (negative = KiB)
+		"PRAGMA mmap_size=268435456;", // 256 MiB memory-mapped I/O
+		"PRAGMA temp_store=MEMORY;",   // GROUP BY/ORDER BY temporaries in RAM
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			return nil, fmt.Errorf("pragma %q: %w", pragma, err)

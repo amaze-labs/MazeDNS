@@ -34,7 +34,7 @@ export default function Classifier() {
   const [page, setPage] = useState(0)
   const [rows, setRows] = useState<Classification[]>([])
   const [err, setErr] = useState('')
-  // Domain search, used on the Clean tab to find a domain in a long list.
+  // Domain search — finds a domain within the current tab's list.
   const [search, setSearch] = useState('')
   const [searchQ, setSearchQ] = useState('')
 
@@ -51,7 +51,7 @@ export default function Classifier() {
   // Search only applies to the Clean tab.
   const loadRows = () =>
     api
-      .classifications(tab, PAGE, page * PAGE, tab === 'clean' ? searchQ : '')
+      .classifications(tab, PAGE, page * PAGE, searchQ)
       .then(setRows)
       .catch((e) => setErr(e.message))
 
@@ -132,7 +132,7 @@ export default function Classifier() {
   const counts = info?.counts ?? {}
   // When searching, the cached per-status count no longer reflects the filtered
   // result set, so drive paging off the returned page instead.
-  const searchActive = tab === 'clean' && searchQ !== ''
+  const searchActive = searchQ !== ''
   const total = counts[tab] ?? 0
   const lastPage = searchActive
     ? rows.length === PAGE
@@ -338,15 +338,13 @@ export default function Classifier() {
         <p className="muted" style={{ textAlign: 'left', margin: 0 }}>
           Click a row for full details + WHOIS.
         </p>
-        {tab === 'clean' && (
-          <input
-            className="search"
-            style={{ marginLeft: 'auto' }}
-            placeholder="search clean domains…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        )}
+        <input
+          className="search"
+          style={{ marginLeft: 'auto' }}
+          placeholder="search domains…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
       </div>
       <table className="cls-table">
         <thead>

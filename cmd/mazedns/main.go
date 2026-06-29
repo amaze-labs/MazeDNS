@@ -133,6 +133,11 @@ func main() {
 	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {
 		res.SetBlockPausedUntil(ts)
 	}
+	// The master restores its own maintenance (drain) state across restarts; a
+	// worker learns its flag from the master on its first config poll.
+	if !worker {
+		res.SetMaintenance(st.MasterMaintenance())
+	}
 
 	// Build the filtering/rewrite policy from file blocklists + DB rules/rewrites.
 	buildPolicy := func() (*resolver.Policy, error) {
@@ -166,10 +171,16 @@ func main() {
 			}
 		}
 		// Enforced AI verdicts (auto-blocked or user-approved) join the block set,
-		// tagged "ai" so they're attributable in the dashboard.
+		// tagged with the model's own category (ads/trackers/malware/phishing) so the
+		// dashboard and per-client breakdowns attribute them to the real category,
+		// not a generic "ai" bucket.
 		if aiBlocked, aerr := st.ActiveAIBlocked(); aerr == nil {
 			for _, c := range aiBlocked {
-				block.Add(c.Domain, "ai")
+				cat := c.Category
+				if cat == "" {
+					cat = "ai"
+				}
+				block.Add(c.Domain, cat)
 			}
 		} else {
 			slog.Warn("load ai classifications", "err", aerr)
@@ -280,7 +291,7 @@ func main() {
 				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 			}
 		}
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.MasterIP, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.MasterIP, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
 		go ag.Run(agentCtx)
 	}
 

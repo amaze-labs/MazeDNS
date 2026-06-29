@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -56,4 +57,69 @@ func TestCacheTTLClamp(t *testing.T) {
 	if ttl := got.Answer[0].Header().Ttl; ttl < 25 || ttl > 30 {
 		t.Errorf("ttl=%d, expected it clamped to ~30s", ttl)
 	}
+}
+
+// Get must return an independent copy: mutating the returned message (as the
+// resolver does via finalize/Truncate) must not corrupt the cached entry, which
+// matters now that the copy is done outside the lock.
+func TestCacheGetReturnsIndependentCopy(t *testing.T) {
+	c := New(100, time.Second, time.Hour)
+	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	c.Set(q, false, makeReply("example.com", 300))
+
+	got1, ok := c.Get(q, false)
+	if !ok {
+		t.Fatal("expected hit")
+	}
+	got1.Answer = nil       // mutate the returned message
+	got1.Id = 1234          //
+	got2, ok := c.Get(q, false)
+	if !ok || len(got2.Answer) != 1 {
+		t.Fatalf("cached entry was corrupted by a caller mutation: ok=%v answers=%d", ok, len(got2.Answer))
+	}
+}
+
+// An expired entry is a miss and is evicted from the map on access.
+func TestCacheExpiry(t *testing.T) {
+	c := New(100, 0, 0) // no clamps: honor the record's own (tiny) TTL
+	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	c.Set(q, false, makeReply("example.com", 1))
+	if c.Len() != 1 {
+		t.Fatalf("expected 1 entry, got %d", c.Len())
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, ok := c.Get(q, false); ok {
+		t.Error("expected miss for an expired entry")
+	}
+	if c.Len() != 0 {
+		t.Errorf("expired entry should have been evicted on Get, Len=%d", c.Len())
+	}
+}
+
+// The cache never exceeds maxItems; sampled eviction makes room for new entries.
+func TestCacheEvictionStaysAtCapacity(t *testing.T) {
+	const max = 50
+	c := New(max, time.Minute, time.Hour)
+	for i := 0; i < max*4; i++ {
+		name := "host" + strconv.Itoa(i) + ".example.com"
+		q := dns.Question{Name: dns.Fqdn(name), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+		c.Set(q, false, makeReply(name, 300))
+	}
+	if n := c.Len(); n > max {
+		t.Errorf("cache exceeded capacity: Len=%d > max=%d", n, max)
+	}
+}
+
+func BenchmarkCacheGetParallel(b *testing.B) {
+	c := New(1000, time.Second, time.Hour)
+	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	c.Set(q, false, makeReply("example.com", 300))
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if _, ok := c.Get(q, false); !ok {
+				b.Fatal("expected hit")
+			}
+		}
+	})
 }

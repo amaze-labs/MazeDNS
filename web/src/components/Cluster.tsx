@@ -90,6 +90,18 @@ export default function Cluster() {
     }
   }
 
+  const toggleMaintenance = async (n: Node) => {
+    const on = !n.maintenance
+    if (on && !window.confirm(`Put “${n.name}” into maintenance? It will stop serving DNS (answers SERVFAIL) so clients fail over to another node.`)) return
+    try {
+      await api.setNodeMaintenance(n.name, on)
+      setErr('')
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   const now = Date.now() / 1000
   const isOnline = (n: Node) => n.is_master || (!!n.last_seen && now - n.last_seen < ONLINE_WINDOW)
   const online = nodes.filter(isOnline).length
@@ -177,6 +189,7 @@ export default function Cluster() {
               </td>
               <td>
                 {n.name} {n.is_master && <span className="badge">master</span>}
+                {n.maintenance && <span className="badge blocked" title="Draining — answering SERVFAIL">maintenance</span>}
               </td>
               <td>{n.address || '—'}</td>
               <td>{n.total.toLocaleString()}</td>
@@ -184,16 +197,25 @@ export default function Cluster() {
               <td>{n.version ? <code>{n.version}</code> : <span className="muted">pending</span>}</td>
               <td>{n.is_master ? 'now' : ago(n.last_seen)}</td>
               <td>
-                {!n.is_master && (
-                  <div className="ql-filters">
-                    <button className="btn" onClick={() => renew(n.name)} title="Rotate this node's key">
-                      Renew key
-                    </button>
-                    <button className="del" onClick={() => del(n.name)}>
-                      ✕
-                    </button>
-                  </div>
-                )}
+                <div className="ql-filters">
+                  <button
+                    className={`btn ${n.maintenance ? 'primary' : ''}`}
+                    onClick={() => toggleMaintenance(n)}
+                    title={n.maintenance ? 'Resume serving DNS' : 'Drain: stop serving DNS so clients fail over'}
+                  >
+                    {n.maintenance ? 'Resume' : 'Maintenance'}
+                  </button>
+                  {!n.is_master && (
+                    <>
+                      <button className="btn" onClick={() => renew(n.name)} title="Rotate this node's key">
+                        Renew key
+                      </button>
+                      <button className="del" onClick={() => del(n.name)}>
+                        ✕
+                      </button>
+                    </>
+                  )}
+                </div>
               </td>
             </tr>
           ))}

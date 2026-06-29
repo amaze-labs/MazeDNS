@@ -14,8 +14,9 @@ import (
 
 // ReplicatedRules returns the deny/allow rules workers should enforce: the
 // active rules plus enforced AI verdicts (auto-blocked or user-approved) as
-// synthetic "deny" rules tagged "ai". This is what makes AI auto-blocks apply on
-// worker nodes too — they arrive through the normal rule-replication path.
+// synthetic "deny" rules tagged with the model's category. This is what makes AI
+// auto-blocks apply on worker nodes too — they arrive through the normal
+// rule-replication path.
 func (s *Store) ReplicatedRules() ([]Rule, error) {
 	rules, err := s.ActiveRules()
 	if err != nil {
@@ -36,7 +37,13 @@ func (s *Store) ReplicatedRules() ([]Rule, error) {
 			continue // already a deny rule — avoid a duplicate (action,domain)
 		}
 		seen[c.Domain] = true
-		rules = append(rules, Rule{Action: "deny", Domain: c.Domain, Category: "ai", Enabled: true})
+		// Tag with the model's own category so worker query logs attribute the block
+		// to the real category (ads/malware/…) rather than a generic "ai" bucket.
+		cat := c.Category
+		if cat == "" {
+			cat = "ai"
+		}
+		rules = append(rules, Rule{Action: "deny", Domain: c.Domain, Category: cat, Enabled: true})
 	}
 	return rules, nil
 }
@@ -119,14 +126,43 @@ type NodeStats struct {
 // Node is a cluster worker enrolled on the master. The API key itself is never
 // stored — only its hash (for auth) and a short prefix (for display).
 type Node struct {
-	Name      string `json:"name"`
-	KeyPrefix string `json:"key_prefix"`
-	Address   string `json:"address"`
-	Version   string `json:"version"` // short content hash the node last reported
-	LastSeen  int64  `json:"last_seen"`
-	CreatedAt int64  `json:"created_at"`
-	IsMaster  bool   `json:"is_master"` // the master node (always online; no key to renew)
+	Name        string `json:"name"`
+	KeyPrefix   string `json:"key_prefix"`
+	Address     string `json:"address"`
+	Version     string `json:"version"` // short content hash the node last reported
+	LastSeen    int64  `json:"last_seen"`
+	CreatedAt   int64  `json:"created_at"`
+	IsMaster    bool   `json:"is_master"`   // the master node (always online; no key to renew)
+	Maintenance bool   `json:"maintenance"` // drained: this node answers SERVFAIL
 	NodeStats
+}
+
+// masterMaintenanceKey holds the master's own drain flag (the master isn't a row
+// in the nodes table — it's synthesized in the API), as 0/1 in app_meta.
+const masterMaintenanceKey = "master_maintenance"
+
+// MasterMaintenance reports whether the master is drained (answering SERVFAIL).
+func (s *Store) MasterMaintenance() bool {
+	v, _ := s.GetMetaInt(masterMaintenanceKey)
+	return v != 0
+}
+
+// SetMasterMaintenance persists the master's drain flag.
+func (s *Store) SetMasterMaintenance(on bool) error {
+	return s.SetMetaInt(masterMaintenanceKey, int64(boolToInt(on)))
+}
+
+// SetNodeMaintenance toggles a worker node's drain (maintenance) flag. The worker
+// picks it up on its next config poll and starts/stops answering SERVFAIL.
+func (s *Store) SetNodeMaintenance(name string, on bool) error {
+	res, err := s.db.Exec(`UPDATE nodes SET maintenance=? WHERE name=?`, boolToInt(on), name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("node not found")
+	}
+	return nil
 }
 
 // UpdateNodeKey rotates an enrolled node's API key (hash + display prefix).
@@ -168,16 +204,18 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 		return nil, nil
 	}
 	n := &Node{}
+	var maintenance int
 	err := s.db.QueryRow(
-		`SELECT name, key_prefix, address, version, last_seen, created_at
+		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance
 		 FROM nodes WHERE key_hash=?`, keyHash).
-		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt)
+		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	n.Maintenance = maintenance != 0
 	return n, nil
 }
 
@@ -224,7 +262,7 @@ func (s *Store) AllNodeInsights() (map[string]Insights, error) {
 func (s *Store) ListNodes() ([]Node, error) {
 	rows, err := s.db.Query(
 		`SELECT name, key_prefix, address, version, last_seen, created_at,
-		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors
+		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance
 		 FROM nodes ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -233,10 +271,12 @@ func (s *Store) ListNodes() ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
+		var maintenance int
 		if err := rows.Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt,
-			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors); err != nil {
+			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors, &maintenance); err != nil {
 			return nil, err
 		}
+		n.Maintenance = maintenance != 0
 		out = append(out, n)
 	}
 	return out, rows.Err()

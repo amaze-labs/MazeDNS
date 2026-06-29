@@ -48,6 +48,7 @@ export interface Node {
   last_seen: number
   created_at: number
   is_master: boolean
+  maintenance: boolean
   total: number
   blocked: number
   cached: number
@@ -535,4 +536,10 @@ export const api = {
   renewNodeKey: (name: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/key`, { method: 'POST' }).then(j<{ name: string; key: string }>),
   deleteNode: (name: string) => fetch(`/api/cluster/nodes/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  setNodeMaintenance: (name: string, on: boolean) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/maintenance`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ on }),
+    }).then(j),
 }

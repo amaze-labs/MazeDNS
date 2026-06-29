@@ -155,6 +155,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
 			mux.HandleFunc("POST /api/cluster/nodes/{name}/key", s.requireRole(roleAdmin, s.renewNodeKey))
+			mux.HandleFunc("PUT /api/cluster/nodes/{name}/maintenance", s.requireRole(roleAdmin, s.setNodeMaintenance))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{name}", s.requireRole(roleAdmin, s.deleteNode))
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
@@ -254,7 +255,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if rewrites == nil {
 		rewrites = []store.Rewrite{}
 	}
-	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, PausedUntil: pausedUntil})
+	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
 }
 
 // nodeFromKey authenticates a worker by its Bearer node key, or returns nil.
@@ -302,10 +303,11 @@ func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	total, blocked, cached, forwarded, rewritten, errs := s.res.StatsSnapshot()
 	ver, _ := s.store.ConfigVersion()
 	master := store.Node{
-		Name:     "master",
-		Version:  ver,
-		LastSeen: time.Now().Unix(),
-		IsMaster: true,
+		Name:        "master",
+		Version:     ver,
+		LastSeen:    time.Now().Unix(),
+		IsMaster:    true,
+		Maintenance: s.store.MasterMaintenance(),
 		NodeStats: store.NodeStats{
 			Total: int64(total), Blocked: int64(blocked), Cached: int64(cached),
 			Forwarded: int64(forwarded), Rewritten: int64(rewritten), Errors: int64(errs),
@@ -313,6 +315,32 @@ func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	}
 	nodes := append([]store.Node{master}, workers...)
 	writeJSON(w, http.StatusOK, nodes)
+}
+
+// setNodeMaintenance toggles a node's drain (maintenance) flag. The master applies
+// it to its own resolver immediately; a worker picks up its flag on the next poll.
+func (s *Server) setNodeMaintenance(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if name == "master" {
+		if err := s.store.SetMasterMaintenance(in.On); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.res.SetMaintenance(in.On)
+	} else {
+		if err := s.store.SetNodeMaintenance(name, in.On); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "maintenance": in.On})
 }
 
 // addNode enrolls a worker, generating its API key (returned once, in clear).

@@ -30,46 +30,134 @@ body {
 }
 
 .app {
-  max-width: 1000px;
-  margin: 0 auto;
-  padding: 24px;
+  display: flex;
+  align-items: flex-start;
+  min-height: 100vh;
 }
 
-header {
+.app > main {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 32px;
+}
+
+/* Collapsible icon sidebar */
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  flex: 0 0 auto;
+  width: 220px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 12px;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+  transition: width 0.15s ease;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.app.collapsed .sidebar {
+  width: 64px;
+}
+
+.side-brand {
   display: flex;
   align-items: center;
-  gap: 24px;
-  margin-bottom: 24px;
+  gap: 10px;
+  padding: 6px 10px 16px;
+  white-space: nowrap;
 }
-
-header h1 {
+.brand-logo {
   font-size: 20px;
-  margin: 0;
+}
+.brand-name {
+  font-size: 16px;
+  font-weight: 600;
 }
 
-nav {
+.side-nav {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
 }
-
-nav button {
+.side-nav button,
+.side-collapse {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   border: 1px solid transparent;
-  padding: 6px 14px;
-  border-radius: 8px;
   cursor: pointer;
-  text-transform: capitalize;
+  text-align: left;
+  white-space: nowrap;
+  font: inherit;
 }
-
-nav button:hover {
+.side-nav button:hover,
+.side-collapse:hover {
   color: var(--fg);
 }
-
-nav button.active {
+.side-nav button.active {
   color: var(--fg);
   background: var(--panel);
   border-color: var(--line);
+}
+.side-ic {
+  flex: 0 0 20px;
+  width: 20px;
+  text-align: center;
+  font-size: 16px;
+}
+.side-collapse {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.side-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px 2px;
+  white-space: nowrap;
+}
+.side-username {
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Collapsed: icon-only. Hide labels and center the icons. */
+.app.collapsed .side-label,
+.app.collapsed .brand-name {
+  display: none;
+}
+.app.collapsed .side-nav button,
+.app.collapsed .side-collapse,
+.app.collapsed .side-brand,
+.app.collapsed .side-account {
+  justify-content: center;
+}
+.app.collapsed .side-account {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* The account dropdown sits at the bottom of the sidebar, so open it upward. */
+.sidebar .acct-menu {
+  bottom: calc(100% + 8px);
+  top: auto;
+  left: 0;
+  right: auto;
 }
 
 .cards {

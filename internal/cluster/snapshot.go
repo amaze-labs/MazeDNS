@@ -9,4 +9,5 @@ type Snapshot struct {
 	Rules       []store.Rule    `json:"rules"`
 	Rewrites    []store.Rewrite `json:"rewrites"`
 	PausedUntil int64           `json:"paused_until"` // cluster-wide block pause deadline (unix)
+	Maintenance bool            `json:"maintenance"`  // this node is drained (answers SERVFAIL)
 }

@@ -17,12 +17,17 @@ type entry struct {
 
 // Cache stores DNS replies keyed by question, honoring TTLs.
 type Cache struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	items    map[string]entry
 	maxItems int
 	minTTL   time.Duration
 	maxTTL   time.Duration
 }
+
+// evictionSample is how many entries we look at when the cache is full to pick a
+// victim — the one nearest expiry. Sampling a handful approximates LRU/TTL
+// eviction at O(1) cost, and keeps hot entries far better than random eviction.
+const evictionSample = 8
 
 // New creates a cache holding up to maxItems entries, clamping cached TTLs to
 // [minTTL, maxTTL].
@@ -58,17 +63,25 @@ func keyFor(q dns.Question, do bool) string {
 // DNSSEC-signed variant.
 func (c *Cache) Get(q dns.Question, do bool) (*dns.Msg, bool) {
 	k := keyFor(q, do)
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
 	e, ok := c.items[k]
+	c.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
 	now := time.Now()
 	if now.After(e.expiresAt) {
-		delete(c.items, k)
+		// Expired: drop it under the write lock, but re-check first so we don't
+		// delete an entry another goroutine just refreshed.
+		c.mu.Lock()
+		if e2, ok := c.items[k]; ok && now.After(e2.expiresAt) {
+			delete(c.items, k)
+		}
+		c.mu.Unlock()
 		return nil, false
 	}
+	// e.msg is immutable once stored (Set keeps a Copy), so the deep copy that
+	// every caller needs is done outside the lock — concurrent hits don't serialize.
 	remaining := uint32(e.expiresAt.Sub(now).Seconds())
 	msg := e.msg.Copy()
 	adjustTTL(msg, remaining)
@@ -89,10 +102,7 @@ func (c *Cache) Set(q dns.Question, do bool, msg *dns.Msg) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, exists := c.items[k]; !exists && len(c.items) >= c.maxItems {
-		for ek := range c.items { // simple eviction: drop one arbitrary entry
-			delete(c.items, ek)
-			break
-		}
+		c.evictLocked()
 	}
 	c.items[k] = entry{
 		msg:       msg.Copy(),
@@ -100,10 +110,29 @@ func (c *Cache) Set(q dns.Question, do bool, msg *dns.Msg) {
 	}
 }
 
+// evictLocked removes the entry nearest expiry among a small random sample (map
+// iteration order is random), preferring an already-expired one. Caller holds mu.
+func (c *Cache) evictLocked() {
+	var victim string
+	var soonest time.Time
+	n := 0
+	for k, e := range c.items {
+		if victim == "" || e.expiresAt.Before(soonest) {
+			victim, soonest = k, e.expiresAt
+		}
+		if n++; n >= evictionSample {
+			break
+		}
+	}
+	if victim != "" {
+		delete(c.items, victim)
+	}
+}
+
 // Len returns the current number of cached entries.
 func (c *Cache) Len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return len(c.items)
 }
 

@@ -15,6 +15,18 @@ import { api, type SessionUser, type AuthInfo } from './api'
 type Tab = 'dashboard' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'cluster' | 'settings' | 'account'
 const ALL_TABS: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites', 'cluster', 'settings', 'account']
 
+// Sidebar presentation: icon + human label per tab.
+const TAB_META: Record<Tab, { icon: string; label: string }> = {
+  dashboard: { icon: '📊', label: 'Dashboard' },
+  queries: { icon: '🔎', label: 'Requests' },
+  clients: { icon: '💻', label: 'Clients' },
+  filtering: { icon: '🛡️', label: 'Filtering' },
+  rewrites: { icon: '🔀', label: 'Rewrites' },
+  cluster: { icon: '🌐', label: 'Cluster' },
+  settings: { icon: '⚙️', label: 'Settings' },
+  account: { icon: '👤', label: 'Account' },
+}
+
 // The current tab is reflected in the URL path (/dashboard, /queries, …) so
 // pages are linkable and the browser back/forward buttons work.
 const tabFromPath = (): Tab => {
@@ -29,6 +41,14 @@ export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [info, setInfo] = useState<AuthInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('mazedns.sidebar.collapsed') === '1')
+
+  const toggleSidebar = () => {
+    setCollapsed((c) => {
+      localStorage.setItem('mazedns.sidebar.collapsed', c ? '0' : '1')
+      return !c
+    })
+  }
 
   // navigate switches tab and pushes the matching path into history.
   const navigate = (t: Tab) => {
@@ -87,26 +107,46 @@ export default function App() {
   tabs.push('settings')
 
   return (
-    <div className="app">
-      <header>
-        <h1>🧭 MazeDNS</h1>
-        <nav>
+    <div className={`app ${collapsed ? 'collapsed' : ''}`}>
+      <aside className="sidebar">
+        <div className="side-brand">
+          <span className="brand-logo">🧭</span>
+          <span className="brand-name">MazeDNS</span>
+        </div>
+        <nav className="side-nav">
           {tabs.map((t) => (
-            <button key={t} className={tab === t ? 'active' : ''} onClick={() => navigate(t)}>
-              {t}
+            <button
+              key={t}
+              className={tab === t ? 'active' : ''}
+              onClick={() => navigate(t)}
+              title={TAB_META[t].label}
+            >
+              <span className="side-ic">{TAB_META[t].icon}</span>
+              <span className="side-label">{TAB_META[t].label}</span>
             </button>
           ))}
         </nav>
         <div className="spacer" />
+        <button
+          className="side-collapse"
+          onClick={toggleSidebar}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <span className="side-ic">{collapsed ? '»' : '«'}</span>
+          <span className="side-label">Collapse</span>
+        </button>
         {user && (
-          <AccountMenu
-            user={user}
-            authEnabled={!!info?.auth_enabled}
-            onSettings={() => navigate('account')}
-            onLogout={logout}
-          />
+          <div className="side-account">
+            <AccountMenu
+              user={user}
+              authEnabled={!!info?.auth_enabled}
+              onSettings={() => navigate('account')}
+              onLogout={logout}
+            />
+            <span className="side-label side-username">{user.username}</span>
+          </div>
         )}
-      </header>
+      </aside>
       <main>
         {tab === 'dashboard' && <Dashboard />}
         {tab === 'queries' && <Queries />}

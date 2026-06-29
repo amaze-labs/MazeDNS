@@ -21,21 +21,23 @@ const shipBatch = 5000 // max query-log entries shipped to the master per cycle
 // node's counters, and ships its new query-log entries to the master so the
 // dashboard is cluster-wide. None of this touches the DNS hot path.
 type Agent struct {
-	masterURL   string
-	nodeKey     string
-	interval    time.Duration
-	store       *store.Store
-	reload      func() error
-	stats       func() store.NodeStats
-	setPause    func(int64)
-	client      *http.Client
-	lastShipped int64
+	masterURL      string
+	nodeKey        string
+	interval       time.Duration
+	store          *store.Store
+	reload         func() error
+	stats          func() store.NodeStats
+	setPause       func(int64)
+	setMaintenance func(bool)
+	client         *http.Client
+	lastShipped    int64
 }
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
 // the master; stats (may be nil) reports this node's query counters each poll;
-// setPause (may be nil) applies the cluster-wide block-pause deadline.
-func NewAgent(masterURL, masterIP, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, setPause func(int64)) *Agent {
+// setPause (may be nil) applies the cluster-wide block-pause deadline;
+// setMaintenance (may be nil) applies this node's drain flag.
+func NewAgent(masterURL, masterIP, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, setPause func(int64), setMaintenance func(bool)) *Agent {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -49,15 +51,16 @@ func NewAgent(masterURL, masterIP, nodeKey string, interval time.Duration, st *s
 		}
 	}
 	return &Agent{
-		masterURL:   strings.TrimRight(masterURL, "/"),
-		nodeKey:     nodeKey,
-		interval:    interval,
-		store:       st,
-		reload:      reload,
-		stats:       stats,
-		setPause:    setPause,
-		client:      &http.Client{Timeout: 15 * time.Second, Transport: masterTransport(masterIP)},
-		lastShipped: last,
+		masterURL:      strings.TrimRight(masterURL, "/"),
+		nodeKey:        nodeKey,
+		interval:       interval,
+		store:          st,
+		reload:         reload,
+		stats:          stats,
+		setPause:       setPause,
+		setMaintenance: setMaintenance,
+		client:         &http.Client{Timeout: 15 * time.Second, Transport: masterTransport(masterIP)},
+		lastShipped:    last,
 	}
 }
 
@@ -169,9 +172,13 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		slog.Warn("cluster sync failed", "err", err)
 		return
 	}
-	// The block pause is applied every poll (it isn't part of the version hash).
+	// The block pause and this node's maintenance flag are applied every poll
+	// (they aren't part of the version hash).
 	if a.setPause != nil {
 		a.setPause(snap.PausedUntil)
+	}
+	if a.setMaintenance != nil {
+		a.setMaintenance(snap.Maintenance)
 	}
 	cur, _ := a.store.ConfigVersion()
 	if snap.Version == cur {

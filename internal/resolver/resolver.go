@@ -120,8 +120,9 @@ type Stats struct {
 }
 
 type condForward struct {
-	suffix string
-	ups    []Upstream
+	suffix    string
+	dotSuffix string // "." + suffix, precomputed for subdomain matching on the hot path
+	ups       []Upstream
 }
 
 // runtime is the swappable operational state derived from Settings.
@@ -144,9 +145,21 @@ type Resolver struct {
 	stats    Stats
 	rt       atomic.Pointer[runtime]
 	pol      atomic.Pointer[Policy]
+	// sf coalesces concurrent cache-miss forwards for the same question.
+	sf singleflight
 	// pauseUntil is the unix time until which blocking is suspended (0 = active).
 	pauseUntil atomic.Int64
+	// maintenance, when set, drains this node: every query is answered SERVFAIL so
+	// clients fail over to another DNS server.
+	maintenance atomic.Bool
 }
+
+// SetMaintenance toggles maintenance (drain) mode for this node. While on, every
+// DNS query is answered with SERVFAIL so clients move to another server.
+func (r *Resolver) SetMaintenance(on bool) { r.maintenance.Store(on) }
+
+// InMaintenance reports whether this node is draining (answering SERVFAIL).
+func (r *Resolver) InMaintenance() bool { return r.maintenance.Load() }
 
 // SetBlockPausedUntil suspends block enforcement until ts (unix seconds); 0
 // resumes immediately. Allow/rewrite/cache/forward are unaffected.
@@ -207,7 +220,7 @@ func (r *Resolver) ApplySettings(s Settings) {
 		if suffix == "" {
 			continue
 		}
-		rt.conditional = append(rt.conditional, condForward{suffix: suffix, ups: r.parseUpstreams(f.Upstreams)})
+		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: r.parseUpstreams(f.Upstreams)})
 	}
 	sort.Slice(rt.conditional, func(i, j int) bool { return len(rt.conditional[i].suffix) > len(rt.conditional[j].suffix) })
 	if s.RateLimitQPM > 0 {
@@ -289,6 +302,15 @@ func (r *Resolver) CacheLen() int {
 func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 	client := clientIP(w.RemoteAddr())
+
+	// Maintenance/drain: answer SERVFAIL so clients fail over to another DNS server.
+	// Done before any pipeline work, and not logged, to keep a drained node quiet.
+	if r.InMaintenance() {
+		m := new(dns.Msg)
+		m.SetRcode(req, dns.RcodeServerFailure)
+		_ = w.WriteMsg(m)
+		return
+	}
 
 	// Capture the client's DNSSEC intent BEFORE resolving, because the forward path
 	// may add the DO bit to req when DNSSEC is forced upstream — which would
@@ -382,7 +404,15 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	if rt.forceDNSSEC {
 		ensureDO(req)
 	}
-	resp, rtt, err := r.forward(req, upstreamsFor(rt, name))
+	// Coalesce concurrent misses for the same question into one upstream exchange;
+	// the shared result is cached once and copied per caller below.
+	resp, rtt, err := r.sf.Do(forwardKey(q, wantSigned), func() (*dns.Msg, time.Duration, error) {
+		m, rtt, err := r.forward(req, upstreamsFor(rt, name))
+		if err == nil && m != nil && rt.cache != nil {
+			rt.cache.Set(q, wantSigned, m)
+		}
+		return m, rtt, err
+	})
 	if err != nil || resp == nil {
 		r.stats.Errors.Add(1)
 		slog.Warn("forward failed", "name", q.Name, "err", err)
@@ -394,9 +424,9 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	if r.metrics != nil {
 		r.metrics.UpstreamDuration.Observe(rtt.Seconds())
 	}
-	if rt.cache != nil {
-		rt.cache.Set(q, wantSigned, resp)
-	}
+	// The forwarded message may be shared with other coalesced callers, so copy it
+	// before we (and Handle) mutate Id / EDNS / truncate it.
+	resp = resp.Copy()
 	resp.Id = req.Id
 	return resp, "forward", ""
 }
@@ -424,7 +454,7 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 
 func upstreamsFor(rt *runtime, name string) []Upstream {
 	for _, cf := range rt.conditional {
-		if (name == cf.suffix || strings.HasSuffix(name, "."+cf.suffix)) && len(cf.ups) > 0 {
+		if (name == cf.suffix || strings.HasSuffix(name, cf.dotSuffix)) && len(cf.ups) > 0 {
 			return cf.ups
 		}
 	}

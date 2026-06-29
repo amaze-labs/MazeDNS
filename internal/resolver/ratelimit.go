@@ -34,10 +34,18 @@ func (rl *rateLimiter) allow(client string) bool {
 	e := rl.counts[client]
 	if e == nil || now.Sub(e.start) >= rl.window {
 		rl.counts[client] = &rlEntry{start: now, count: 1}
-		if len(rl.counts) > 10000 { // opportunistic cleanup of stale windows
+		if len(rl.counts) > 10000 {
+			// Opportunistic cleanup of stale windows, bounded so we never hold the
+			// lock scanning the whole map (which would stall every other client's
+			// rate check). Each triggering call sweeps a slice; steady churn keeps
+			// the map bounded over time.
+			scanned := 0
 			for k, v := range rl.counts {
 				if now.Sub(v.start) >= rl.window {
 					delete(rl.counts, k)
+				}
+				if scanned++; scanned >= 256 {
+					break
 				}
 			}
 		}

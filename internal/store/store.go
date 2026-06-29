@@ -144,7 +144,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 	q_forwarded INTEGER NOT NULL DEFAULT 0,
 	q_rewritten INTEGER NOT NULL DEFAULT 0,
 	q_errors INTEGER NOT NULL DEFAULT 0,
-	insights TEXT NOT NULL DEFAULT ''
+	insights TEXT NOT NULL DEFAULT '',
+	maintenance INTEGER NOT NULL DEFAULT 0   -- node is drained (answers SERVFAIL)
 );
 CREATE TABLE IF NOT EXISTS settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -204,6 +205,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 		`ALTER TABLE classifications ADD COLUMN score INTEGER NOT NULL DEFAULT 100`,
 		`ALTER TABLE classifications ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE classifications ADD COLUMN note TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

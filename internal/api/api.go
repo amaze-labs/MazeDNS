@@ -137,6 +137,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
+		mux.HandleFunc("GET /api/metrics/export", s.requireRole(roleReadonly, s.getMetricsExport))
+		mux.HandleFunc("PUT /api/metrics/export", s.requireRole(roleAdmin, s.putMetricsExport))
 
 		// Config backup / restore (admin): export everything as one JSON bundle.
 		mux.HandleFunc("GET /api/config/export", s.requireRole(roleAdmin, s.exportConfig))

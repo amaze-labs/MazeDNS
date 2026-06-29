@@ -112,6 +112,16 @@ export interface NetbirdSettings {
   token: string
 }
 
+export interface VMExportSettings {
+  enabled: boolean
+  url: string
+  interval_sec: number
+  job: string
+  instance: string
+  username: string
+  password: string
+}
+
 export interface ClientIdentity {
   name: string // NetBird peer / reverse-DNS hostname ("" if unknown)
   source: string // "netbird" | "rdns" | ""
@@ -519,6 +529,14 @@ export const api = {
   testNetbird: (s: NetbirdSettings) =>
     fetch('/api/netbird/test', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(s) }).then(
       j<{ ok: boolean; error?: string; peer_count?: number }>,
+    ),
+
+  // VictoriaMetrics metrics export
+  metricsExport: () =>
+    fetch('/api/metrics/export').then(j<{ settings: VMExportSettings; has_password: boolean }>),
+  saveMetricsExport: (s: VMExportSettings) =>
+    fetch('/api/metrics/export', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(
+      j<VMExportSettings>,
     ),
 
   // Per-node internal DNS resolvers (reverse-DNS for internal clients)

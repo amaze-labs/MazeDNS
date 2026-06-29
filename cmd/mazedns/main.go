@@ -311,10 +311,11 @@ func main() {
 		go refresher.Run(context.Background())
 	}
 
-	// Bound query-log growth: the master keeps the full dashboard window (it also
-	// ingests workers' shipped logs); a worker only needs a short buffer before
-	// shipping. Pruning runs hourly, off the DNS path.
-	retention := 90 * 24 * time.Hour
+	// Bound query-log growth: the master keeps 30 days for the dashboard (it also
+	// ingests workers' shipped logs, so the table is cluster-wide and grows fast); a
+	// worker only needs a short buffer before shipping. Pruning runs hourly, off the
+	// DNS path.
+	retention := 30 * 24 * time.Hour
 	if worker {
 		retention = 48 * time.Hour
 	}
@@ -327,6 +328,27 @@ func main() {
 			}
 		}
 	}()
+
+	// VictoriaMetrics export: seed first-run defaults from the config file, then run
+	// a pusher that re-reads the (UI-editable) settings each cycle. Each node pushes
+	// its own metrics, labelled by instance, so the cluster aggregates in VM without
+	// VM having to scrape every node.
+	{
+		vm := cfg.Metrics.VictoriaMetrics
+		_ = st.EnsureVMExport(store.VMExport{
+			Enabled: vm.Enabled, URL: vm.URL, IntervalSec: int(vm.Interval.Std().Seconds()),
+			Job: vm.Job, Instance: vm.Instance, Username: vm.Username, Password: vm.Password,
+		})
+		hostname, _ := os.Hostname()
+		get := func() metrics.VMConfig {
+			v := st.LoadVMExport(store.VMExport{})
+			return metrics.VMConfig{
+				Enabled: v.Enabled, URL: v.URL, Interval: time.Duration(v.IntervalSec) * time.Second,
+				Job: v.Job, Instance: v.Instance, Username: v.Username, Password: v.Password,
+			}
+		}
+		go metrics.NewVMPusher(get, hostname, mx.Gatherer()).Run(context.Background())
+	}
 
 	// DNS server (UDP/TCP).
 	dnsAddr := net.JoinHostPort(cfg.Listen.Address, strconv.Itoa(cfg.Listen.Port))

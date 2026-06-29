@@ -48,3 +48,7 @@ func New() *Metrics {
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})
 }
+
+// Gatherer exposes the underlying registry so collectors can be gathered for
+// pushing to an external sink (e.g. the VictoriaMetrics exporter).
+func (m *Metrics) Gatherer() prometheus.Gatherer { return m.reg }

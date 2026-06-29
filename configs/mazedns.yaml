@@ -134,3 +134,13 @@ auth:
 log:
   level: "info"                # debug|info|warn|error
   query_log: false             # set true to log every query
+
+metrics:
+  victoria_metrics:            # push Prometheus metrics to VictoriaMetrics (each node pushes its own)
+    enabled: false
+    url: "http://victoriametrics:8428"   # VM base URL (import endpoint is /api/v1/import/prometheus)
+    interval: "15s"
+    job: "mazedns"             # job label applied in VM
+    instance: ""               # instance label; empty -> hostname
+    username: ""               # optional HTTP basic auth
+    password: ""

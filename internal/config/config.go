@@ -50,6 +50,7 @@ type Config struct {
 	Cluster    Cluster     `yaml:"cluster"`
 	Database   Database    `yaml:"database"`
 	Log        Log         `yaml:"log"`
+	Metrics    Metrics     `yaml:"metrics"`
 }
 
 // Listen is the DNS listener address.
@@ -227,6 +228,25 @@ type Log struct {
 	QueryLog bool   `yaml:"query_log"`
 }
 
+// Metrics groups metrics-export integrations.
+type Metrics struct {
+	VictoriaMetrics VictoriaMetrics `yaml:"victoria_metrics"`
+}
+
+// VictoriaMetrics pushes this node's Prometheus metrics to a VictoriaMetrics
+// instance (its Prometheus text import endpoint) on an interval. Each node pushes
+// its own metrics labelled with `instance`, so a cluster's metrics aggregate in VM
+// without VM having to scrape every node.
+type VictoriaMetrics struct {
+	Enabled  bool     `yaml:"enabled"`
+	URL      string   `yaml:"url"`      // base URL, e.g. http://victoriametrics:8428
+	Interval Duration `yaml:"interval"` // push interval (default 15s)
+	Job      string   `yaml:"job"`      // job label (default "mazedns")
+	Instance string   `yaml:"instance"` // instance label (default: hostname)
+	Username string   `yaml:"username"` // optional HTTP basic auth
+	Password string   `yaml:"password"`
+}
+
 // Default returns a Config populated with sensible defaults.
 func Default() Config {
 	return Config{
@@ -260,6 +280,10 @@ func Default() Config {
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
 		Log:      Log{Level: "info", QueryLog: false},
+		Metrics: Metrics{VictoriaMetrics: VictoriaMetrics{
+			Interval: Duration(15 * time.Second),
+			Job:      "mazedns",
+		}},
 	}
 }
 

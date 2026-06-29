@@ -6,6 +6,7 @@ import {
   type ClassifierSettings,
   type ClassifierStatus,
   type NetbirdSettings,
+  type VMExportSettings,
 } from '../api'
 import Spinner from './Spinner'
 
@@ -47,6 +48,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [rdnsSaving, setRdnsSaving] = useState(false)
   const [rdnsOk, setRdnsOk] = useState(false)
 
+  // VictoriaMetrics metrics export.
+  const [vm, setVm] = useState<VMExportSettings | null>(null)
+  const [vmHasPassword, setVmHasPassword] = useState(false)
+  const [vmSaving, setVmSaving] = useState(false)
+  const [vmOk, setVmOk] = useState(false)
+
   const load = async () => {
     try {
       const cur = await api.settings()
@@ -77,6 +84,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setRdns(r.resolvers || {})
       })
       .catch(() => setRdnsNodes([]))
+    api
+      .metricsExport()
+      .then((r) => {
+        setVm(r.settings)
+        setVmHasPassword(r.has_password)
+      })
+      .catch(() => setVm(null))
   }
   useEffect(() => {
     load()
@@ -144,6 +158,23 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setNbMsg({ ok: false, text: e.message })
     } finally {
       setNbTesting(false)
+    }
+  }
+
+  const saveMetricsExport = async () => {
+    if (!vm) return
+    setVmSaving(true)
+    setErr('')
+    setVmOk(false)
+    try {
+      const saved = await api.saveMetricsExport(vm)
+      setVm(saved)
+      setVmHasPassword(saved.password !== '' || vmHasPassword)
+      setVmOk(true)
+    } catch (e: any) {
+      setErr(e.message)
+    } finally {
+      setVmSaving(false)
     }
   }
 
@@ -671,6 +702,75 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             <span className="hint">Reverse-DNS fallback works even without NetBird.</span>
           </div>
           {nbMsg && <div className={nbMsg.ok ? 'ok-msg' : 'error'}>{nbMsg.text}</div>}
+        </section>
+      )}
+
+      {vm && (
+        <section className="settings-card">
+          <h3>Metrics export — VictoriaMetrics</h3>
+          <label className="muted">
+            Push this node's Prometheus metrics to a VictoriaMetrics instance on an interval (its
+            <code> /api/v1/import/prometheus </code> endpoint). Each node pushes its own metrics, labelled with the
+            instance below, so a cluster aggregates in VM without VM having to scrape every node. Changes apply on the
+            next push cycle.
+          </label>
+          {vmOk && <div className="ok-msg">Metrics export settings saved.</div>}
+          <div className="field">
+            <label className="toggle">
+              <input type="checkbox" checked={vm.enabled} onChange={(e) => setVm({ ...vm, enabled: e.target.checked })} />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Enable VictoriaMetrics export</span>
+            </label>
+          </div>
+          <div className="field">
+            <label>VictoriaMetrics URL</label>
+            <input
+              value={vm.url}
+              onChange={(e) => setVm({ ...vm, url: e.target.value })}
+              placeholder="http://victoriametrics:8428"
+            />
+          </div>
+          <div className="field">
+            <label>Push interval (seconds)</label>
+            <input
+              type="number"
+              min={1}
+              value={vm.interval_sec}
+              onChange={(e) => setVm({ ...vm, interval_sec: Number(e.target.value) })}
+            />
+          </div>
+          <div className="field">
+            <label>Job label</label>
+            <input value={vm.job} onChange={(e) => setVm({ ...vm, job: e.target.value })} placeholder="mazedns" />
+          </div>
+          <div className="field">
+            <label>Instance label</label>
+            <input
+              value={vm.instance}
+              onChange={(e) => setVm({ ...vm, instance: e.target.value })}
+              placeholder="(blank = hostname)"
+            />
+          </div>
+          <div className="field">
+            <label>Username (optional)</label>
+            <input value={vm.username} onChange={(e) => setVm({ ...vm, username: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>Password (optional)</label>
+            <input
+              type="password"
+              value={vm.password}
+              onChange={(e) => setVm({ ...vm, password: e.target.value })}
+              placeholder={vmHasPassword ? '•••••••• (unchanged)' : ''}
+            />
+          </div>
+          <div className="settings-actions">
+            <button className="btn primary" onClick={saveMetricsExport} disabled={vmSaving}>
+              {vmSaving ? 'Saving…' : 'Save metrics export'}
+            </button>
+          </div>
         </section>
       )}
 

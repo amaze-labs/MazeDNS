@@ -32,6 +32,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/victorialogs"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -348,6 +349,24 @@ func main() {
 			}
 		}
 		go metrics.NewVMPusher(get, hostname, mx.Gatherer()).Run(context.Background())
+	}
+
+	// VictoriaLogs export: the master ships the cluster-wide query log (its own plus
+	// workers' shipped entries) to VictoriaLogs for retention beyond the local window.
+	if !worker {
+		vl := cfg.Metrics.VictoriaLogs
+		_ = st.EnsureVLExport(store.VLExport{
+			Enabled: vl.Enabled, URL: vl.URL, IntervalSec: int(vl.Interval.Std().Seconds()),
+			Username: vl.Username, Password: vl.Password,
+		})
+		getVL := func() victorialogs.Config {
+			v := st.LoadVLExport(store.VLExport{})
+			return victorialogs.Config{
+				Enabled: v.Enabled, URL: v.URL, Interval: time.Duration(v.IntervalSec) * time.Second,
+				Username: v.Username, Password: v.Password,
+			}
+		}
+		go victorialogs.NewExporter(getVL, st).Run(context.Background())
 	}
 
 	// DNS server (UDP/TCP).

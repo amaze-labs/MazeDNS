@@ -122,6 +122,14 @@ export interface VMExportSettings {
   password: string
 }
 
+export interface VLExportSettings {
+  enabled: boolean
+  url: string
+  interval_sec: number
+  username: string
+  password: string
+}
+
 export interface ClientIdentity {
   name: string // NetBird peer / reverse-DNS hostname ("" if unknown)
   source: string // "netbird" | "rdns" | ""
@@ -537,6 +545,12 @@ export const api = {
   saveMetricsExport: (s: VMExportSettings) =>
     fetch('/api/metrics/export', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(
       j<VMExportSettings>,
+    ),
+  logsExport: () =>
+    fetch('/api/logs/export').then(j<{ settings: VLExportSettings; has_password: boolean }>),
+  saveLogsExport: (s: VLExportSettings) =>
+    fetch('/api/logs/export', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(
+      j<VLExportSettings>,
     ),
 
   // Per-node internal DNS resolvers (reverse-DNS for internal clients)

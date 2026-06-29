@@ -81,7 +81,7 @@ func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64,
 		limit = 5000
 	}
 	rows, err := s.db.Query(
-		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node
 		 FROM query_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
 	if err != nil {
 		return nil, afterID, err
@@ -91,7 +91,7 @@ func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64,
 	maxID := afterID
 	for rows.Next() {
 		var e QueryLogEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node); err != nil {
 			return nil, afterID, err
 		}
 		if e.ID > maxID {

@@ -7,6 +7,7 @@ import {
   type ClassifierStatus,
   type NetbirdSettings,
   type VMExportSettings,
+  type VLExportSettings,
 } from '../api'
 import Spinner from './Spinner'
 
@@ -42,6 +43,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [vm, setVm] = useState<VMExportSettings | null>(null)
   const [vmHasPassword, setVmHasPassword] = useState(false)
 
+  // VictoriaLogs query-log export.
+  const [vl, setVl] = useState<VLExportSettings | null>(null)
+  const [vlHasPassword, setVlHasPassword] = useState(false)
+
   const load = async () => {
     try {
       const cur = await api.settings()
@@ -72,6 +77,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setVmHasPassword(r.has_password)
       })
       .catch(() => setVm(null))
+    api
+      .logsExport()
+      .then((r) => {
+        setVl(r.settings)
+        setVlHasPassword(r.has_password)
+      })
+      .catch(() => setVl(null))
   }
   useEffect(() => {
     load()
@@ -194,6 +206,11 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         const v = await api.saveMetricsExport(vm)
         setVm(v)
         setVmHasPassword(v.password !== '' || vmHasPassword)
+      }
+      if (vl) {
+        const v = await api.saveLogsExport(vl)
+        setVl(v)
+        setVlHasPassword(v.password !== '' || vlHasPassword)
       }
       setOk(true)
     } catch (e: any) {
@@ -673,6 +690,56 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               value={vm.password}
               onChange={(e) => setVm({ ...vm, password: e.target.value })}
               placeholder={vmHasPassword ? '•••••••• (unchanged)' : ''}
+            />
+          </div>
+        </details>
+      )}
+
+      {vl && (
+        <details className="settings-card">
+          <summary>Log export — VictoriaLogs</summary>
+          <label className="muted">
+            Ship the cluster-wide query log from the master to a VictoriaLogs instance (its
+            <code> /insert/jsonline </code> endpoint) for long-term retention beyond the local window. Useful for
+            keeping history past the dashboard's range — query it in VictoriaLogs with LogsQL.
+          </label>
+          <div className="field">
+            <label className="toggle">
+              <input type="checkbox" checked={vl.enabled} onChange={(e) => setVl({ ...vl, enabled: e.target.checked })} />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Enable VictoriaLogs export</span>
+            </label>
+          </div>
+          <div className="field">
+            <label>VictoriaLogs URL</label>
+            <input
+              value={vl.url}
+              onChange={(e) => setVl({ ...vl, url: e.target.value })}
+              placeholder="http://victorialogs:9428"
+            />
+          </div>
+          <div className="field">
+            <label>Ship interval (seconds)</label>
+            <input
+              type="number"
+              min={1}
+              value={vl.interval_sec}
+              onChange={(e) => setVl({ ...vl, interval_sec: Number(e.target.value) })}
+            />
+          </div>
+          <div className="field">
+            <label>Username (optional)</label>
+            <input value={vl.username} onChange={(e) => setVl({ ...vl, username: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>Password (optional)</label>
+            <input
+              type="password"
+              value={vl.password}
+              onChange={(e) => setVl({ ...vl, password: e.target.value })}
+              placeholder={vlHasPassword ? '•••••••• (unchanged)' : ''}
             />
           </div>
         </details>

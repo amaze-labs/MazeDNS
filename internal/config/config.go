@@ -228,9 +228,20 @@ type Log struct {
 	QueryLog bool   `yaml:"query_log"`
 }
 
-// Metrics groups metrics-export integrations.
+// Metrics groups the metrics/logs export integrations.
 type Metrics struct {
 	VictoriaMetrics VictoriaMetrics `yaml:"victoria_metrics"`
+	VictoriaLogs    VictoriaLogs    `yaml:"victoria_logs"`
+}
+
+// VictoriaLogs ships the (cluster-wide) query log from the master to a
+// VictoriaLogs instance for long-term retention beyond the local SQLite window.
+type VictoriaLogs struct {
+	Enabled  bool     `yaml:"enabled"`
+	URL      string   `yaml:"url"`      // base URL, e.g. http://victorialogs:9428
+	Interval Duration `yaml:"interval"` // ship interval (default 15s)
+	Username string   `yaml:"username"`
+	Password string   `yaml:"password"`
 }
 
 // VictoriaMetrics pushes this node's Prometheus metrics to a VictoriaMetrics
@@ -280,10 +291,13 @@ func Default() Config {
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
 		Log:      Log{Level: "info", QueryLog: false},
-		Metrics: Metrics{VictoriaMetrics: VictoriaMetrics{
-			Interval: Duration(15 * time.Second),
-			Job:      "mazedns",
-		}},
+		Metrics: Metrics{
+			VictoriaMetrics: VictoriaMetrics{
+				Interval: Duration(15 * time.Second),
+				Job:      "mazedns",
+			},
+			VictoriaLogs: VictoriaLogs{Interval: Duration(15 * time.Second)},
+		},
 	}
 }
 

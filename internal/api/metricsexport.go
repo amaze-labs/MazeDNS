@@ -41,3 +41,33 @@ func (s *Server) putMetricsExport(w http.ResponseWriter, r *http.Request) {
 	in.Password = ""
 	writeJSON(w, http.StatusOK, in)
 }
+
+// getLogsExport returns the VictoriaLogs export settings (password masked).
+func (s *Server) getLogsExport(w http.ResponseWriter, _ *http.Request) {
+	v := s.store.LoadVLExport(store.VLExport{})
+	hasPassword := v.Password != ""
+	v.Password = ""
+	writeJSON(w, http.StatusOK, map[string]any{"settings": v, "has_password": hasPassword})
+}
+
+// putLogsExport saves the VictoriaLogs export settings (empty password = unchanged).
+func (s *Server) putLogsExport(w http.ResponseWriter, r *http.Request) {
+	var in store.VLExport
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	in.URL = strings.TrimSpace(in.URL)
+	if in.IntervalSec <= 0 {
+		in.IntervalSec = 15
+	}
+	if in.Password == "" {
+		in.Password = s.store.LoadVLExport(store.VLExport{}).Password
+	}
+	if err := s.store.SaveVLExport(in); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	in.Password = ""
+	writeJSON(w, http.StatusOK, in)
+}

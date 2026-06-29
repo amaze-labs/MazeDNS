@@ -144,3 +144,9 @@ metrics:
     instance: ""               # instance label; empty -> hostname
     username: ""               # optional HTTP basic auth
     password: ""
+  victoria_logs:               # ship the cluster-wide query log (master) to VictoriaLogs
+    enabled: false
+    url: "http://victorialogs:9428"      # VL base URL (ingest endpoint is /insert/jsonline)
+    interval: "15s"
+    username: ""               # optional HTTP basic auth
+    password: ""

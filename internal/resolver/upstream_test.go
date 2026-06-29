@@ -38,7 +38,7 @@ func (c *trackedConn) Close() error { c.closed = true; return c.Conn.Close() }
 // A pooled DoT connection idle past dotIdleTimeout must be discarded (closed) and
 // not handed back, so a query never reuses a likely-dead connection and stalls.
 func TestDotPoolDiscardsIdleConn(t *testing.T) {
-	u := &dotUpstream{pool: make(chan pooledConn, dotPoolSize)}
+	u := &dotUpstream{pool: make(chan pooledConn, dotPoolSize())}
 
 	c1, c2 := net.Pipe()
 	defer c2.Close()
@@ -56,7 +56,7 @@ func TestDotPoolDiscardsIdleConn(t *testing.T) {
 
 // A pooled DoT connection still within the idle window must be reused.
 func TestDotPoolReusesFreshConn(t *testing.T) {
-	u := &dotUpstream{pool: make(chan pooledConn, dotPoolSize)}
+	u := &dotUpstream{pool: make(chan pooledConn, dotPoolSize())}
 
 	c1, c2 := net.Pipe()
 	defer c1.Close()

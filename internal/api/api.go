@@ -557,11 +557,11 @@ func (s *Server) getStats(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
-	step := hours * 3600 / 48
+	step := stepFor(hours)
 	if step < 60 {
 		step = 60
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	points, err := s.store.QueryTimeSeries(since, step, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -577,11 +577,11 @@ func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
 // latency chart (honours the node focus filter).
 func (s *Server) getLatency(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
-	step := hours * 3600 / 48
+	step := stepFor(hours)
 	if step < 60 {
 		step = 60
 	}
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	points, names, err := s.store.LatencyTimeSeries(since, step, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -602,7 +602,7 @@ func (s *Server) getLatency(w http.ResponseWriter, r *http.Request) {
 // unmatched volume is reported as "uncategorized".
 func (s *Server) getCategoryTraffic(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	names, err := s.store.TopQueryNames(since, parseNodes(r), 10000)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -631,7 +631,7 @@ func (s *Server) getCategoryTraffic(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	cats, err := s.store.BlockedByCategory(since, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -648,7 +648,7 @@ func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 // insights, plus a per-node query distribution (the master is a resolver too).
 func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	nodes := parseNodes(r)
 
 	// Everything is computed from the unified query log (this node + entries
@@ -704,15 +704,31 @@ func parseNodes(r *http.Request) []string {
 	return out
 }
 
-func clampHours(s string) int {
-	h, _ := strconv.Atoi(s)
+// clampHours parses the dashboard window in hours. Fractional values are allowed
+// (e.g. 0.5 = 30 minutes) and the window is capped at 15 days (the longest range
+// the UI offers; older data lives in VictoriaLogs).
+func clampHours(s string) float64 {
+	h, _ := strconv.ParseFloat(s, 64)
 	if h <= 0 {
 		h = 24
 	}
-	if h > 24*90 {
-		h = 24 * 90
+	if h > 24*15 {
+		h = 24 * 15
 	}
 	return h
+}
+
+// windowDur converts clamped hours to a Duration.
+func windowDur(hours float64) time.Duration { return time.Duration(hours * float64(time.Hour)) }
+
+// stepFor picks a time-series bucket size (seconds) so a window has ~48 buckets,
+// never below 1s (matters for the 30-minute window).
+func stepFor(hours float64) int {
+	s := int(hours * 3600 / 48)
+	if s < 1 {
+		s = 1
+	}
+	return s
 }
 
 // getSettings returns the current operational settings (readonly access).
@@ -773,8 +789,8 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 	}
 	offset, _ := strconv.Atoi(q.Get("offset"))
 	var sinceMs int64
-	if h, _ := strconv.Atoi(q.Get("hours")); h > 0 {
-		sinceMs = time.Now().Add(-time.Duration(h) * time.Hour).UnixMilli()
+	if h, _ := strconv.ParseFloat(q.Get("hours"), 64); h > 0 {
+		sinceMs = time.Now().Add(-windowDur(h)).UnixMilli()
 	}
 	entries, total, err := s.store.SearchQueryLog(store.QueryLogQuery{
 		Search:   strings.TrimSpace(q.Get("search")),

@@ -3,8 +3,6 @@ import Spinner from './Spinner'
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   Line,
@@ -18,9 +16,7 @@ import {
 } from 'recharts'
 import {
   api,
-  type Stats,
   type SeriesPoint,
-  type CategoryCount,
   type Insights,
   type Node,
   type LatencyPoint,
@@ -30,14 +26,6 @@ import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 
-const catColors: Record<string, string> = {
-  ads: '#4ea1ff',
-  trackers: '#c48aff',
-  malware: '#ff5d6c',
-  phishing: '#ffb454',
-  'not-found': '#56d4dd',
-  custom: '#8a93a0',
-}
 const sourceColors: Record<string, string> = {
   Forwarded: '#4ea1ff',
   Cached: '#3ecf8e',
@@ -156,10 +144,7 @@ function Donut({ data, height = 180 }: { data: { name: string; value: number; fi
 export default function Dashboard() {
   const [hours, setHours] = useState(loadHours)
   const [focus, setFocus] = useState<string[]>(loadFocus)
-  const [stats, setStats] = useState<Stats | null>(null)
   const [series, setSeries] = useState<SeriesPoint[]>([])
-  const [cats, setCats] = useState<CategoryCount[]>([])
-  const [catTraffic, setCatTraffic] = useState<CategoryCount[]>([])
   const [ins, setIns] = useState<Insights | null>(null)
   const [lat, setLat] = useState<{ nodes: string[]; points: LatencyPoint[] } | null>(null)
   const [nodes, setNodes] = useState<Node[]>([])
@@ -194,10 +179,7 @@ export default function Dashboard() {
     // never blocks the rest of the dashboard from reflecting a filter change.
     const tick = () => {
       const fail = (e: any) => alive && setErr(e.message)
-      api.stats().then((s) => alive && setStats(s)).catch(fail)
       api.timeseries(hours, focus).then((r) => alive && setSeries(r.points)).catch(fail)
-      api.categories(hours, focus).then((c) => alive && setCats(c)).catch(fail)
-      api.categoryTraffic(hours, focus).then((c) => alive && setCatTraffic(c)).catch(() => {})
       api
         .insights(hours, focus)
         .then((i) => {
@@ -218,7 +200,6 @@ export default function Dashboard() {
     }
   }, [hours, focus])
 
-  const malicious = cats.find((c) => c.category === 'malware')?.count ?? 0
   const areaData = series.map((p) => ({
     time: bucketLabel(p.ts, hours),
     blocked: p.blocked,
@@ -246,18 +227,6 @@ export default function Dashboard() {
     for (const n of latNodes) row[n] = p.by_node[n] != null ? round2(p.by_node[n]) : null
     return row
   })
-  // Known categories keep their fixed color; file-sourced lists (e.g. "blocklist",
-  // "stevenblack") fall back to a distinct palette color rather than all-gray.
-  const catData = cats.map((c, i) => ({ name: c.category, value: c.count, fill: catColors[c.category] || colorAt(i) }))
-  // Queries by content/security category (from AI classifications). Uncategorized
-  // (not yet classified) is shown muted.
-  const catTrafficData = catTraffic
-    .filter((c) => c.count > 0)
-    .map((c, i) => ({
-      name: c.category,
-      value: c.count,
-      fill: c.category === 'uncategorized' ? '#3a424d' : catColors[c.category] || colorAt(i),
-    }))
   const totals = ins?.totals
   const sourceData = totals
     ? [
@@ -289,18 +258,15 @@ export default function Dashboard() {
   // values derive from `totals`/`ins`, which are fetched with hours + focus).
   const tt = totals
   const wpct = (num?: number, den?: number) => (den && num != null ? `${Math.round((num / den) * 100)}% of total` : undefined)
+  // Lean core set — fewer KPIs/widgets so the dashboard is light and the master
+  // recomputes fewer query_log aggregations per load.
   const kpiDefs: KpiDef[] = [
     { id: 'total', label: 'Total queries', value: fmt(tt?.total), available: true },
     { id: 'blocked', label: 'Blocked', value: fmt(tt?.blocked), accent: 'danger', sub: wpct(tt?.blocked, tt?.total), available: true },
     { id: 'cached', label: 'Cached', value: fmt(tt?.cached), sub: tt && tt.total ? `${Math.round((tt.cached / tt.total) * 100)}% hit rate` : undefined, available: true },
     { id: 'forwarded', label: 'Forwarded', value: fmt(tt?.forwarded), available: true },
-    { id: 'malicious', label: `Malicious`, value: fmt(malicious), accent: malicious ? 'danger' : '', available: true },
     { id: 'clients', label: 'Unique clients', value: fmt(ins?.unique_clients), available: true },
     { id: 'latency', label: 'Avg latency', value: ins ? `${ins.avg_latency_ms.toFixed(1)} ms` : '—', available: true },
-    { id: 'errors', label: 'Errors', value: fmt(tt?.errors), accent: tt?.errors ? 'danger' : '', available: true },
-    { id: 'rewritten', label: 'Rewritten', value: fmt(tt?.rewritten), available: true },
-    { id: 'qtypes', label: 'Query types', value: fmt(ins?.qtypes.length), available: true },
-    { id: 'cache_size', label: 'Cache entries (live)', value: fmt(stats?.cache_size), available: true },
   ]
   const kpiById = new Map(kpiDefs.map((d) => [d.id, d]))
   // Saved order first, then any KPI ids not yet in the saved order (new ones).
@@ -395,11 +361,13 @@ export default function Dashboard() {
       </Section>
 
       <Section title={`Traffic over time (${rangeLabel})`}>
-        <div className="charts">
+        {/* Stacked vertically and sharing syncId so hovering one chart shows the
+            matching point + crosshair on the other (Grafana style). */}
+        <div className="charts-stack">
           <div className="panel">
             <h2>Queries</h2>
-            <ResponsiveContainer width="100%" height={220}>
-              <AreaChart data={areaData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart syncId="dash-time" data={areaData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gForwarded" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#4ea1ff" stopOpacity={0.5} />
@@ -431,8 +399,8 @@ export default function Dashboard() {
           </div>
           <div className="panel">
             <h2>Avg latency (ms)</h2>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={latData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart syncId="dash-time" data={latData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid stroke="#262d36" vertical={false} />
                 <XAxis dataKey="time" stroke="#8a93a0" fontSize={11} tickLine={false} minTickGap={32} />
                 <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} />
@@ -464,7 +432,7 @@ export default function Dashboard() {
         </div>
       </Section>
 
-      <Section title="Distribution">
+      <Section title="Distribution" defaultOpen={false}>
         <div className="charts">
           <div className="panel">
             <h2>Queries by node</h2>
@@ -475,36 +443,6 @@ export default function Dashboard() {
             <Donut data={sourceData} />
           </div>
         </div>
-        <div className="charts">
-          <div className="panel">
-            <h2>Query types ({rangeLabel})</h2>
-            {(ins?.qtypes.length ?? 0) === 0 ? (
-              <p className="muted">No queries yet</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={Math.max(140, (ins?.qtypes.length ?? 0) * 28)}>
-                <BarChart data={ins?.qtypes} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
-                  <CartesianGrid stroke="#262d36" horizontal={false} />
-                  <XAxis type="number" stroke="#8a93a0" fontSize={11} tickLine={false} allowDecimals={false} />
-                  <YAxis type="category" dataKey="qtype" stroke="#8a93a0" fontSize={11} width={60} tickLine={false} />
-                  <Tooltip contentStyle={tooltipStyle} cursor={{ fill: '#ffffff08' }} />
-                  <Bar dataKey="count" fill="#4ea1ff" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-          <div className="panel">
-            <h2>Blocked by category ({rangeLabel})</h2>
-            <Donut data={catData} />
-          </div>
-        </div>
-        {catTrafficData.length > 0 && (
-          <div className="charts">
-            <div className="panel">
-              <h2>Queries by category ({rangeLabel})</h2>
-              <Donut data={catTrafficData} />
-            </div>
-          </div>
-        )}
       </Section>
 
       <Section title={`Clients — cluster-wide (${rangeLabel})`}>

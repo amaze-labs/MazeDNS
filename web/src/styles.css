@@ -978,6 +978,17 @@ textarea.import {
   }
 }
 
+/* Full-width vertical stack (e.g. the synced Traffic + Latency charts). */
+.charts-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.charts-stack > .panel {
+  width: 100%;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);

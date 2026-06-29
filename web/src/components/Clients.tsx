@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type ClientRow, type Node } from '../api'
-import { RangeNodeBar, makeNodeColor } from './filters'
+import { RangeNodeBar, makeNodeColor, VALID_HOURS } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
@@ -9,7 +9,7 @@ import Spinner from './Spinner'
 
 const loadHours = (): number => {
   const v = Number(localStorage.getItem('mazedns.clients.hours'))
-  return [1, 24, 168, 720, 2160].includes(v) ? v : 24
+  return VALID_HOURS.includes(v) ? v : 24
 }
 
 // Clients lists every client seen in the window with its query volume, how much

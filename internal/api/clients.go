@@ -12,7 +12,7 @@ import (
 // Params: ?hours=, ?nodes=, ?limit=.
 func (s *Server) getClients(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	clients, err := s.store.ClientList(since, limit, parseNodes(r))
 	if err != nil {
@@ -31,7 +31,7 @@ func (s *Server) getClientDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hours := clampHours(r.URL.Query().Get("hours"))
-	since := time.Now().Add(-time.Duration(hours) * time.Hour).UnixMilli()
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	detail, err := s.store.ClientDetailStats(client, since, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	stdruntime "runtime"
 	"strings"
 	"time"
 
@@ -23,10 +24,22 @@ import (
 // resolution time out; anything bigger than this cleanly falls back to TCP.
 const largeUDPSize = 1232
 
-// dotPoolSize is the number of TLS connections kept warm per DoT upstream, so
-// queries reuse an established session instead of paying a full TLS handshake
-// each time.
-const dotPoolSize = 4
+// dotPoolSize returns how many TLS connections to keep warm per DoT upstream. A
+// fixed small pool throttles concurrency: when more than poolSize queries forward
+// at once, the extras each pay a full TLS handshake, which is exactly what spikes
+// latency under many concurrent clients. Scale the pool with the core count
+// (GOMAXPROCS reflects the container's CPU quota on Go 1.25+), clamped to a sane
+// range, so a busy resolver reuses warm sessions instead of churning handshakes.
+func dotPoolSize() int {
+	n := stdruntime.GOMAXPROCS(0) * 2
+	if n < 8 {
+		n = 8
+	}
+	if n > 64 {
+		n = 64
+	}
+	return n
+}
 
 // dotIdleTimeout bounds how long a pooled TLS connection may sit idle before we
 // treat it as likely-dead and discard it instead of reusing it. DoT servers and
@@ -86,7 +99,7 @@ func ParseUpstream(spec string, timeout time.Duration) (Upstream, error) {
 			// probe never dials (only used with an already-open pooled conn), so it
 			// needs no Net/TLSConfig — just a short read deadline for fast failover.
 			probe: &dns.Client{Timeout: probeTimeout},
-			pool:  make(chan pooledConn, dotPoolSize),
+			pool:  make(chan pooledConn, dotPoolSize()),
 		}, nil
 	case strings.HasPrefix(spec, "tcp://"):
 		return newPlain(ensurePort(strings.TrimPrefix(spec, "tcp://"), "53"), "tcp", timeout), nil

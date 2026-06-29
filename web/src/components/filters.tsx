@@ -4,12 +4,17 @@ import { useState } from 'react'
 // node color palette — used by both the Dashboard and the Queries pages.
 
 export const RANGES = [
+  { label: '30m', hours: 0.5 },
   { label: '1h', hours: 1 },
+  { label: '2h', hours: 2 },
+  { label: '4h', hours: 4 },
+  { label: '8h', hours: 8 },
   { label: '24h', hours: 24 },
-  { label: '7d', hours: 24 * 7 },
-  { label: '30d', hours: 24 * 30 },
-  { label: '90d', hours: 24 * 90 },
+  { label: '2d', hours: 48 },
+  { label: '15d', hours: 360 },
 ]
+// VALID_HOURS is the set of allowed window values, for persisting a saved range.
+export const VALID_HOURS = RANGES.map((r) => r.hours)
 
 export const NODE_PALETTE = ['#4ea1ff', '#3ecf8e', '#c48aff', '#ffb454', '#ff5d6c', '#56d4dd', '#e070c0']
 // "overall" is not a node — it gets a reserved neutral color, never a palette slot.

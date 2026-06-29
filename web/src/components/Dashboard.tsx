@@ -20,6 +20,7 @@ import {
   type Insights,
   type Node,
   type LatencyPoint,
+  type DomainStat,
 } from '../api'
 import { RANGES, RangeNodeBar, OVERALL_COLOR, colorAt } from './filters'
 import { pollWhileVisible } from '../poll'
@@ -95,17 +96,24 @@ function Section({
   children,
   defaultOpen = true,
   right,
+  onOpen,
 }: {
   title: string
   children: ReactNode
   defaultOpen?: boolean
   right?: ReactNode
+  onOpen?: () => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const toggle = () => {
+    const next = !open
+    setOpen(next)
+    if (next) onOpen?.()
+  }
   return (
     <section className="dash-section">
       <div className="dash-head">
-        <button className="dash-toggle" onClick={() => setOpen(!open)}>
+        <button className="dash-toggle" onClick={toggle}>
           <span className="caret">{open ? '▾' : '▸'}</span> {title}
         </button>
         <div className="spacer" />
@@ -146,6 +154,9 @@ export default function Dashboard() {
   const [focus, setFocus] = useState<string[]>(loadFocus)
   const [series, setSeries] = useState<SeriesPoint[]>([])
   const [ins, setIns] = useState<Insights | null>(null)
+  // Top domains are loaded lazily (heavy raw-log scan) only once the section is opened.
+  const [topDom, setTopDom] = useState<{ top_queried: DomainStat[]; top_blocked: DomainStat[] } | null>(null)
+  const [topOpen, setTopOpen] = useState(false)
   const [lat, setLat] = useState<{ nodes: string[]; points: LatencyPoint[] } | null>(null)
   const [nodes, setNodes] = useState<Node[]>([])
   const [err, setErr] = useState('')
@@ -191,6 +202,7 @@ export default function Dashboard() {
         .catch(fail)
       api.latency(hours, focus).then((l) => alive && setLat(l)).catch(fail)
       api.clusterNodes().then((n) => alive && setNodes(n)).catch(() => {})
+      if (topOpen) api.topDomains(hours, focus).then((d) => alive && setTopDom(d)).catch(() => {})
     }
     tick()
     const stop = pollWhileVisible(tick, 15000)
@@ -198,7 +210,7 @@ export default function Dashboard() {
       alive = false
       stop()
     }
-  }, [hours, focus])
+  }, [hours, focus, topOpen])
 
   const areaData = series.map((p) => ({
     time: bucketLabel(p.ts, hours),
@@ -479,10 +491,17 @@ export default function Dashboard() {
         </table>
       </Section>
 
-      <Section title={`Top domains (${rangeLabel})`} defaultOpen={false}>
+      <Section
+        title={`Top domains (${rangeLabel})`}
+        defaultOpen={false}
+        onOpen={() => {
+          setTopOpen(true)
+          api.topDomains(hours, focus).then(setTopDom).catch(() => {})
+        }}
+      >
         <div className="charts">
-          <DomainTable title="Top blocked" rows={ins?.top_blocked} />
-          <DomainTable title="Most queried" rows={ins?.top_queried} />
+          <DomainTable title="Top blocked" rows={topDom?.top_blocked} />
+          <DomainTable title="Most queried" rows={topDom?.top_queried} />
         </div>
       </Section>
 

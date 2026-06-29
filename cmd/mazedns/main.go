@@ -327,8 +327,30 @@ func main() {
 			if n, err := st.PruneQueryLog(time.Now().Add(-retention).UnixMilli()); err == nil && n > 0 {
 				slog.Info("query log pruned", "removed", n)
 			}
+			_ = st.PruneRollups(time.Now().Add(-retention).UnixMilli())
 		}
 	}()
+
+	// Materialized rollups: fold new query-log rows into the per-minute/per-hour
+	// summary tables the dashboard reads. The master holds the cluster-wide log, so
+	// it owns the rollups. On first run this backfills existing data in batches, then
+	// keeps up incrementally. Off the DNS path.
+	if !worker {
+		go func() {
+			for {
+				more, err := st.RollupAdvance(50000)
+				if err != nil {
+					slog.Warn("rollup advance failed", "err", err)
+				}
+				// Catch up fast while backfilling; idle briefly once current.
+				wait := 5 * time.Second
+				if more {
+					wait = 50 * time.Millisecond
+				}
+				time.Sleep(wait)
+			}
+		}()
+	}
 
 	// VictoriaMetrics export: seed first-run defaults from the config file, then run
 	// a pusher that re-reads the (UI-editable) settings each cycle. Each node pushes

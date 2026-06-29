@@ -93,6 +93,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/stats/category-traffic", s.requireRole(roleReadonly, s.cached(s.getCategoryTraffic)))
 		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.cached(s.getInsights)))
 		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.cached(s.getLatency)))
+		mux.HandleFunc("GET /api/stats/top-domains", s.requireRole(roleReadonly, s.cached(s.getTopDomains)))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
@@ -564,7 +565,7 @@ func (s *Server) getTimeSeries(w http.ResponseWriter, r *http.Request) {
 		step = 60
 	}
 	since := time.Now().Add(-windowDur(hours)).UnixMilli()
-	points, err := s.store.QueryTimeSeries(since, step, parseNodes(r))
+	points, err := s.store.RollupTimeSeries(since, step, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -584,7 +585,7 @@ func (s *Server) getLatency(w http.ResponseWriter, r *http.Request) {
 		step = 60
 	}
 	since := time.Now().Add(-windowDur(hours)).UnixMilli()
-	points, names, err := s.store.LatencyTimeSeries(since, step, parseNodes(r))
+	points, names, err := s.store.RollupLatency(since, step, parseNodes(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -653,14 +654,15 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	since := time.Now().Add(-windowDur(hours)).UnixMilli()
 	nodes := parseNodes(r)
 
-	// Everything is computed from the unified query log (this node + entries
-	// shipped by workers), so it is cluster-wide and exactly windowed.
-	in, err := s.store.ComputeInsights(since, 12, nodes)
+	// Served from the materialized rollups so any window reads small pre-aggregated
+	// tables instead of scanning the raw query_log. Top domains are loaded lazily
+	// (see getTopDomains) since they need the raw log.
+	summary, err := s.store.RollupSummary(since, nodes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	byNode, err := s.store.QueriesByNode(since, nodes)
+	byNode, err := s.store.RollupByNode(since, nodes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -668,22 +670,50 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	if byNode == nil {
 		byNode = []store.NodeQueryCount{}
 	}
-	// Totals, unique clients, and mean latency in a single pass.
-	summary, err := s.store.WindowSummary(since, nodes)
+	clients, err := s.store.RollupTopClients(since, 12, nodes)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if clients == nil {
+		clients = []store.ClientStat{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"unique_clients": summary.UniqueClients,
 		"avg_latency_ms": summary.AvgLatencyMS,
-		"clients":        in.Clients,
-		"top_queried":    in.TopQueried,
-		"top_blocked":    in.TopBlocked,
-		"qtypes":         in.QTypes,
+		"clients":        clients,
+		"top_queried":    []store.DomainStat{},
+		"top_blocked":    []store.DomainStat{},
+		"qtypes":         []store.TypeStat{},
 		"by_node":        byNode,
 		"totals":         summary.Totals,
 	})
+}
+
+// getTopDomains returns the top queried + top blocked domains for the window.
+// Loaded lazily (the dashboard's Top-domains section is collapsed by default) and
+// read from the raw query_log, since domains are too high-cardinality to roll up.
+func (s *Server) getTopDomains(w http.ResponseWriter, r *http.Request) {
+	hours := clampHours(r.URL.Query().Get("hours"))
+	since := time.Now().Add(-windowDur(hours)).UnixMilli()
+	nodes := parseNodes(r)
+	queried, err := s.store.TopDomains(since, 12, false, nodes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	blocked, err := s.store.TopDomains(since, 12, true, nodes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if queried == nil {
+		queried = []store.DomainStat{}
+	}
+	if blocked == nil {
+		blocked = []store.DomainStat{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"top_queried": queried, "top_blocked": blocked})
 }
 
 // parseNodes reads a ?nodes=master,worker-a filter into store node values

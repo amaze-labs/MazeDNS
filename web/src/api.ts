@@ -388,6 +388,10 @@ export const api = {
     fetch(`/api/stats/category-traffic?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
   insights: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/insights?hours=${hours}${nodesParam(nodes)}`).then(j<Insights>),
+  topDomains: (hours = 24, nodes?: string[]) =>
+    fetch(`/api/stats/top-domains?hours=${hours}${nodesParam(nodes)}`).then(
+      j<{ top_queried: DomainStat[]; top_blocked: DomainStat[] }>,
+    ),
   clientList: (hours = 24, nodes?: string[], limit = 200) =>
     fetch(`/api/clients?hours=${hours}&limit=${limit}${nodesParam(nodes)}`).then(j<{ clients: ClientRow[] }>),
   clientDetail: (client: string, hours = 24, nodes?: string[]) =>

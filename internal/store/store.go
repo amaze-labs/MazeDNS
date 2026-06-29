@@ -129,6 +129,27 @@ CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(ts);
 -- per-client breakdown (Clients tab modal).
 CREATE INDEX IF NOT EXISTS idx_query_log_action_ts ON query_log(action, ts);
 CREATE INDEX IF NOT EXISTS idx_query_log_client_ts ON query_log(client, ts);
+-- Materialized rollups so dashboard windows read tiny pre-aggregated tables
+-- instead of scanning the raw query_log. Maintained incrementally from a cursor.
+-- query_rollup: per-minute, per-node, per-action counts + latency sum (charts,
+-- totals, by-node). client_rollup: per-hour, per-node, per-client counts (top +
+-- unique clients). Both are bounded (minutes/hours x small dimensions / clients).
+CREATE TABLE IF NOT EXISTS query_rollup (
+	bucket  INTEGER NOT NULL,   -- unix minute = ts/60000
+	node    TEXT NOT NULL,
+	action  TEXT NOT NULL,
+	cnt     INTEGER NOT NULL,
+	lat_sum REAL NOT NULL,      -- sum of elapsed_ms (for the mean)
+	PRIMARY KEY (bucket, node, action)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS client_rollup (
+	hour    INTEGER NOT NULL,   -- unix hour = ts/3600000
+	node    TEXT NOT NULL,
+	client  TEXT NOT NULL,
+	cnt     INTEGER NOT NULL,
+	blocked INTEGER NOT NULL,
+	PRIMARY KEY (hour, node, client)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	username TEXT NOT NULL UNIQUE,

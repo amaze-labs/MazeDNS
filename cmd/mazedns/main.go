@@ -67,14 +67,24 @@ func main() {
 	worker := mode == "worker"
 	slog.Info("MazeDNS starting", "version", version, "mode", mode)
 
-	// Datastore.
-	st, err := store.Open(cfg.Database.Path)
+	// Datastore: embedded SQLite by default, or an external PostgreSQL server.
+	var st *store.Store
+	switch cfg.Database.Driver {
+	case "postgres", "pgx":
+		st, err = store.OpenWith("pgx", cfg.Database.DSN)
+	default:
+		st, err = store.Open(cfg.Database.Path)
+	}
 	if err != nil {
 		slog.Error("open store", "err", err)
 		os.Exit(1)
 	}
 	defer st.Close()
-	slog.Info("store ready", "path", cfg.Database.Path)
+	if cfg.Database.Driver == "postgres" || cfg.Database.Driver == "pgx" {
+		slog.Info("store ready", "backend", "postgres")
+	} else {
+		slog.Info("store ready", "backend", "sqlite", "path", cfg.Database.Path)
+	}
 
 	// Auth (master only): bootstrap admin + optional OIDC.
 	authMgr := auth.NewManager(st, nil, cfg.Auth.SessionTTL.Std())

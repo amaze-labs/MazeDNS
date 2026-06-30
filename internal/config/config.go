@@ -224,9 +224,13 @@ type Cluster struct {
 	AdvertiseAddr string `yaml:"advertise_addr"`
 }
 
-// Database configures the SQLite datastore.
+// Database configures the datastore. The default is embedded SQLite (driver
+// "sqlite", file at Path). Set Driver to "postgres" and DSN to a connection
+// string to use an external PostgreSQL server instead.
 type Database struct {
-	Path string `yaml:"path"`
+	Driver string `yaml:"driver"` // "sqlite" (default) | "postgres"
+	Path   string `yaml:"path"`   // sqlite: database file
+	DSN    string `yaml:"dsn"`    // postgres: e.g. postgres://user:pass@host:5432/mazedns?sslmode=disable
 }
 
 // Log configures logging.
@@ -342,6 +346,15 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_DB_PATH"); v != "" {
 		cfg.Database.Path = v
+	}
+	if v := os.Getenv("MAZEDNS_DB_DRIVER"); v != "" {
+		cfg.Database.Driver = v
+	}
+	if v := os.Getenv("MAZEDNS_DB_DSN"); v != "" {
+		cfg.Database.DSN = v
+		if cfg.Database.Driver == "" {
+			cfg.Database.Driver = "postgres" // a DSN implies an external DB
+		}
 	}
 	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
@@ -475,8 +488,17 @@ func (c Config) validate() error {
 	if c.API.Enabled && (c.API.Port <= 0 || c.API.Port > 65535) {
 		return fmt.Errorf("api.port out of range: %d", c.API.Port)
 	}
-	if c.Database.Path == "" {
-		return fmt.Errorf("database.path is required")
+	switch c.Database.Driver {
+	case "", "sqlite":
+		if c.Database.Path == "" {
+			return fmt.Errorf("database.path is required for the sqlite backend")
+		}
+	case "postgres", "pgx":
+		if c.Database.DSN == "" {
+			return fmt.Errorf("database.dsn is required for the postgres backend")
+		}
+	default:
+		return fmt.Errorf("database.driver must be sqlite or postgres, got %q", c.Database.Driver)
 	}
 	if c.Auth.OIDC.Enabled {
 		if c.Auth.OIDC.Issuer == "" || c.Auth.OIDC.ClientID == "" || c.Auth.OIDC.RedirectURL == "" {

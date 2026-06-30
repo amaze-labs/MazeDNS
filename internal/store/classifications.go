@@ -393,3 +393,19 @@ func boolToInt(b bool) int {
 	}
 	return 0
 }
+
+// insertID runs an INSERT and returns the new row's id. PostgreSQL's database/sql
+// driver has no LastInsertId(), so there we append RETURNING id; SQLite uses the
+// native LastInsertId. The query must target a table whose primary key is `id`.
+func (s *Store) insertID(query string, args ...any) (int64, error) {
+	if s.db.pg {
+		var id int64
+		err := s.db.QueryRow(query+" RETURNING id", args...).Scan(&id)
+		return id, err
+	}
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}

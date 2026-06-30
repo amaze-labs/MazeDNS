@@ -27,14 +27,10 @@ func (s *Store) CreateList(name, source, url, category string, intervalSec int) 
 	if category == "" {
 		category = "custom"
 	}
-	res, err := s.db.Exec(
+	return s.insertID(
 		`INSERT INTO lists(name, source, url, category, enabled, interval_sec, updated_at)
 		 VALUES(?,?,?,?,1,?,?)`,
 		name, source, url, category, intervalSec, time.Now().Unix())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
 }
 
 // ListLists returns all lists (with a live rule count) ordered by name.

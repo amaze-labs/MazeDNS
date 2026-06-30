@@ -1,4 +1,7 @@
-// Package store is the SQLite-backed datastore for MazeDNS config and query logs.
+// Package store is the datastore for MazeDNS config and query logs. The default
+// backend is embedded SQLite; an external PostgreSQL server is also supported
+// (the queries are written in the SQLite dialect and adapted at runtime — see
+// dialect.go).
 package store
 
 import (
@@ -8,16 +11,17 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite")
+	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (registers "pgx")
+	_ "modernc.org/sqlite"             // pure-Go SQLite driver (registers "sqlite")
 )
 
-// Store wraps the SQLite database. WAL mode lets one writer and many readers run
-// concurrently, so we keep two connection pools: a single-connection writer (db)
-// and a small read pool (read). Heavy dashboard aggregations run on the read pool
-// without blocking the query-log writer, and vice-versa.
+// Store wraps the database behind a thin dialect-aware handle (dbh). On SQLite,
+// WAL mode lets one writer and many readers run concurrently, so we keep two
+// pools: a single-connection writer (db) and a small read pool (read). On
+// PostgreSQL both pools are ordinary connection pools (no single-writer limit).
 type Store struct {
-	db   *sql.DB // single writer (INSERT/UPDATE/DELETE/DDL + transactions)
-	read *sql.DB // concurrent readers (standalone SELECTs)
+	db   *dbh // writer (INSERT/UPDATE/DELETE/DDL + transactions)
+	read *dbh // concurrent readers (standalone SELECTs)
 }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.
@@ -42,6 +46,7 @@ type Rewrite struct {
 }
 
 // Open opens (creating if needed) the SQLite database at path and runs migrations.
+// Open opens the embedded SQLite database at path (the default backend).
 func Open(path string) (*Store, error) {
 	// PRAGMAs are set in the DSN so they apply to *every* connection (including each
 	// connection in the read pool). WAL + NORMAL sync are the safe fast pairing; the
@@ -56,14 +61,27 @@ func Open(path string) (*Store, error) {
 		"_pragma=mmap_size(268435456)", // 256 MiB memory-mapped I/O
 		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
 	}, "&")
+	return OpenWith("sqlite", dsn)
+}
 
-	write, err := sql.Open("sqlite", dsn)
+// OpenWith opens the store on a given backend. driver is "sqlite" (default) or
+// "pgx"/"postgres" (an external PostgreSQL server, dsn is its connection string).
+func OpenWith(driver, dsn string) (*Store, error) {
+	pg := driver == "pgx" || driver == "postgres"
+	name := "sqlite"
+	if pg {
+		name = "pgx"
+	}
+
+	write, err := sql.Open(name, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	write.SetMaxOpenConns(1) // SQLite allows a single writer
+	if !pg {
+		write.SetMaxOpenConns(1) // SQLite allows a single writer
+	}
 
-	read, err := sql.Open("sqlite", dsn)
+	read, err := sql.Open(name, dsn)
 	if err != nil {
 		_ = write.Close()
 		return nil, fmt.Errorf("open db (read pool): %w", err)
@@ -75,10 +93,12 @@ func Open(path string) (*Store, error) {
 	if n > 8 {
 		n = 8
 	}
-	read.SetMaxOpenConns(n) // WAL allows concurrent readers
+	read.SetMaxOpenConns(n) // WAL / Postgres allow concurrent readers
 
-	s := &Store{db: write, read: read}
+	s := &Store{db: &dbh{DB: write, pg: pg}, read: &dbh{DB: read, pg: pg}}
 	if err := s.migrate(); err != nil {
+		_ = write.Close()
+		_ = read.Close()
 		return nil, err
 	}
 	return s, nil
@@ -90,8 +110,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate() error {
-	const schema = `
+// sqliteSchema is the canonical schema in the SQLite dialect; toPostgresSchema
+// adapts it for PostgreSQL (auto-increment type, float type, WITHOUT ROWID).
+const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS rules (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	action TEXT NOT NULL,
@@ -171,8 +192,8 @@ CREATE TABLE IF NOT EXISTS meta (
 	key TEXT PRIMARY KEY,
 	value INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO meta(key, value) VALUES('config_version', 0);
-INSERT OR IGNORE INTO meta(key, value) VALUES('block_paused_until', 0);
+INSERT INTO meta(key, value) VALUES('config_version', 0) ON CONFLICT(key) DO NOTHING;
+INSERT INTO meta(key, value) VALUES('block_paused_until', 0) ON CONFLICT(key) DO NOTHING;
 CREATE TABLE IF NOT EXISTS lists (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
@@ -250,8 +271,18 @@ CREATE TABLE IF NOT EXISTS reputation_usage (
 	PRIMARY KEY (day, service)
 );
 `
-	if _, err := s.db.Exec(schema); err != nil {
-		return fmt.Errorf("migrate: %w", err)
+
+func (s *Store) migrate() error {
+	// Run the schema one statement at a time (Postgres rejects multi-statement
+	// Exec), adapting the DDL dialect when the backend is Postgres.
+	schema := sqliteSchema
+	if s.db.pg {
+		schema = toPostgresSchema(sqliteSchema)
+	}
+	for _, stmt := range splitStatements(schema) {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
 	}
 	// Additive column migrations for databases created before a column existed.
 	for _, alter := range []string{
@@ -279,7 +310,7 @@ CREATE TABLE IF NOT EXISTS reputation_usage (
 		`ALTER TABLE nodes ADD COLUMN site TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN role TEXT NOT NULL DEFAULT ''`, // '' | 'primary' | 'backup'
 	} {
-		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)
 		}
 	}

@@ -111,7 +111,10 @@ cluster:                       # master<->worker config replication
   interval: "30s"              # worker: snapshot poll interval
 
 database:
-  path: "mazedns.db"           # SQLite file (relative to the working directory)
+  driver: "sqlite"             # "sqlite" (default, embedded) | "postgres" (external)
+  path: "mazedns.db"           # sqlite: database file (relative to the working dir)
+  # For an external PostgreSQL server, set driver: postgres and a DSN:
+  # dsn: "postgres://user:pass@db-host:5432/mazedns?sslmode=disable"
 
 auth:
   enabled: true                # require login for the API + UI (enforced by default)

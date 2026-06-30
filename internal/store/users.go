@@ -27,14 +27,10 @@ func (s *Store) CountUsers() (int64, error) {
 
 // CreateLocalUser inserts a local (password) user and returns its id.
 func (s *Store) CreateLocalUser(username, passwordHash, role string) (int64, error) {
-	res, err := s.db.Exec(
+	return s.insertID(
 		`INSERT INTO users(username, role, source, subject, password_hash, updated_at)
 		 VALUES(?,?, 'local', '', ?, ?)`,
 		username, role, passwordHash, time.Now().Unix())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
 }
 
 // ListUsers returns all users ordered by username.

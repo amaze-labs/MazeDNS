@@ -29,6 +29,20 @@ export const makeNodeColor = (names: string[]) => {
   return (name: string) => colorAt(sorted.indexOf(name))
 }
 
+// SiteGroup is a site and the node names it contains, for the site-focus filter.
+export type SiteGroup = { name: string; members: string[] }
+
+// siteGroups builds the site -> member-node-names list from the cluster nodes
+// (each node now carries its site), so a "focus on this site" = focus on its nodes.
+export const siteGroups = (nodes: { name: string; site: string }[]): SiteGroup[] => {
+  const m = new Map<string, string[]>()
+  for (const n of nodes) if (n.site) m.set(n.site, [...(m.get(n.site) || []), n.name])
+  return [...m.entries()].map(([name, members]) => ({ name, members })).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+// sameSet reports whether two name lists contain exactly the same members.
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
+
 // NodeFilter is a multi-select dropdown to focus on one or more nodes.
 // Empty selection = all nodes.
 export function NodeFilter({
@@ -36,15 +50,25 @@ export function NodeFilter({
   selected,
   onChange,
   color,
+  sites,
 }: {
   options: string[]
   selected: string[]
   onChange: (s: string[]) => void
   color: (name: string) => string
+  sites?: SiteGroup[]
 }) {
   const [open, setOpen] = useState(false)
   const allActive = selected.length === 0
-  const label = allActive ? 'All nodes' : selected.length === 1 ? selected[0] : `${selected.length} nodes`
+  // When the focus set exactly matches a site's members, label it as that site.
+  const activeSite = sites?.find((s) => s.members.length > 0 && sameSet(selected, s.members))?.name
+  const label = allActive
+    ? 'All nodes'
+    : activeSite
+    ? `Site: ${activeSite}`
+    : selected.length === 1
+    ? selected[0]
+    : `${selected.length} nodes`
   const toggle = (n: string) =>
     onChange(selected.includes(n) ? selected.filter((x) => x !== n) : [...selected, n])
   return (
@@ -57,12 +81,29 @@ export function NodeFilter({
         <>
           <div className="nodefilter-backdrop" onClick={() => setOpen(false)} />
           <div className="nodefilter-menu">
-            <div className="nf-head">Focus on nodes</div>
             <button type="button" className={`nf-opt ${allActive ? 'sel' : ''}`} onClick={() => onChange([])}>
               <span className="nf-check">{allActive ? '✓' : ''}</span>
               <span className="nf-name">All nodes</span>
             </button>
+            {sites && sites.length > 0 && (
+              <>
+                <div className="nf-divider" />
+                <div className="nf-head">Sites</div>
+                {sites.map((s) => {
+                  const sel = activeSite === s.name
+                  return (
+                    <button key={s.name} type="button" className={`nf-opt ${sel ? 'sel' : ''}`} onClick={() => onChange(s.members)}>
+                      <span className="nf-check">{sel ? '✓' : ''}</span>
+                      <span className="nf-name">
+                        {s.name} <span className="muted">({s.members.length})</span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </>
+            )}
             <div className="nf-divider" />
+            <div className="nf-head">Focus on nodes</div>
             {options.map((o) => {
               const sel = selected.includes(o)
               return (
@@ -88,6 +129,7 @@ export function RangeNodeBar({
   setFocus,
   nodeNames,
   color,
+  sites,
 }: {
   hours: number
   setHours: (h: number) => void
@@ -95,6 +137,7 @@ export function RangeNodeBar({
   setFocus: (f: string[]) => void
   nodeNames: string[]
   color: (name: string) => string
+  sites?: SiteGroup[]
 }) {
   return (
     <div className="range-tabs">
@@ -108,7 +151,7 @@ export function RangeNodeBar({
         <>
           <div className="spacer" />
           <span className="muted">Focus</span>
-          <NodeFilter options={nodeNames} selected={focus} onChange={setFocus} color={color} />
+          <NodeFilter options={nodeNames} selected={focus} onChange={setFocus} color={color} sites={sites} />
         </>
       )}
     </div>

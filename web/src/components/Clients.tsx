@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type ClientRow, type Node } from '../api'
-import { RangeNodeBar, makeNodeColor, VALID_HOURS } from './filters'
+import { RangeNodeBar, makeNodeColor, VALID_HOURS, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
@@ -83,7 +83,7 @@ export default function Clients() {
       </p>
       {err && <div className="error">{err}</div>}
 
-      <RangeNodeBar hours={hours} setHours={setHours} focus={focus} setFocus={setFocus} nodeNames={nodeNames} color={nodeColor} />
+      <RangeNodeBar hours={hours} setHours={setHours} focus={focus} setFocus={setFocus} nodeNames={nodeNames} color={nodeColor} sites={siteGroups(nodes)} />
 
       <div className="ql-filters" style={{ margin: '12px 0' }}>
         <input className="search" placeholder="search client or name…" value={search} onChange={(e) => setSearch(e.target.value)} />

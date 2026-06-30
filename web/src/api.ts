@@ -49,12 +49,21 @@ export interface Node {
   created_at: number
   is_master: boolean
   maintenance: boolean
+  control_plane_only: boolean // master only: serves no DNS (answers REFUSED)
+  site: string // site grouping ('' = unassigned)
+  role: string // '' | 'primary' | 'backup' (advisory)
   total: number
   blocked: number
   cached: number
   forwarded: number
   rewritten: number
   errors: number
+}
+
+export interface Site {
+  name: string
+  description: string
+  created_at: number
 }
 
 export interface SessionUser {
@@ -172,6 +181,16 @@ export interface ThreatFeed {
   url: string
 }
 
+export interface ReputationUsageDay {
+  day: string
+  service: string // "virustotal" | "abuseipdb"
+  calls: number
+  errors: number
+  rate_limited: number
+  remaining: number // -1 = unknown
+  limit: number // -1 = unknown
+}
+
 export interface WhoisInfo {
   domain: string
   registrar: string
@@ -193,6 +212,7 @@ export interface ClassifierStatus {
   threat_feed_catalog: ThreatFeed[]
   llm_usage: LLMUsageDay[]
   llm_usage_totals: LLMUsageDay
+  reputation_usage: ReputationUsageDay[]
   has_api_key: boolean
   has_vt_key: boolean
   has_abuseipdb_key: boolean
@@ -578,5 +598,21 @@ export const api = {
       method: 'PUT',
       headers: jsonHeaders,
       body: JSON.stringify({ on }),
+    }).then(j),
+  setMasterControlPlaneOnly: (on: boolean) =>
+    fetch('/api/cluster/master/control-plane-only', {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ on }),
+    }).then(j),
+  clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
+  createSite: (name: string, description = '') =>
+    fetch('/api/cluster/sites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name, description }) }).then(j),
+  deleteSite: (name: string) => fetch(`/api/cluster/sites/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(j),
+  setNodeSite: (name: string, site: string, role: string) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/site`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ site, role }),
     }).then(j),
 }

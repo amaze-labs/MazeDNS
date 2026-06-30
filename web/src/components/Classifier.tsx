@@ -4,6 +4,7 @@ import Spinner from './Spinner'
 import ClassifierHelp from './ClassifierHelp'
 import DomainDetail from './DomainDetail'
 import DecisionModal from './DecisionModal'
+import ReputationUsage from './ReputationUsage'
 import { pollWhileVisible } from '../poll'
 
 const MODES = [
@@ -343,6 +344,8 @@ export default function Classifier() {
         </div>
       )}
 
+      {info && <ReputationUsage info={info} />}
+
       {catCounts.length > 0 && (
         <div className="settings-card" style={{ marginBottom: 18 }}>
           <h3>Traffic by category</h3>
@@ -382,6 +385,7 @@ export default function Classifier() {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+      <div className="table-scroll">
       <table className="cls-table">
         <thead>
           <tr>
@@ -445,6 +449,7 @@ export default function Classifier() {
           )}
         </tbody>
       </table>
+      </div>
 
       {showPager && (
         <div className="pager">

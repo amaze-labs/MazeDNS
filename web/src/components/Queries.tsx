@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type QueryLogEntry, type Node, type CategoryCount } from '../api'
-import { RangeNodeBar, makeNodeColor, VALID_HOURS } from './filters'
+import { RangeNodeBar, makeNodeColor, VALID_HOURS, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
@@ -122,21 +122,17 @@ export default function Queries() {
       </p>
       {err && <div className="error">{err}</div>}
 
-      <RangeNodeBar hours={hours} setHours={setHours} focus={focus} setFocus={setFocus} nodeNames={[]} color={nodeColor} />
+      <RangeNodeBar
+        hours={hours}
+        setHours={setHours}
+        focus={focus}
+        setFocus={(f) => { setFocus(f); setPage(0) }}
+        nodeNames={nodeNames}
+        color={nodeColor}
+        sites={siteGroups(nodes)}
+      />
 
       <div className="ql-filters" style={{ margin: '12px 0' }}>
-        <select
-          className="ql-select"
-          value={focus.length === 1 ? focus[0] : ''}
-          onChange={(e) => { setFocus(e.target.value ? [e.target.value] : []); setPage(0) }}
-        >
-          <option value="">All nodes</option>
-          {nodeNames.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
         <select className="ql-select" value={action} onChange={(e) => { setAction(e.target.value); setPage(0) }}>
           <option value="">All actions</option>
           {ACTIONS.map((a) => (
@@ -164,6 +160,7 @@ export default function Queries() {
         <input className="search" placeholder="search name or client…" value={input} onChange={(e) => setInput(e.target.value)} />
       </div>
 
+      <div className="table-scroll">
       <table className="sortable">
         <thead>
           <tr>
@@ -203,6 +200,7 @@ export default function Queries() {
           )}
         </tbody>
       </table>
+      </div>
       <div className="pager">
         <span className="muted">
           {total.toLocaleString()} match{total === 1 ? '' : 'es'} · page {page + 1} of {lastPage + 1}

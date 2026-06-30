@@ -411,6 +411,81 @@ tr:last-child td {
   font-size: 11px;
 }
 
+/* Reputation-API quota cards (VirusTotal / AbuseIPDB usage vs daily limit). */
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.quota {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--bg);
+}
+.quota-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.quota-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.quota-bar .fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.quota-bar .fill.allow {
+  background: var(--ok);
+}
+.quota-bar .fill.warn {
+  background: #ffb454;
+}
+.quota-bar .fill.blocked {
+  background: var(--danger);
+}
+.quota-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+  align-items: center;
+}
+.quota-stats .warn-text {
+  color: #ffb454;
+}
+.quota-history {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 32px;
+  margin-top: 12px;
+}
+.quota-history .qh-bar {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+.quota-history .qh-bar i {
+  display: block;
+  width: 100%;
+  min-height: 4px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+.quota-history .qh-bar i.rl {
+  background: var(--danger);
+}
+
 /* Client IP + resolved name (NetBird peer / reverse-DNS). */
 .client-id .muted {
   font-size: 12px;
@@ -1121,6 +1196,115 @@ details.settings-card[open] > :last-child {
   .charts.even {
     grid-template-columns: 1fr;
   }
+
+  /* ---- App shell: sidebar becomes a bottom tab bar ---- */
+  .app {
+    flex-direction: column;
+  }
+  .app > main {
+    max-width: 100%;
+    padding: 16px 14px calc(72px + env(safe-area-inset-bottom));
+  }
+  .sidebar,
+  .app.collapsed .sidebar {
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    border-right: none;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+    overflow-x: auto;
+    overflow-y: hidden;
+    z-index: 40;
+  }
+  .side-brand,
+  .side-collapse,
+  .sidebar .spacer,
+  .side-username {
+    display: none;
+  }
+  .side-nav {
+    flex-direction: row;
+    flex: 1;
+    justify-content: space-around;
+    gap: 2px;
+  }
+  .side-nav button,
+  .app.collapsed .side-nav button {
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    justify-content: center;
+  }
+  /* Mobile ignores the desktop collapse state — always show small labels. */
+  .side-label,
+  .app.collapsed .side-label {
+    display: inline;
+    font-size: 10px;
+    line-height: 1;
+  }
+  .side-ic {
+    font-size: 18px;
+  }
+  .side-account,
+  .app.collapsed .side-account {
+    padding: 0 4px;
+    justify-content: center;
+  }
+  /* The account menu opens above the bar, right-aligned. */
+  .sidebar .acct-menu {
+    bottom: calc(62px + env(safe-area-inset-bottom));
+    left: auto;
+    right: 8px;
+  }
+
+  /* ---- Modals: near full-screen ---- */
+  .modal-backdrop {
+    padding: 10px;
+  }
+  .modal,
+  .modal-wide {
+    max-width: 100%;
+  }
+  .modal-body {
+    padding: 14px;
+  }
+
+  /* ---- Misc density ---- */
+  h2 {
+    font-size: 20px;
+  }
+  .subtabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+  .settings {
+    max-width: 100%;
+  }
+}
+
+/* Very small phones: drop the bottom-bar labels so every icon stays visible
+   without horizontal scrolling. */
+@media (max-width: 420px) {
+  .side-label,
+  .app.collapsed .side-label {
+    display: none;
+  }
+  .side-nav button,
+  .app.collapsed .side-nav button {
+    padding: 8px 6px;
+  }
+}
+
+/* Horizontal-scroll wrapper for wide tables on small screens. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Full-width vertical stack (e.g. the synced Traffic + Latency charts). */
@@ -1466,6 +1650,61 @@ input.search {
 .node-dot.off {
   background: var(--muted);
   opacity: 0.5;
+}
+.node-dot.warn {
+  background: #ffb454;
+  box-shadow: 0 0 6px #ffb454;
+}
+.node-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.node-status-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Master-role card: a touch of accent so the live DNS-role toggle stands out. */
+.role-card {
+  border-left: 3px solid var(--accent);
+}
+
+/* Sites: a grid of per-site cards (members + generated client config). */
+.site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 12px 0 8px;
+}
+.site-card {
+  margin: 0;
+}
+.site-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.site-head h3 {
+  margin: 0;
+}
+.site-head .del {
+  margin-left: auto;
+}
+.site-members {
+  list-style: none;
+  margin: 10px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.site-members li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
 }
 
 /* App-wide circular loading spinner */

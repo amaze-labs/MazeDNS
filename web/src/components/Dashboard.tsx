@@ -22,7 +22,7 @@ import {
   type LatencyPoint,
   type DomainStat,
 } from '../api'
-import { RANGES, RangeNodeBar, OVERALL_COLOR, colorAt } from './filters'
+import { RANGES, RangeNodeBar, OVERALL_COLOR, colorAt, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
@@ -315,6 +315,7 @@ export default function Dashboard() {
           setFocus={setFocus}
           nodeNames={[...new Set(nodes.map((n) => n.name))]}
           color={nodeColor}
+          sites={siteGroups(nodes)}
         />
         {loading && <Spinner label="Updating…" />}
       </div>

@@ -279,28 +279,29 @@ export default function Classifier() {
           <h3>LLM usage</h3>
           {(() => {
             const t = info.llm_usage_totals
-            const avg = t.calls ? Math.round(t.latency_ms_total / t.calls) : 0
             const tokens = t.prompt_tokens + t.completion_tokens
             const days = [...(info.llm_usage ?? [])].reverse() // oldest -> newest
             const maxCalls = days.reduce((m, d) => Math.max(m, d.calls), 0)
+            // Average per active day (a day with at least one model call).
+            const nDays = Math.max(1, days.length)
+            const perDay = (n: number) => {
+              const v = n / nDays
+              return v >= 10 || v === 0 ? Math.round(v).toLocaleString() : v.toFixed(1)
+            }
             return (
               <>
                 <div className="usage-tiles">
                   <div className="usage-tile">
-                    <span className="num">{t.calls.toLocaleString()}</span>
-                    <span className="muted">model calls</span>
+                    <span className="num">{perDay(t.calls)}</span>
+                    <span className="muted">avg calls / day</span>
                   </div>
                   <div className="usage-tile">
-                    <span className="num">{t.errors.toLocaleString()}</span>
-                    <span className="muted">errors</span>
+                    <span className={`num${t.errors > 0 ? ' blocked' : ''}`}>{perDay(t.errors)}</span>
+                    <span className="muted">avg errors / day</span>
                   </div>
                   <div className="usage-tile">
-                    <span className="num">{avg} ms</span>
-                    <span className="muted">avg latency</span>
-                  </div>
-                  <div className="usage-tile">
-                    <span className="num">{tokens ? tokens.toLocaleString() : '—'}</span>
-                    <span className="muted">tokens {tokens ? `(${t.prompt_tokens.toLocaleString()}p / ${t.completion_tokens.toLocaleString()}c)` : 'n/a'}</span>
+                    <span className="num">{tokens ? perDay(tokens) : '—'}</span>
+                    <span className="muted">avg tokens / day</span>
                   </div>
                 </div>
                 {days.length > 0 && (
@@ -311,7 +312,6 @@ export default function Classifier() {
                         <th>Calls</th>
                         <th>Errors</th>
                         <th>Tokens</th>
-                        <th>Avg ms</th>
                         <th style={{ width: '40%' }}></th>
                       </tr>
                     </thead>
@@ -326,7 +326,6 @@ export default function Classifier() {
                           <td title={dayTokens ? `${d.prompt_tokens.toLocaleString()} prompt / ${d.completion_tokens.toLocaleString()} completion` : ''}>
                             {dayTokens ? dayTokens.toLocaleString() : '—'}
                           </td>
-                          <td>{d.calls ? Math.round(d.latency_ms_total / d.calls) : 0}</td>
                           <td>
                             <div className="cbar">
                               <span style={{ width: `${maxCalls ? (d.calls / maxCalls) * 100 : 0}%` }} />

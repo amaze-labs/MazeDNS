@@ -150,6 +150,9 @@ func main() {
 	if !worker {
 		res.SetMaintenance(st.MasterMaintenance())
 		res.SetControlPlaneOnly(st.MasterControlPlaneOnly())
+		// Record the master's own site-reachable address (env MAZEDNS_ADVERTISE_ADDR)
+		// so the cluster view and client config show a real IP, not a docker host.
+		_ = st.SetMasterAdvertiseAddr(cfg.Cluster.AdvertiseAddr)
 	}
 
 	// Build the filtering/rewrite policy from file blocklists + DB rules/rewrites.
@@ -307,7 +310,7 @@ func main() {
 				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 			}
 		}
-		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.MasterIP, cfg.Cluster.NodeKey, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
+		ag := cluster.NewAgent(cfg.Cluster.MasterURL, cfg.Cluster.MasterIP, cfg.Cluster.NodeKey, cfg.Cluster.AdvertiseAddr, cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
 		go ag.Run(agentCtx)
 	}
 

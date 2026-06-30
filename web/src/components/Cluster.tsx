@@ -180,8 +180,9 @@ export default function Cluster() {
   // Role helpers: primary leads, then backups, then unlabelled.
   const roleRank = (r: string) => (r === 'primary' ? 0 : r === 'backup' ? 1 : 2)
   const roleLabel = (r: string) => (r === 'primary' ? 'Primary' : r === 'backup' ? 'Backup' : '—')
-  // A node's DNS address for generated client config (master uses the dashboard host).
-  const nodeIP = (n: Node) => (n.is_master ? masterHost : (n.address || '').replace(/:\d+$/, ''))
+  // A node's site-reachable DNS address (IP). Comes from each node's reported
+  // address — the master's is its MAZEDNS_ADVERTISE_ADDR — never the dashboard host.
+  const nodeIP = (n: Node) => (n.address || '').replace(/:\d+$/, '')
   // Group nodes by site, members ordered primary-first.
   const membersOf = (site: string) =>
     nodes.filter((n) => n.site === site).sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name))
@@ -268,12 +269,6 @@ export default function Cluster() {
             const members = membersOf(site)
             const desc = sites.find((s) => s.name === site)?.description
             const onlineN = members.filter(isOnline).length
-            const ips = members.map(nodeIP)
-            const list = (a: string[]) => a.map((ip) => ip || '<set node address>')
-            const cfg =
-              `# /etc/resolv.conf — site ${site} (primary first)\n` +
-              list(ips).map((ip) => `nameserver ${ip}`).join('\n') +
-              `\n\n# DHCP (ISC dhcpd) option 6\noption domain-name-servers ${list(ips).join(', ')};`
             return (
               <div className="settings-card site-card" key={site}>
                 <div className="site-head">
@@ -290,18 +285,16 @@ export default function Cluster() {
                   {members.map((n) => {
                     const st = statusOf(n)
                     return (
-                      <li key={n.name}>
+                      <li key={n.name} className={n.is_master ? 'is-master' : ''}>
                         <span className={`node-dot ${st.dot}`} title={st.label} />
                         <span className={`badge ${n.role === 'primary' ? 'allow' : ''}`}>{roleLabel(n.role)}</span>
                         <strong>{n.name}</strong>
-                        {n.is_master && <span className="badge">master</span>}
                         <span className="muted" style={{ marginLeft: 'auto' }}>{nodeIP(n) || 'no address'}</span>
                       </li>
                     )
                   })}
                   {members.length === 0 && <li className="muted">No nodes assigned yet</li>}
                 </ul>
-                {members.length > 0 && <CodeBlock label="Client config" text={cfg} />}
               </div>
             )
           })}
@@ -353,7 +346,7 @@ export default function Cluster() {
           {nodes.map((n) => {
             const st = statusOf(n)
             return (
-            <tr key={n.name}>
+            <tr key={n.name} className={n.is_master ? 'master-row' : ''}>
               <td>
                 <span className="node-status">
                   <span className={`node-dot ${st.dot}`} title={st.label} />
@@ -361,9 +354,11 @@ export default function Cluster() {
                 </span>
               </td>
               <td>
-                {n.name} {n.is_master && <span className="badge">master</span>}
+                {n.name}
                 {n.is_master && n.control_plane_only && (
-                  <span className="badge info" title="Control plane only — serves no DNS">control plane</span>
+                  <span className="badge info" title="Control plane only — serves no DNS" style={{ marginLeft: 6 }}>
+                    control plane
+                  </span>
                 )}
               </td>
               <td>{n.address || '—'}</td>

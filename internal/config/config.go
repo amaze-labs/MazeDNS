@@ -215,6 +215,11 @@ type Cluster struct {
 	MasterIP  string   `yaml:"master_ip"`  // worker: pin the master's IP (skip DNS); TLS still uses the URL host
 	NodeKey   string   `yaml:"node_key"`   // worker: per-node API key from the master
 	Interval  Duration `yaml:"interval"`   // worker: snapshot poll interval
+	// AdvertiseAddr is the address other hosts use to reach this node's DNS (the
+	// site-reachable IP). Set it when the auto-detected address would be wrong —
+	// e.g. a docker-internal IP that doesn't exist on the LAN. Used for display and
+	// the generated client config, not for serving.
+	AdvertiseAddr string `yaml:"advertise_addr"`
 }
 
 // Database configures the SQLite datastore.
@@ -349,6 +354,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_MASTER_IP"); v != "" {
 		cfg.Cluster.MasterIP = v
+	}
+	if v := os.Getenv("MAZEDNS_ADVERTISE_ADDR"); v != "" {
+		cfg.Cluster.AdvertiseAddr = v
 	}
 	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
 		cfg.Cluster.Enabled = true

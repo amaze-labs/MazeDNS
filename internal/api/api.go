@@ -238,6 +238,11 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if host, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
 		addr = host
 	}
+	// Prefer the node's self-reported site-reachable address (MAZEDNS_ADVERTISE_ADDR):
+	// the TCP RemoteAddr is often a docker-internal IP that doesn't exist on the LAN.
+	if adv := strings.TrimSpace(r.Header.Get("X-MazeDNS-Advertise-Addr")); adv != "" {
+		addr = adv
+	}
 	var st store.NodeStats
 	if raw := r.Header.Get("X-MazeDNS-Stats"); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &st)
@@ -314,6 +319,7 @@ func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	ver, _ := s.store.ConfigVersion()
 	master := store.Node{
 		Name:             "master",
+		Address:          s.store.MasterAdvertiseAddr(),
 		Version:          ver,
 		LastSeen:         time.Now().Unix(),
 		IsMaster:         true,

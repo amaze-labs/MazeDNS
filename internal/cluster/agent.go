@@ -23,6 +23,7 @@ const shipBatch = 5000 // max query-log entries shipped to the master per cycle
 type Agent struct {
 	masterURL      string
 	nodeKey        string
+	advertiseAddr  string // site-reachable address reported to the master ('' = use RemoteAddr)
 	interval       time.Duration
 	store          *store.Store
 	reload         func() error
@@ -37,7 +38,7 @@ type Agent struct {
 // the master; stats (may be nil) reports this node's query counters each poll;
 // setPause (may be nil) applies the cluster-wide block-pause deadline;
 // setMaintenance (may be nil) applies this node's drain flag.
-func NewAgent(masterURL, masterIP, nodeKey string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, setPause func(int64), setMaintenance func(bool)) *Agent {
+func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.Duration, st *store.Store, reload func() error, stats func() store.NodeStats, setPause func(int64), setMaintenance func(bool)) *Agent {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -53,6 +54,7 @@ func NewAgent(masterURL, masterIP, nodeKey string, interval time.Duration, st *s
 	return &Agent{
 		masterURL:      strings.TrimRight(masterURL, "/"),
 		nodeKey:        nodeKey,
+		advertiseAddr:  strings.TrimSpace(advertiseAddr),
 		interval:       interval,
 		store:          st,
 		reload:         reload,
@@ -202,6 +204,9 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
 	ver, _ := a.store.ConfigVersion()
 	req.Header.Set("X-MazeDNS-Node-Version", ver)
+	if a.advertiseAddr != "" {
+		req.Header.Set("X-MazeDNS-Advertise-Addr", a.advertiseAddr)
+	}
 	if a.stats != nil {
 		if b, err := json.Marshal(a.stats()); err == nil {
 			req.Header.Set("X-MazeDNS-Stats", string(b))

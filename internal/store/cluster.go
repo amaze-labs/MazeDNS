@@ -159,6 +159,17 @@ func (s *Store) SetMasterMaintenance(on bool) error {
 	return s.SetMetaInt(masterMaintenanceKey, int64(boolToInt(on)))
 }
 
+// masterAdvertiseAddrKey holds the master's own site-reachable address
+// (MAZEDNS_ADVERTISE_ADDR), shown as its node address and in client config.
+const masterAdvertiseAddrKey = "master_advertise_addr"
+
+// MasterAdvertiseAddr / SetMasterAdvertiseAddr read and persist the master's
+// advertised DNS address.
+func (s *Store) MasterAdvertiseAddr() string { v, _ := s.GetMeta(masterAdvertiseAddrKey); return v }
+func (s *Store) SetMasterAdvertiseAddr(addr string) error {
+	return s.SetMeta(masterAdvertiseAddrKey, strings.TrimSpace(addr))
+}
+
 // MasterControlPlaneOnly reports whether the master is running as a control plane
 // only (no DNS — every query is answered REFUSED).
 func (s *Store) MasterControlPlaneOnly() bool {

@@ -767,6 +767,26 @@ select {
   font: inherit;
 }
 
+/* Style selects to the app theme (kill the native chrome, add our own caret). */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%238a93a0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* Dark popup list where the browser honors it (Firefox / Chromium). */
+select option {
+  background: var(--panel);
+  color: var(--fg);
+}
+
 input {
   flex: 1;
   min-width: 180px;
@@ -1671,10 +1691,11 @@ input.search {
   border-left: 3px solid var(--accent);
 }
 
-/* Sites: a grid of per-site cards (members + generated client config). */
+/* Sites: a wrapping grid of per-site cards. auto-fit + a small min keeps cards
+   on one row when there's space and wraps them when there isn't. */
 .site-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px;
   margin: 12px 0 8px;
 }
@@ -1685,6 +1706,7 @@ input.search {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .site-head h3 {
   margin: 0;
@@ -1694,7 +1716,7 @@ input.search {
 }
 .site-members {
   list-style: none;
-  margin: 10px 0;
+  margin: 10px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -1705,6 +1727,18 @@ input.search {
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  flex-wrap: wrap;
+}
+.site-members li.is-master strong {
+  color: var(--accent);
+}
+
+/* Master node: highlight by colour instead of a "master" tag. */
+.master-row td {
+  background: rgba(78, 161, 255, 0.07);
+}
+.master-row td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 /* App-wide circular loading spinner */

@@ -9,6 +9,16 @@ import Spinner from './Spinner'
 const PAGE = 50
 const ACTIONS = ['forward', 'cache', 'blocked', 'rewrite', 'authoritative', 'error', 'refused']
 const QTYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'PTR', 'SOA', 'SRV', 'HTTPS', 'SVCB', 'CAA', 'ANY']
+// The full classification taxonomy (security + content), so the filter offers
+// every category — not only the ones seen in the current window.
+const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
+const CONTENT_CATS = [
+  'social', 'streaming', 'shopping', 'news', 'gaming', 'productivity',
+  'search', 'email', 'finance', 'technology', 'cdn', 'adult', 'other',
+]
+const ALL_CATS = [...BLOCK_CATS, ...CONTENT_CATS]
+// Security categories are red, "other" neutral-green, content categories blue.
+const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'other' ? 'allow' : 'info')
 
 const loadHours = (): number => {
   const v = Number(localStorage.getItem('mazedns.ql.hours'))
@@ -151,9 +161,9 @@ export default function Queries() {
         </select>
         <select className="ql-select" value={category} onChange={(e) => { setCategory(e.target.value); setPage(0) }}>
           <option value="">All classifications</option>
-          {cats.map((c) => (
-            <option key={c.category} value={c.category}>
-              {c.category}
+          {[...ALL_CATS, ...cats.map((c) => c.category).filter((c) => c && !ALL_CATS.includes(c))].map((c) => (
+            <option key={c} value={c}>
+              {c}
             </option>
           ))}
         </select>
@@ -186,7 +196,7 @@ export default function Queries() {
               <td>
                 <span className={`badge ${e.action}`}>{e.action}</span>
               </td>
-              <td>{e.category ? <span className="badge blocked">{e.category}</span> : <span className="muted">—</span>}</td>
+              <td>{e.category ? <span className={`badge ${catClass(e.category)}`}>{e.category}</span> : <span className="muted">—</span>}</td>
               <td>{e.rcode}</td>
               <td>{e.elapsed_ms.toFixed(2)}</td>
             </tr>

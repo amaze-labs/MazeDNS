@@ -50,6 +50,7 @@ func (s *Store) ClientList(sinceMs int64, limit int, nodes []string) ([]ClientRo
 type ClientDetail struct {
 	Totals        WindowTotals    `json:"totals"`
 	UniqueDomains int64           `json:"unique_domains"`
+	FirstSeen     int64           `json:"first_seen"` // earliest query in the window (unix millis)
 	LastSeen      int64           `json:"last_seen"`
 	AvgLatencyMS  float64         `json:"avg_latency_ms"`
 	Actions       []CategoryCount `json:"actions"`    // all traffic, grouped by action (for the donut)
@@ -81,10 +82,11 @@ func (s *Store) ClientDetailStats(client string, sinceMs int64, nodes []string) 
 		   COALESCE(SUM(action='error'), 0),
 		   COUNT(DISTINCT name),
 		   COALESCE(AVG(elapsed_ms), 0),
+		   COALESCE(MIN(ts), 0),
 		   COALESCE(MAX(ts), 0)`+where,
 		base()...,
 	).Scan(&d.Totals.Total, &d.Totals.Blocked, &d.Totals.Cached, &d.Totals.Forwarded,
-		&d.Totals.Rewritten, &d.Totals.Errors, &d.UniqueDomains, &d.AvgLatencyMS, &d.LastSeen)
+		&d.Totals.Rewritten, &d.Totals.Errors, &d.UniqueDomains, &d.AvgLatencyMS, &d.FirstSeen, &d.LastSeen)
 	if err != nil {
 		return d, err
 	}

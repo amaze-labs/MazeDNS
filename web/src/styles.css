@@ -152,11 +152,15 @@ body {
   padding-right: 0;
 }
 
-/* The account dropdown sits at the bottom of the sidebar, so open it upward. */
+/* The account dropdown sits at the bottom of the sidebar. The sidebar clips its
+   overflow (to hide labels while collapsing), which would cut off an absolutely-
+   positioned menu — worst in the 64px collapsed rail. Pin it with position:fixed
+   to the bottom-left of the viewport so it escapes the clip at any sidebar width. */
 .sidebar .acct-menu {
-  bottom: calc(100% + 8px);
+  position: fixed;
+  left: 12px;
+  bottom: 60px;
   top: auto;
-  left: 0;
   right: auto;
 }
 
@@ -397,6 +401,15 @@ tr:last-child td {
   font-size: 20px;
   font-weight: 600;
 }
+.usage-tile .num.blocked {
+  color: var(--danger);
+}
+.usage-tile .num.allow {
+  color: var(--ok);
+}
+.usage-tile .tile-sub {
+  font-size: 11px;
+}
 
 /* Client IP + resolved name (NetBird peer / reverse-DNS). */
 .client-id .muted {
@@ -471,6 +484,10 @@ tr:last-child td {
   width: 100%;
   max-width: 720px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+/* Wider variant for content-heavy dialogs (e.g. the client inspector). */
+.modal-wide {
+  max-width: 1040px;
 }
 .modal-head {
   display: flex;

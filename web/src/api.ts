@@ -245,6 +245,7 @@ export interface ClientRow {
 export interface ClientDetail {
   totals: WindowTotals
   unique_domains: number
+  first_seen: number
   last_seen: number
   avg_latency_ms: number
   actions: CategoryCount[]

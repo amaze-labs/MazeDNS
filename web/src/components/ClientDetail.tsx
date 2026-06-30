@@ -18,6 +18,25 @@ const ACTION_COLORS: Record<string, string> = {
 const actionColor = (a: string) => ACTION_COLORS[a] ?? '#8a93a0'
 const tooltipStyle = { background: '#11151b', border: '1px solid #262d36', borderRadius: 8, fontSize: 12 }
 
+// timeAgo renders a compact relative time ("5m ago", "2d ago") from a unix-millis
+// timestamp; "—" when there's no data.
+const timeAgo = (ms: number): string => {
+  if (!ms) return '—'
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d ago`
+  const mo = Math.floor(d / 30)
+  if (mo < 12) return `${mo}mo ago`
+  return `${Math.floor(mo / 12)}y ago`
+}
+const pct = (n: number, total: number) => (total > 0 ? `${Math.round((n / total) * 100)}%` : '—')
+const fmtAbs = (ms: number) => (ms ? new Date(ms).toLocaleString() : '')
+
 // ClientDetail is the per-client inspect modal: KPI tiles, an action-breakdown
 // donut over all traffic, a blocked-by-category bar, top domains, and the
 // static-hostname editor (which overrides NetBird/reverse-DNS everywhere).
@@ -73,16 +92,21 @@ export default function ClientDetail({
 
   const detected = id?.source && id.source !== 'manual' ? id.name : ''
   const t = d?.totals
-  const tiles: [string, string | number][] = t
+  // KPI tiles: raw counts plus derived rates and relative activity times. `sub`
+  // is an optional second line; `title` a hover tooltip (e.g. the absolute time).
+  type Tile = { label: string; value: string | number; sub?: string; title?: string; tone?: string }
+  const tiles: Tile[] = t
     ? [
-        ['queries', t.total.toLocaleString()],
-        ['blocked', t.blocked.toLocaleString()],
-        ['cached', t.cached.toLocaleString()],
-        ['forwarded', t.forwarded.toLocaleString()],
-        ['errors', t.errors.toLocaleString()],
-        ['unique domains', (d?.unique_domains ?? 0).toLocaleString()],
-        ['avg latency', `${Math.round(d?.avg_latency_ms ?? 0)} ms`],
-        ['last seen', d?.last_seen ? new Date(d.last_seen).toLocaleString() : '—'],
+        { label: 'queries', value: t.total.toLocaleString() },
+        { label: 'block rate', value: pct(t.blocked, t.total), sub: `${t.blocked.toLocaleString()} blocked`, tone: t.blocked > 0 ? 'blocked' : '' },
+        { label: 'cache hit rate', value: pct(t.cached, t.total), sub: `${t.cached.toLocaleString()} cached`, tone: 'allow' },
+        { label: 'forwarded', value: t.forwarded.toLocaleString() },
+        { label: 'rewritten', value: t.rewritten.toLocaleString() },
+        { label: 'errors', value: t.errors.toLocaleString(), tone: t.errors > 0 ? 'blocked' : '' },
+        { label: 'unique domains', value: (d?.unique_domains ?? 0).toLocaleString() },
+        { label: 'avg latency', value: `${Math.round(d?.avg_latency_ms ?? 0)} ms` },
+        { label: 'active since', value: timeAgo(d?.first_seen ?? 0), title: fmtAbs(d?.first_seen ?? 0) },
+        { label: 'last seen', value: timeAgo(d?.last_seen ?? 0), title: fmtAbs(d?.last_seen ?? 0) },
       ]
     : []
 
@@ -90,7 +114,7 @@ export default function ClientDetail({
   const cats = (d?.categories ?? []).map((c) => ({ name: c.category, value: c.count }))
 
   return (
-    <Modal title={`Client ${client}`} onClose={onClose}>
+    <Modal title={`Client ${client}`} onClose={onClose} size="wide">
       {err && <div className="error">{err}</div>}
       {!d && <Spinner label="Loading…" />}
       {d && (
@@ -123,10 +147,11 @@ export default function ClientDetail({
           </div>
 
           <div className="usage-tiles">
-            {tiles.map(([label, val]) => (
-              <div key={label} className="usage-tile">
-                <span className="num">{val}</span>
-                <span className="muted">{label}</span>
+            {tiles.map((tile) => (
+              <div key={tile.label} className="usage-tile" title={tile.title || undefined}>
+                <span className={`num${tile.tone ? ` ${tile.tone}` : ''}`}>{tile.value}</span>
+                <span className="muted">{tile.label}</span>
+                {tile.sub && <span className="tile-sub muted">{tile.sub}</span>}
               </div>
             ))}
           </div>

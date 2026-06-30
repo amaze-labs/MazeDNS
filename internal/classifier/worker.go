@@ -131,6 +131,11 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 	// Whenever the threat set (re)loads, re-check existing clean verdicts against it
 	// so domains that became malicious after we last saw them get flagged.
 	w.threat.onChange = w.rescanThreat
+	// Persist reputation-API usage (VirusTotal / AbuseIPDB) so the UI can show how
+	// close each key is to its daily quota.
+	w.rep.SetRecorder(func(c RepCall) {
+		_ = st.RecordReputationUsage(c.Service, c.Errored, c.RateLimited, c.Remaining, c.Limit)
+	})
 	return w
 }
 

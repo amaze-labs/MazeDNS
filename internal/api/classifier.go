@@ -39,6 +39,10 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		usage = []store.LLMUsageDay{}
 	}
 	usageTotals, _ := s.store.LLMUsageTotals()
+	repUsage, _ := s.store.ReputationUsage(14)
+	if repUsage == nil {
+		repUsage = []store.ReputationUsageDay{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings":            cfg,
 		"counts":              counts,
@@ -48,6 +52,7 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		"threat_feed_catalog": classifier.ThreatFeedCatalog(),
 		"llm_usage":           usage,
 		"llm_usage_totals":    usageTotals,
+		"reputation_usage":    repUsage,
 		"has_api_key":         hasAPIKey,
 		"has_vt_key":          hasVTKey,
 		"has_abuseipdb_key":   hasAbuseKey,

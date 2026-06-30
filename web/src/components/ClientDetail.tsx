@@ -18,6 +18,21 @@ const ACTION_COLORS: Record<string, string> = {
 const actionColor = (a: string) => ACTION_COLORS[a] ?? '#8a93a0'
 const tooltipStyle = { background: '#11151b', border: '1px solid #262d36', borderRadius: 8, fontSize: 12 }
 
+// PieTooltip reads the slice's own colour from the datum so the hover swatch
+// matches the legend/slice — Recharts' default pie tooltip mis-colours them.
+function PieTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null
+  const p = payload[0]
+  const d = p.payload || {}
+  const color = d.fill || p.color || '#8a93a0'
+  return (
+    <div style={{ ...tooltipStyle, padding: '6px 10px', fontSize: 13 }}>
+      <span style={{ color }}>● </span>
+      {d.name ?? p.name}: {Number(p.value).toLocaleString()}
+    </div>
+  )
+}
+
 // timeAgo renders a compact relative time ("5m ago", "2d ago") from a unix-millis
 // timestamp; "—" when there's no data.
 const timeAgo = (ms: number): string => {
@@ -156,7 +171,7 @@ export default function ClientDetail({
             ))}
           </div>
 
-          <div className="charts" style={{ marginTop: 16 }}>
+          <div className="charts even" style={{ marginTop: 16 }}>
             <div className="panel">
               <h3>Traffic by action</h3>
               {donut.length === 0 ? (
@@ -170,7 +185,7 @@ export default function ClientDetail({
                           <Cell key={x.name} fill={x.fill} />
                         ))}
                       </Pie>
-                      <Tooltip contentStyle={tooltipStyle} />
+                      <Tooltip content={<PieTooltip />} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="legend">
@@ -200,7 +215,7 @@ export default function ClientDetail({
             </div>
           </div>
 
-          <div className="charts" style={{ marginTop: 16 }}>
+          <div className="charts even" style={{ marginTop: 16 }}>
             <DomainList title="Most queried" rows={d.top_domains} />
             <DomainList title="Top blocked" rows={d.top_blocked} />
           </div>

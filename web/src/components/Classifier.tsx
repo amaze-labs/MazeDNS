@@ -368,7 +368,7 @@ export default function Classifier() {
         ))}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', margin: '4px 0 12px' }}>
         <p className="muted" style={{ textAlign: 'left', margin: 0 }}>
           Click a row for the full scorecard + WHOIS.{' '}
           <span className="badge allow">≥70 safe</span> <span className="badge info">50–69 watch</span>{' '}

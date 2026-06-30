@@ -536,7 +536,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           <label className="muted">
             Score newly-seen domains for risk instead of maintaining blocklists by hand. Every domain starts fully
             legitimate and each <strong>static signal</strong> — threat-intel feeds, the trusted/popular list, reputation
-            services, WHOIS age, risky TLDs and look-alike/DGA name patterns — adjusts the score. A local AI model is an{' '}
+            services, WHOIS age, risky TLDs and look-alike/DGA name patterns — adjusts the score. An AI model (local or hosted) is an{' '}
             <strong>optional</strong> extra signal (configured below) that mainly reduces false positives; leave it blank
             and classification runs on the static signals alone. Runs on the master; auto-blocks also propagate to workers.
           </label>
@@ -558,34 +558,54 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </select>
           </div>
 
-          <h4 style={{ margin: '14px 0 4px' }}>Optional AI layer (local LLM)</h4>
+          <h4 style={{ margin: '14px 0 4px' }}>Optional AI layer</h4>
           <p className="muted" style={{ textAlign: 'left' }}>
-            Point this at a local OpenAI-compatible model (Ollama, llama.cpp, LM Studio) to fold its read in as one more
-            bounded signal — it also adds content categories (social, streaming, …). <strong>Leave the endpoint and model
-            blank to disable AI</strong> and use static analysis only.
+            Fold an LLM's read in as one more bounded signal — it also adds content categories (social, streaming, …).
+            Use a local/OpenAI-compatible endpoint or a hosted provider. <strong>Leave the model blank to disable AI</strong>{' '}
+            and use static analysis only.
           </p>
           <div className="field">
-            <label>Model endpoint (OpenAI-compatible base URL) — blank = no AI</label>
+            <label>Provider</label>
+            <select value={cls.provider || 'openai'} onChange={(e) => setCls({ ...cls, provider: e.target.value })}>
+              <option value="openai">OpenAI-compatible (Ollama, OpenAI, LM Studio, vLLM, …)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+            </select>
+          </div>
+          {cls.provider !== 'anthropic' && (
+            <div className="field">
+              <label>Model endpoint (OpenAI-compatible base URL) — blank = no AI</label>
+              <input
+                value={cls.endpoint}
+                onChange={(e) => setCls({ ...cls, endpoint: e.target.value })}
+                placeholder="http://localhost:11434/v1"
+              />
+            </div>
+          )}
+          <div className="field">
+            <label>Model — blank = no AI</label>
             <input
-              value={cls.endpoint}
-              onChange={(e) => setCls({ ...cls, endpoint: e.target.value })}
-              placeholder="http://localhost:11434/v1"
+              value={cls.model}
+              onChange={(e) => setCls({ ...cls, model: e.target.value })}
+              placeholder={cls.provider === 'anthropic' ? 'claude-haiku-4-5' : 'llama3.2'}
             />
           </div>
           <div className="field">
-            <label>Model — blank = no AI</label>
-            <input value={cls.model} onChange={(e) => setCls({ ...cls, model: e.target.value })} placeholder="llama3.2" />
-          </div>
-          <div className="field">
             <label>
-              API key (optional; usually empty for local models){' '}
+              API key{' '}
+              {cls.provider === 'anthropic' ? '(required)' : '(optional; usually empty for local models)'}{' '}
               {clsInfo?.has_api_key && <span className="badge allow">key set</span>}
             </label>
             <input
               type="password"
               value={cls.api_key}
               onChange={(e) => setCls({ ...cls, api_key: e.target.value })}
-              placeholder={clsInfo?.has_api_key ? '•••••••••••••• (saved — leave blank to keep)' : 'usually empty for local models'}
+              placeholder={
+                clsInfo?.has_api_key
+                  ? '•••••••••••••• (saved — leave blank to keep)'
+                  : cls.provider === 'anthropic'
+                  ? 'sk-ant-…'
+                  : 'usually empty for local models'
+              }
             />
           </div>
           <div className="field">

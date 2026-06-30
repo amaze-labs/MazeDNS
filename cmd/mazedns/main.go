@@ -249,6 +249,7 @@ func main() {
 	if !worker {
 		defaults := classifier.Settings{
 			Enabled:               cfg.Classifier.Enabled,
+			Provider:              cfg.Classifier.Provider,
 			Endpoint:              cfg.Classifier.Endpoint,
 			Model:                 cfg.Classifier.Model,
 			APIKey:                cfg.Classifier.APIKey,

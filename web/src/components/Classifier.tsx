@@ -146,7 +146,9 @@ export default function Classifier() {
   // Which signals are live: static analysis is always on when classifying; the AI
   // model is an optional extra that only runs when an endpoint + model are set.
   const st = info?.settings
-  const aiOn = !!(st?.endpoint?.trim() && st?.model?.trim())
+  // AI is on when a model is set and the provider is reachable: Anthropic uses its
+  // public API (no endpoint needed); OpenAI-compatible needs an endpoint.
+  const aiOn = !!(st?.model?.trim() && (st?.provider === 'anthropic' || st?.endpoint?.trim()))
   const trustedCount = info?.trusted_count ?? 0
   const threatCount = info?.threat_count ?? 0
   const feedCount = st?.threat_feeds?.length ?? 0

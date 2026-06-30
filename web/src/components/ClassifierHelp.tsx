@@ -22,7 +22,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         Every <em>new registered domain</em> your network queries is scored like a SOC analyst would: it{' '}
         <strong>starts at 100% legitimate</strong>, and each risk factor deducts from that score. The bulk of the work is{' '}
         <strong>static analysis</strong> — threat feeds, reputation services, WHOIS age, risky TLDs and look-alike name
-        shapes — which runs with <em>no AI at all</em>. A local AI model is an <strong>optional</strong> extra signal
+        shapes — which runs with <em>no AI at all</em>. An AI model (local or a hosted provider like Anthropic) is an <strong>optional</strong> extra signal
         (configured in Settings) that mainly cuts false positives; it's just <em>one</em> bounded factor, so a
         confidently-wrong model can never single-handedly block a legitimate site. Nothing runs on the DNS hot path —
         scoring is asynchronous, so resolution stays fast.

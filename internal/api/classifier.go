@@ -123,14 +123,20 @@ func (s *Server) testClassifier(w http.ResponseWriter, r *http.Request) {
 	if in.APIKey == "" {
 		in.APIKey = classifier.LoadSettings(s.store, classifier.Settings{}).APIKey
 	}
-	if strings.TrimSpace(in.Endpoint) == "" || strings.TrimSpace(in.Model) == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "endpoint and model are required"})
+	// Anthropic uses a default base URL, so only a model is required there; the
+	// OpenAI-compatible provider needs an explicit endpoint.
+	if strings.TrimSpace(in.Model) == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "model is required"})
+		return
+	}
+	if in.Provider != classifier.ProviderAnthropic && strings.TrimSpace(in.Endpoint) == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "endpoint is required for OpenAI-compatible providers"})
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), in.Timeout())
 	defer cancel()
 	const sample = "doubleclick.net"
-	v, _, err := classifier.NewClient(in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample, classifier.Hints{})
+	v, _, err := classifier.NewClient(in.Provider, in.Endpoint, in.Model, in.APIKey, in.Timeout()).Classify(ctx, sample, classifier.Hints{})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

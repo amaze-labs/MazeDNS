@@ -60,25 +60,51 @@ type Verdict struct {
 // ShouldBlock reports whether this verdict's category is one we block.
 func (v Verdict) ShouldBlock() bool { return blockCategories[v.Category] }
 
-// Client talks to an OpenAI-compatible /chat/completions endpoint.
-type Client struct {
-	baseURL string
-	model   string
-	apiKey  string
-	http    *http.Client
+// Supported LLM providers. "openai" is any OpenAI-compatible /chat/completions
+// endpoint (OpenAI, Ollama, LM Studio, llama.cpp, vLLM, …); "anthropic" is the
+// Anthropic Messages API (Claude).
+const (
+	ProviderOpenAI    = "openai"
+	ProviderAnthropic = "anthropic"
+)
+
+// normalizeProvider defaults an unknown/blank provider to OpenAI-compatible.
+func normalizeProvider(p string) string {
+	if strings.ToLower(strings.TrimSpace(p)) == ProviderAnthropic {
+		return ProviderAnthropic
+	}
+	return ProviderOpenAI
 }
 
-// NewClient builds a classifier client. baseURL is the OpenAI-compatible base
-// (e.g. "http://localhost:11434/v1"); apiKey is usually empty for local models.
-func NewClient(baseURL, model, apiKey string, timeout time.Duration) *Client {
+// Client talks to an LLM provider (OpenAI-compatible chat completions or the
+// Anthropic Messages API) to classify a domain.
+type Client struct {
+	provider string
+	baseURL  string
+	model    string
+	apiKey   string
+	http     *http.Client
+}
+
+// NewClient builds a classifier client for the given provider. For "openai",
+// baseURL is the OpenAI-compatible base (e.g. "http://localhost:11434/v1") and
+// apiKey is usually empty for local models. For "anthropic", baseURL defaults to
+// the public API and apiKey is the Anthropic API key.
+func NewClient(provider, baseURL, model, apiKey string, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
+	provider = normalizeProvider(provider)
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" && provider == ProviderAnthropic {
+		base = "https://api.anthropic.com"
+	}
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		model:   model,
-		apiKey:  apiKey,
-		http:    &http.Client{Timeout: timeout},
+		provider: provider,
+		baseURL:  base,
+		model:    model,
+		apiKey:   apiKey,
+		http:     &http.Client{Timeout: timeout},
 	}
 }
 
@@ -157,9 +183,8 @@ type Hints struct {
 	Reputation string // reputation-service summary (VirusTotal / AbuseIPDB)
 }
 
-// Classify returns the model's verdict for a domain (and the endpoint's token
-// usage), informed by any hints.
-func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict, Usage, error) {
+// buildUserPrompt renders the per-domain user message, folding in any hints.
+func buildUserPrompt(domain string, h Hints) string {
 	user := "Classify this domain: " + domain
 	if h.Threat {
 		user += "\nSignal: this domain appears on a public threat-intelligence feed of domains hosting active malware — weigh this heavily."
@@ -173,6 +198,21 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 	if h.Reputation != "" {
 		user += "\nReputation services: " + h.Reputation + "."
 	}
+	return user
+}
+
+// Classify returns the model's verdict for a domain (and the provider's token
+// usage), informed by any hints. It dispatches to the configured provider.
+func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict, Usage, error) {
+	user := buildUserPrompt(domain, h)
+	if c.provider == ProviderAnthropic {
+		return c.classifyAnthropic(ctx, user)
+	}
+	return c.classifyOpenAI(ctx, user)
+}
+
+// classifyOpenAI calls an OpenAI-compatible /chat/completions endpoint.
+func (c *Client) classifyOpenAI(ctx context.Context, user string) (Verdict, Usage, error) {
 	body, err := json.Marshal(chatReq{
 		Model:       c.model,
 		Temperature: 0,
@@ -217,6 +257,95 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 		usage = *cr.Usage
 	}
 	v, err := parseVerdict(cr.Choices[0].Message.Content)
+	return v, usage, err
+}
+
+// Anthropic Messages API request/response (https://api.anthropic.com/v1/messages).
+type anthropicReq struct {
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	System    string             `json:"system,omitempty"`
+	Messages  []anthropicMessage `json:"messages"`
+}
+
+type anthropicMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type anthropicResp struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+	StopReason string `json:"stop_reason"`
+	Usage      *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// classifyAnthropic calls the Anthropic Messages API. The system prompt already
+// forces a JSON-only reply, so no thinking/sampling params are needed; max_tokens
+// is small because the verdict is a one-line object.
+func (c *Client) classifyAnthropic(ctx context.Context, user string) (Verdict, Usage, error) {
+	body, err := json.Marshal(anthropicReq{
+		Model:     c.model,
+		MaxTokens: 1024,
+		System:    systemPrompt,
+		Messages:  []anthropicMessage{{Role: "user", Content: user}},
+	})
+	if err != nil {
+		return Verdict{}, Usage{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/messages", bytes.NewReader(body))
+	if err != nil {
+		return Verdict{}, Usage{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	if c.apiKey != "" {
+		req.Header.Set("X-Api-Key", c.apiKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return Verdict{}, Usage{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	var ar anthropicResp
+	if err := json.Unmarshal(raw, &ar); err != nil {
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: bad response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		msg := strings.TrimSpace(string(raw))
+		if ar.Error != nil {
+			msg = ar.Error.Message
+		}
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: status %d: %s", resp.StatusCode, msg)
+	}
+	if ar.StopReason == "refusal" {
+		return Verdict{}, Usage{}, fmt.Errorf("classifier: model declined to classify the domain")
+	}
+	var text strings.Builder
+	for _, b := range ar.Content {
+		if b.Type == "text" {
+			text.WriteString(b.Text)
+		}
+	}
+	var usage Usage
+	if ar.Usage != nil {
+		usage = Usage{
+			PromptTokens:     ar.Usage.InputTokens,
+			CompletionTokens: ar.Usage.OutputTokens,
+			TotalTokens:      ar.Usage.InputTokens + ar.Usage.OutputTokens,
+		}
+	}
+	v, err := parseVerdict(text.String())
 	return v, usage, err
 }
 

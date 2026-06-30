@@ -178,6 +178,7 @@ type OIDC struct {
 // from here and then changeable at runtime from the UI.
 type Classifier struct {
 	Enabled    bool   `yaml:"enabled"`
+	Provider   string `yaml:"provider"`    // openai (OpenAI-compatible, default) | anthropic
 	Endpoint   string `yaml:"endpoint"`    // OpenAI-compatible base URL, e.g. http://localhost:11434/v1
 	Model      string `yaml:"model"`       // model name, e.g. "llama3.2"
 	APIKey     string `yaml:"api_key"`     // usually empty for local models

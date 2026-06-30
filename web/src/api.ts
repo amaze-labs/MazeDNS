@@ -146,6 +146,7 @@ export interface ClientIdentity {
 
 export interface ClassifierSettings {
   enabled: boolean
+  provider: string // 'openai' (OpenAI-compatible) | 'anthropic'
   endpoint: string
   model: string
   api_key: string

@@ -37,6 +37,7 @@ func ParseMode(s string) Mode {
 // store and read fresh on every use, so changes apply without a restart).
 type Settings struct {
 	Enabled    bool   `json:"enabled"`
+	Provider   string `json:"provider"` // openai (OpenAI-compatible) | anthropic
 	Endpoint   string `json:"endpoint"`
 	Model      string `json:"model"`
 	APIKey     string `json:"api_key"`
@@ -69,11 +70,18 @@ type Settings struct {
 	AbuseIPDBAPIKey  string `json:"abuseipdb_api_key"`
 }
 
-// aiConfigured reports whether the optional LLM layer should run: it does only
-// when both an endpoint and a model are set. Otherwise classification falls back
-// to static analysis on the deterministic signals alone.
+// aiConfigured reports whether the optional LLM layer should run. A model is
+// always required; an endpoint is required only for the OpenAI-compatible
+// provider (Anthropic uses its public API by default). Otherwise classification
+// falls back to static analysis on the deterministic signals alone.
 func aiConfigured(s Settings) bool {
-	return strings.TrimSpace(s.Endpoint) != "" && strings.TrimSpace(s.Model) != ""
+	if strings.TrimSpace(s.Model) == "" {
+		return false
+	}
+	if normalizeProvider(s.Provider) == ProviderAnthropic {
+		return true // endpoint optional (defaults to the public API)
+	}
+	return strings.TrimSpace(s.Endpoint) != ""
 }
 
 func (s Settings) minGap() time.Duration {
@@ -151,11 +159,11 @@ func (w *Worker) Whois(ctx context.Context, domain string) (WhoisInfo, error) {
 // clientFor returns a cached client for the current endpoint/model/key, rebuilding
 // it only when those change.
 func (w *Worker) clientFor(s Settings) *Client {
-	key := fmt.Sprintf("%s|%s|%s|%s", s.Endpoint, s.Model, s.APIKey, s.Timeout())
+	key := fmt.Sprintf("%s|%s|%s|%s|%s", s.Provider, s.Endpoint, s.Model, s.APIKey, s.Timeout())
 	w.clientMu.Lock()
 	defer w.clientMu.Unlock()
 	if w.client == nil || w.clientKey != key {
-		w.client = NewClient(s.Endpoint, s.Model, s.APIKey, s.Timeout())
+		w.client = NewClient(s.Provider, s.Endpoint, s.Model, s.APIKey, s.Timeout())
 		w.clientKey = key
 	}
 	return w.client

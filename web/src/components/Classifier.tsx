@@ -142,6 +142,13 @@ export default function Classifier() {
   const showPager = searchActive ? page > 0 || rows.length === PAGE : total > PAGE
   // Category breakdown, most-seen first.
   const catCounts = Object.entries(info?.category_counts ?? {}).sort((a, b) => b[1] - a[1])
+  // Which signals are live: static analysis is always on when classifying; the AI
+  // model is an optional extra that only runs when an endpoint + model are set.
+  const st = info?.settings
+  const aiOn = !!(st?.endpoint?.trim() && st?.model?.trim())
+  const trustedCount = info?.trusted_count ?? 0
+  const threatCount = info?.threat_count ?? 0
+  const feedCount = st?.threat_feeds?.length ?? 0
   return (
     <div>
       {showHelp && <ClassifierHelp onClose={() => setShowHelp(false)} />}
@@ -162,7 +169,7 @@ export default function Classifier() {
         />
       )}
       <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        AI classification {!info && <Spinner />}
+        Domain classification {!info && <Spinner />}
         <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setShowHelp(true)}>
           Learn more
         </button>
@@ -171,36 +178,63 @@ export default function Classifier() {
         </button>
       </h2>
       <p className="muted" style={{ textAlign: 'left' }}>
-        A local model ({info?.settings.model || '—'}) classifies newly-seen domains as ads/trackers/malware/phishing or
-        legitimate content (social, streaming, …), so blocking is driven by the model instead of hand-maintained lists.
-        Configure the model in <strong>Settings</strong>.
-        {(info?.trusted_count ?? 0) > 0 && (
-          <>
-            {' '}
-            Trusted list: <strong>{info?.trusted_count.toLocaleString()}</strong> domains (never blocked; includes CDN /
-            cloud-edge providers).{' '}
-            <button className="linkbtn" onClick={() => openList('trusted')}>
-              {listView === 'trusted' ? 'hide' : 'view'}
-            </button>
-          </>
-        )}
-        {(info?.threat_count ?? 0) > 0 && (
-          <>
-            {' '}
-            Threat list: <strong>{info?.threat_count.toLocaleString()}</strong> known-malicious domains (abuse.ch
-            URLhaus).{' '}
-            <button className="linkbtn" onClick={() => openList('threat')}>
-              {listView === 'threat' ? 'hide' : 'view'}
-            </button>
-          </>
-        )}
+        Each newly-seen domain is scored from <strong>100% legitimate</strong> downward by a set of signals. It's blocked
+        only when a real threat indicator fires (a threat feed, a reputation service, or — if enabled — the AI model) and
+        its legitimacy drops below 50%. No hand-maintained blocklists required.
       </p>
+
+      {/* Engine status: spells out exactly which signals are live right now. */}
+      <div className="settings-card cls-engine">
+        <div className="cls-engine-head">
+          <h3 style={{ margin: 0 }}>Active signals</h3>
+          <span className={`badge ${aiOn ? 'info' : 'allow'}`}>
+            {aiOn ? `Static analysis + AI (${st?.model})` : 'Static analysis only'}
+          </span>
+        </div>
+        <div className="cat-chips" style={{ marginTop: 10 }}>
+          <span className="cat-chip badge allow" title="Always on while classifying: domain age, risky TLDs, brand look-alikes, DGA/lexical patterns.">
+            ✓ Static analysis · always on
+          </span>
+          {aiOn ? (
+            <span className="cat-chip badge info" title="A local LLM adds one bounded signal and content categories.">
+              🤖 AI model · {st?.model}
+            </span>
+          ) : (
+            <span className="cat-chip badge" title="Set a model endpoint + model in Settings to enable the AI layer.">
+              🤖 AI model · off
+            </span>
+          )}
+          <button
+            className={`cat-chip badge ${threatCount > 0 ? 'blocked' : ''}`}
+            onClick={() => threatCount > 0 && openList('threat')}
+            title="Domains on these feeds corroborate a malicious verdict."
+          >
+            🛡 Threat feeds · {threatCount > 0 ? `${threatCount.toLocaleString()} domains` : 'none'}
+            {feedCount > 0 ? ` · ${feedCount} feed${feedCount === 1 ? '' : 's'}` : ''}
+            {threatCount > 0 ? (listView === 'threat' ? ' ▴' : ' ▾') : ''}
+          </button>
+          <button
+            className="cat-chip badge allow"
+            onClick={() => trustedCount > 0 && openList('trusted')}
+            title="Domains here (incl. CDN / cloud-edge providers) are never blocked."
+          >
+            ✓ Trusted list · {trustedCount.toLocaleString()} domains{trustedCount > 0 ? (listView === 'trusted' ? ' ▴' : ' ▾') : ''}
+          </button>
+          {st?.vt_enabled && <span className="cat-chip badge info" title="Per-domain reputation lookup.">VirusTotal</span>}
+          {st?.abuseipdb_enabled && <span className="cat-chip badge info" title="Resolved-IP reputation lookup.">AbuseIPDB</span>}
+          {st?.whois_enabled && <span className="cat-chip badge info" title="Domain age via RDAP — the single best phishing indicator.">WHOIS age</span>}
+        </div>
+        <p className="muted" style={{ textAlign: 'left', margin: '10px 0 0' }}>
+          Tune signals in <strong>Settings → Domain classification</strong>.
+        </p>
+      </div>
+
       {err && <div className="error">{err}</div>}
 
       {listView && (
         <div className="settings-card" style={{ marginBottom: 18 }}>
           <h3>
-            {listView === 'threat' ? 'Threat-intel domains — abuse.ch URLhaus' : 'Trusted domains'} (
+            {listView === 'threat' ? 'Threat-intel domains' : 'Trusted domains'} (
             {((listView === 'threat' ? info?.threat_count : info?.trusted_count) ?? 0).toLocaleString()})
           </h3>
           <input
@@ -313,8 +347,8 @@ export default function Classifier() {
         <div className="settings-card" style={{ marginBottom: 18 }}>
           <h3>Traffic by category</h3>
           <p className="muted" style={{ textAlign: 'left' }}>
-            What the model has seen across all classified domains — security categories plus legitimate content (social,
-            streaming, …).
+            Across all classified domains — security categories (blocked) plus, when the AI model is on, legitimate
+            content types (social, streaming, …).
           </p>
           <div className="cat-chips">
             {catCounts.map(([cat, n]) => (
@@ -336,7 +370,9 @@ export default function Classifier() {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <p className="muted" style={{ textAlign: 'left', margin: 0 }}>
-          Click a row for full details + WHOIS.
+          Click a row for the full scorecard + WHOIS.{' '}
+          <span className="badge allow">≥70 safe</span> <span className="badge info">50–69 watch</span>{' '}
+          <span className="badge blocked">&lt;50 block candidate</span>
         </p>
         <input
           className="search"
@@ -351,7 +387,9 @@ export default function Classifier() {
           <tr>
             <th>Domain</th>
             <th>Category</th>
-            <th>Legitimacy</th>
+            <th title="Legitimacy: every domain starts at 100% and each risk factor deducts. Below 50% it's a block candidate.">
+              Legitimacy
+            </th>
             <th></th>
           </tr>
         </thead>

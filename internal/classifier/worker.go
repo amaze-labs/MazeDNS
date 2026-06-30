@@ -69,6 +69,13 @@ type Settings struct {
 	AbuseIPDBAPIKey  string `json:"abuseipdb_api_key"`
 }
 
+// aiConfigured reports whether the optional LLM layer should run: it does only
+// when both an endpoint and a model are set. Otherwise classification falls back
+// to static analysis on the deterministic signals alone.
+func aiConfigured(s Settings) bool {
+	return strings.TrimSpace(s.Endpoint) != "" && strings.TrimSpace(s.Model) != ""
+}
+
 func (s Settings) minGap() time.Duration {
 	if s.MinGapMS <= 0 {
 		return time.Second
@@ -110,7 +117,7 @@ type Worker struct {
 
 // NewWorker builds a classification worker driven by the live settings getter.
 func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worker {
-	return &Worker{
+	w := &Worker{
 		store:   st,
 		get:     get,
 		reload:  reload,
@@ -121,7 +128,15 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		whois:   NewWhoisCache(),
 		rep:     NewRepCache(),
 	}
+	// Whenever the threat set (re)loads, re-check existing clean verdicts against it
+	// so domains that became malicious after we last saw them get flagged.
+	w.threat.onChange = w.rescanThreat
+	return w
 }
+
+// threatRefreshInterval is how often long-lived threat feeds are re-pulled so a
+// node doesn't keep trusting a stale startup snapshot.
+const threatRefreshInterval = time.Hour
 
 // Whois returns cached registration data for a domain (used by the UI detail view).
 func (w *Worker) Whois(ctx context.Context, domain string) (WhoisInfo, error) {
@@ -188,17 +203,85 @@ func (w *Worker) Run(ctx context.Context) {
 	s := w.get()
 	w.trusted.ensureSync(trustedSources(s))
 	w.threat.ensureSync(threatSources(s))
+	go w.refreshThreatLoop(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case domain := <-w.queue:
+			cur := w.get()
 			w.process(ctx, domain)
+			// The inter-domain gap exists only to rate-limit LLM calls. In static-only
+			// mode there's no model to throttle, so drain the queue at full speed
+			// (reputation lookups have their own cache/limits) — fewer dropped domains.
+			if !aiConfigured(cur) {
+				continue
+			}
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(w.get().minGap()):
+			case <-time.After(cur.minGap()):
 			}
+		}
+	}
+}
+
+// refreshThreatLoop periodically re-pulls the threat feeds while the feature is
+// enabled, so a long-running node picks up newly-listed malware domains. Each
+// successful refresh triggers rescanThreat via the set holder's onChange hook.
+func (w *Worker) refreshThreatLoop(ctx context.Context) {
+	t := time.NewTicker(threatRefreshInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s := w.get()
+			if !s.Enabled || ParseMode(s.Mode) == ModeOff {
+				continue
+			}
+			w.threat.refresh(threatSources(s))
+		}
+	}
+}
+
+// rescanThreat re-checks existing clean (untrusted) verdicts against the current
+// threat set and flips any now-listed domain to a block, so a domain that turned
+// malicious after we classified it doesn't stay allowed until it's re-queried.
+// Fired after the threat set (re)loads.
+func (w *Worker) rescanThreat() {
+	s := w.get()
+	if !s.Enabled || ParseMode(s.Mode) == ModeOff {
+		return
+	}
+	domains, err := w.store.CleanDomains()
+	if err != nil {
+		slog.Warn("threat rescan: list clean domains failed", "err", err)
+		return
+	}
+	status := store.ClassSuggested
+	if ParseMode(s.Mode) == ModeAuto {
+		status = store.ClassAuto // a threat-feed hit alone is confident enough to enforce
+	}
+	flipped := 0
+	for _, d := range domains {
+		if !w.threat.has(d) {
+			continue
+		}
+		ok, err := w.store.FlagThreat(d, status, "re-flagged: now listed on a threat-intel feed")
+		if err != nil {
+			slog.Warn("threat rescan: flag failed", "domain", d, "err", err)
+			continue
+		}
+		if ok {
+			flipped++
+		}
+	}
+	if flipped > 0 {
+		slog.Info("threat rescan re-flagged clean domains", "count", flipped, "status", status)
+		if status == store.ClassAuto && w.reload != nil {
+			_ = w.reload()
 		}
 	}
 }
@@ -237,53 +320,65 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		return // already have a verdict (or DB error) — classify once.
 	}
 
-	// Look the deterministic signals up FIRST, then let the model decide with them
-	// in hand. Crucially, those signals can also OVERRIDE the model afterward — a
-	// small local model can still hallucinate "phishing @ 100%" against clear
-	// evidence (e.g. aaplimg.com on Apple's nameservers).
+	// Fast path: a domain on the trusted/popular list — or CDN / cloud-edge infra —
+	// short-circuits to fully legitimate (computeScore ignores every other signal
+	// for it). Record it now and SKIP the expensive WHOIS / reputation / LLM
+	// lookups, which also conserves third-party API budget (e.g. VirusTotal's daily
+	// quota) and keeps the queue moving on the common case.
 	listTrusted := w.trusted.has(domain)
-	threat := w.threat.has(domain)
+	cdn := IsCDN(domain) // a verdict here would apply to the whole provider — never blockable
+	if listTrusted || cdn {
+		w.recordTrusted(ScoreInput{Domain: domain, ListTrusted: listTrusted, CDN: cdn})
+		return
+	}
+
+	// WHOIS (optional) is looked up next because it yields a second fast path:
+	// nameserver trust. A domain served by a trusted entity's own authoritative
+	// nameservers (NS can't be faked) is that entity's infrastructure, so it cannot
+	// be phishing *of* it — short-circuit before spending reputation/LLM budget.
 	var whois WhoisInfo
 	if s.WhoisEnabled {
 		if info, werr := w.whois.Lookup(ctx, domain); werr == nil {
 			whois = info
 		}
 	}
-	// Nameserver trust: a domain whose authoritative nameservers belong to a
-	// trusted top domain is that entity's own infrastructure (NS can't be faked),
-	// so it cannot be phishing *of* that entity. This is the strongest single
-	// false-positive guard.
-	nsTrustedOn := ""
 	for _, ns := range whois.Nameservers {
 		if reg := RegisteredDomain(ns); reg != "" && (w.trusted.has(reg) || IsCDN(ns)) {
-			nsTrustedOn = reg
-			break
+			w.recordTrusted(ScoreInput{Domain: domain, NSTrustedOn: reg, Whois: whois})
+			return
 		}
 	}
-	// CDN / cloud-edge infrastructure is always trusted: a verdict here would apply
-	// to the whole provider (e.g. all of cloudfront.net), so it can never be blocked.
-	cdn := IsCDN(domain)
-	trusted := listTrusted || cdn || nsTrustedOn != ""
 
-	// Reputation enrichment (VirusTotal / AbuseIPDB) — corroborates the verdict and
-	// fed to the model as a signal too.
+	// Not trusted: now spend the remaining signals. Threat-feed membership is an
+	// in-memory set lookup; reputation may hit external services (key-gated).
+	threat := w.threat.has(domain)
 	rep := w.rep.Lookup(ctx, domain, s)
 
-	start := time.Now()
-	v, usage, err := w.clientFor(s).Classify(ctx, domain, Hints{Trusted: trusted, Threat: threat, Whois: whois.summary(), Reputation: rep.summary()})
-	_ = w.store.RecordLLMUsage(err != nil, usage.PromptTokens, usage.CompletionTokens, int(time.Since(start).Milliseconds()))
-	if err != nil {
-		slog.Warn("classify failed", "domain", domain, "err", err)
-		return
+	// The local LLM is an OPTIONAL enrichment layer. When an endpoint + model are
+	// configured we fold its read in as one more (bounded) signal — mainly to cut
+	// false positives. With them left blank, classification runs purely on the
+	// deterministic signals above (threat feeds, reputation, WHOIS age, risky TLD,
+	// brand look-alikes and lexical heuristics) — a full static analysis with no AI.
+	var v Verdict
+	if aiConfigured(s) {
+		start := time.Now()
+		vv, usage, err := w.clientFor(s).Classify(ctx, domain, Hints{Threat: threat, Whois: whois.summary(), Reputation: rep.summary()})
+		_ = w.store.RecordLLMUsage(err != nil, usage.PromptTokens, usage.CompletionTokens, int(time.Since(start).Milliseconds()))
+		if err != nil {
+			// AI is configured but unreachable: retry on the next sighting rather than
+			// recording a model-less verdict that would stick. (Static-only users never
+			// reach this path.)
+			slog.Warn("classify failed", "domain", domain, "err", err)
+			return
+		}
+		v = vv
 	}
 
 	// Score the domain: start at 100% legitimate and let every risk factor deduct
 	// (the model's read is just one bounded factor). This is what actually decides
-	// the verdict — not the model's raw confidence.
-	in := ScoreInput{
-		Domain: domain, ListTrusted: listTrusted, CDN: cdn, NSTrustedOn: nsTrustedOn,
-		Threat: threat, Whois: whois, Rep: rep, Verdict: v,
-	}
+	// the verdict — not the model's raw confidence. (Trusted/CDN/NS-trust were
+	// already handled by the fast paths above, so they're zero here.)
+	in := ScoreInput{Domain: domain, Threat: threat, Whois: whois, Rep: rep, Verdict: v}
 	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security
@@ -302,6 +397,11 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if !block && blockCategories[category] {
 		category = "other"
 	}
+	// Static-only analysis (no model) leaves the category blank for clean domains —
+	// content categories (social/streaming/…) need the LLM. Fall back to "other".
+	if category == "" {
+		category = "other"
+	}
 
 	status := store.ClassClean
 	if block {
@@ -313,18 +413,41 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	}
 
 	factors, _ := json.Marshal(score.Factors)
-	reason := fmt.Sprintf("legitimacy %d%%. %s", score.Legitimacy, strings.TrimSpace(v.Reason))
+	reason := strings.TrimSpace(fmt.Sprintf("legitimacy %d%%. %s", score.Legitimacy, strings.TrimSpace(v.Reason)))
+	model := s.Model
+	if model == "" {
+		model = "static analysis" // no LLM in play — verdict from the deterministic signals
+	}
 	inserted, err := w.store.InsertClassification(store.Classification{
 		Domain: domain, Category: category, Block: block, Status: status,
 		Confidence: v.Confidence, Score: score.Legitimacy, Factors: factors,
-		Reason: reason, Model: s.Model, Trusted: trusted, Threat: threat,
+		Reason: reason, Model: model, Trusted: false, Threat: threat,
 	})
 	if err != nil {
 		slog.Warn("store classification failed", "domain", domain, "err", err)
 		return
 	}
-	slog.Debug("classified", "domain", domain, "category", category, "status", status, "legitimacy", score.Legitimacy, "trusted", trusted, "threat", threat)
+	slog.Debug("classified", "domain", domain, "category", category, "status", status, "legitimacy", score.Legitimacy, "threat", threat)
 	if inserted && status == store.ClassAuto && w.reload != nil {
 		_ = w.reload()
+	}
+}
+
+// recordTrusted stores a clean verdict for a domain the fast paths proved
+// legitimate (trusted list, CDN, or trusted nameservers), reusing computeScore so
+// the stored factor breakdown matches what the full path would have produced.
+func (w *Worker) recordTrusted(in ScoreInput) {
+	score := computeScore(in)
+	reason := fmt.Sprintf("legitimacy %d%%", score.Legitimacy)
+	if len(score.Factors) > 0 {
+		reason += ". " + score.Factors[0].Detail
+	}
+	factors, _ := json.Marshal(score.Factors)
+	if _, err := w.store.InsertClassification(store.Classification{
+		Domain: in.Domain, Category: "other", Block: false, Status: store.ClassClean,
+		Score: score.Legitimacy, Factors: factors, Reason: reason,
+		Model: "static analysis", Trusted: true,
+	}); err != nil {
+		slog.Warn("store classification failed", "domain", in.Domain, "err", err)
 	}
 }

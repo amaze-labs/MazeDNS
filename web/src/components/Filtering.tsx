@@ -5,9 +5,10 @@ import Classifier from './Classifier'
 
 type Sub = 'ai' | 'lists' | 'rules'
 
-// Filtering groups the related filtering tools — the AI domain classifier,
-// managed blocklists, and manual allow/deny rules — under one nav section with
-// sub-tabs. The AI sub-tab leads (and is the default) when the classifier is on.
+// Filtering groups the related filtering tools — the domain classifier (static
+// analysis + optional AI), managed blocklists, and manual allow/deny rules — under
+// one nav section with sub-tabs. The classifier sub-tab leads (and is the default)
+// when classification is on.
 export default function Filtering({ classifier = false }: { classifier?: boolean }) {
   const [sub, setSub] = useState<Sub>(classifier ? 'ai' : 'lists')
   // If the classifier gets disabled while it's the active sub-tab, fall back.
@@ -17,7 +18,7 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
       <div className="subtabs">
         {classifier && (
           <button className={active === 'ai' ? 'active' : ''} onClick={() => setSub('ai')}>
-            AI classification
+            Classification
           </button>
         )}
         <button className={active === 'lists' ? 'active' : ''} onClick={() => setSub('lists')}>

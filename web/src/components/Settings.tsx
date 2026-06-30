@@ -14,11 +14,86 @@ import Spinner from './Spinner'
 const linesToList = (s: string) =>
   s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
 
+// --- Upstream resolver editing ------------------------------------------------
+// The textarea spec format (see resolver.ParseUpstream) is hard to get right by
+// hand, so we edit each upstream as a structured row and serialize back to the
+// canonical spec string the backend expects.
+type UpProto = 'plain' | 'tls' | 'https'
+type UpRow = { proto: UpProto; host: string; port: string; name: string; url: string }
+
+const emptyRow = (): UpRow => ({ proto: 'plain', host: '', port: '', name: '', url: '' })
+
+// splitHostPort separates host and port, leaving bracketed/bare IPv6 intact and
+// falling back to def when no port is given.
+const splitHostPort = (s: string, def: string): { host: string; port: string } => {
+  if (s.startsWith('[')) {
+    const end = s.indexOf(']')
+    const host = s.slice(0, end + 1)
+    const rest = s.slice(end + 1)
+    return { host, port: rest.startsWith(':') ? rest.slice(1) : def }
+  }
+  if ((s.match(/:/g) || []).length === 1) {
+    const [host, port] = s.split(':')
+    return { host, port: port || def }
+  }
+  return { host: s, port: def } // no port, or bare IPv6
+}
+
+const parseUpstream = (raw: string): UpRow => {
+  const spec = raw.trim()
+  if (spec.startsWith('https://')) return { ...emptyRow(), proto: 'https', url: spec }
+  if (spec.startsWith('tls://')) {
+    let rest = spec.slice('tls://'.length)
+    let name = ''
+    const h = rest.indexOf('#')
+    if (h >= 0) {
+      name = rest.slice(h + 1)
+      rest = rest.slice(0, h)
+    }
+    const { host, port } = splitHostPort(rest, '853')
+    return { proto: 'tls', host, port, name, url: '' }
+  }
+  let rest = spec
+  if (rest.startsWith('udp://')) rest = rest.slice('udp://'.length)
+  else if (rest.startsWith('tcp://')) rest = rest.slice('tcp://'.length)
+  const { host, port } = splitHostPort(rest, '53')
+  return { proto: 'plain', host, port, name: '', url: '' }
+}
+
+const upstreamToSpec = (r: UpRow): string => {
+  if (r.proto === 'https') return r.url.trim()
+  const host = r.host.trim()
+  if (!host) return ''
+  const port = r.port.trim()
+  if (r.proto === 'tls') {
+    const hp = port ? `${host}:${port}` : host
+    return r.name.trim() ? `tls://${hp}#${r.name.trim()}` : `tls://${hp}`
+  }
+  // Plain DNS: drop the redundant default :53 to keep the spec clean.
+  return port && port !== '53' ? `${host}:${port}` : host
+}
+
+const rowsToText = (rows: UpRow[]) => rows.map(upstreamToSpec).filter(Boolean).join('\n')
+const textToRows = (t: string): UpRow[] => {
+  const rows = linesToList(t).map(parseUpstream)
+  return rows.length ? rows : [emptyRow()]
+}
+
+// Well-known resolvers for the quick-fill buttons, with a variant per protocol.
+const PROVIDERS = [
+  { key: 'cloudflare', label: 'Cloudflare', ips: ['1.1.1.1', '1.0.0.1'], name: 'cloudflare-dns.com', doh: 'https://cloudflare-dns.com/dns-query' },
+  { key: 'quad9', label: 'Quad9', ips: ['9.9.9.9', '149.112.112.112'], name: 'dns.quad9.net', doh: 'https://dns.quad9.net/dns-query' },
+  { key: 'google', label: 'Google', ips: ['8.8.8.8', '8.8.4.4'], name: 'dns.google', doh: 'https://dns.google/dns-query' },
+] as const
+
 // onClassifierChange lets the app refresh its nav (the AI tab appears/disappears
 // with the classifier's enabled state).
 export default function Settings({ onClassifierChange }: { onClassifierChange?: () => void }) {
   const [s, setS] = useState<S | null>(null)
   const [upstreams, setUpstreams] = useState('')
+  const [upRows, setUpRows] = useState<UpRow[]>([emptyRow()])
+  const [rawUpstreams, setRawUpstreams] = useState(false)
+  const [qfProto, setQfProto] = useState<UpProto>('tls')
   const [forwarders, setForwarders] = useState<ForwardGroup[]>([])
   const [err, setErr] = useState('')
   const [ok, setOk] = useState(false)
@@ -51,7 +126,9 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     try {
       const cur = await api.settings()
       setS(cur)
-      setUpstreams((cur.upstreams || []).join('\n'))
+      const text = (cur.upstreams || []).join('\n')
+      setUpstreams(text)
+      setUpRows(textToRows(text))
       setForwarders(cur.forwarders || [])
     } catch (e: any) {
       setErr(e.message)
@@ -133,6 +210,26 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const patch = (p: Partial<S>) => setS({ ...s, ...p })
   const patchCache = (p: Partial<S['cache']>) => setS({ ...s, cache: { ...s.cache, ...p } })
 
+  // Structured upstream editing keeps the canonical `upstreams` text in sync so
+  // saveAll/raw mode stay source-of-truth agnostic.
+  const setRows = (rows: UpRow[]) => {
+    setUpRows(rows)
+    setUpstreams(rowsToText(rows))
+  }
+  const setRow = (i: number, p: Partial<UpRow>) => setRows(upRows.map((r, j) => (j === i ? { ...r, ...p } : r)))
+  const addRow = () => setRows([...upRows, emptyRow()])
+  const delRow = (i: number) => setRows(upRows.filter((_, j) => j !== i))
+  const quickFill = (p: (typeof PROVIDERS)[number]) => {
+    if (qfProto === 'https') setRows([{ ...emptyRow(), proto: 'https', url: p.doh }])
+    else if (qfProto === 'tls') setRows(p.ips.map((ip) => ({ proto: 'tls', host: ip, port: '853', name: p.name, url: '' })))
+    else setRows(p.ips.map((ip) => ({ ...emptyRow(), host: ip, port: '53' })))
+  }
+  // Toggling out of raw text mode re-parses whatever the user typed into rows.
+  const toggleRaw = () => {
+    if (rawUpstreams) setUpRows(textToRows(upstreams))
+    setRawUpstreams(!rawUpstreams)
+  }
+
   const setFwd = (i: number, f: Partial<ForwardGroup>) =>
     setForwarders(forwarders.map((g, j) => (j === i ? { ...g, ...f } : g)))
   const addFwd = () => setForwarders([...forwarders, { suffix: '', upstreams: [] }])
@@ -194,7 +291,9 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       }
       const saved = await api.saveSettings(body)
       setS(saved)
-      setUpstreams((saved.upstreams || []).join('\n'))
+      const text = (saved.upstreams || []).join('\n')
+      setUpstreams(text)
+      setUpRows(textToRows(text))
       setForwarders(saved.forwarders || [])
 
       if (cls) {
@@ -232,31 +331,89 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       <details className="settings-card" open>
         <summary>Upstream resolvers</summary>
         <label className="muted">
-          One per line, tried in order. Plain DNS <code>host:port</code> (e.g. <code>1.1.1.1:53</code>), or encrypted:
-          DNS-over-TLS <code>tls://1.1.1.1:853#cloudflare-dns.com</code> or DNS-over-HTTPS{' '}
-          <code>https://dns.quad9.net/dns-query</code>. <strong>DoT/DoH is recommended</strong> — connections are pooled,
-          so large/DNSSEC-validated answers avoid UDP fragmentation and per-query handshakes (lower latency).
+          Tried in order. <strong>DoT/DoH is recommended</strong> — connections are pooled, so large/DNSSEC-validated
+          answers avoid UDP fragmentation and per-query handshakes (lower latency). Plain DNS is faster to set up but
+          unencrypted.
         </label>
-        <div className="row" style={{ flexWrap: 'wrap', gap: 6, margin: '6px 0' }}>
-          <span className="muted" style={{ alignSelf: 'center' }}>Quick fill (DoT):</span>
-          <button type="button" className="btn ghost" onClick={() => setUpstreams('tls://1.1.1.1:853#cloudflare-dns.com\ntls://1.0.0.1:853#cloudflare-dns.com')}>
-            Cloudflare
-          </button>
-          <button type="button" className="btn ghost" onClick={() => setUpstreams('tls://9.9.9.9:853#dns.quad9.net\ntls://149.112.112.112:853#dns.quad9.net')}>
-            Quad9
-          </button>
-          <button type="button" className="btn ghost" onClick={() => setUpstreams('tls://8.8.8.8:853#dns.google\ntls://8.8.4.4:853#dns.google')}>
-            Google
-          </button>
+
+        <div className="quick-fill">
+          <span className="muted">Quick fill:</span>
+          <select value={qfProto} onChange={(e) => setQfProto(e.target.value as UpProto)} aria-label="Quick-fill protocol">
+            <option value="tls">DNS-over-TLS</option>
+            <option value="https">DNS-over-HTTPS</option>
+            <option value="plain">Plain DNS</option>
+          </select>
+          {PROVIDERS.map((p) => (
+            <button type="button" key={p.key} className="btn ghost" onClick={() => quickFill(p)}>
+              {p.label}
+            </button>
+          ))}
         </div>
-        <textarea
-          rows={4}
-          value={upstreams}
-          onChange={(e) => setUpstreams(e.target.value)}
-          placeholder="tls://1.1.1.1:853#cloudflare-dns.com&#10;tls://9.9.9.9:853#dns.quad9.net"
-        />
+
+        {rawUpstreams ? (
+          <textarea
+            rows={Math.max(4, upRows.length + 1)}
+            value={upstreams}
+            onChange={(e) => setUpstreams(e.target.value)}
+            placeholder="tls://1.1.1.1:853#cloudflare-dns.com&#10;https://dns.quad9.net/dns-query&#10;1.1.1.1:53"
+          />
+        ) : (
+          <div className="upstream-list">
+            {upRows.map((r, i) => (
+              <div className="upstream-row" key={i}>
+                <select value={r.proto} onChange={(e) => setRow(i, { proto: e.target.value as UpProto })} aria-label="Protocol">
+                  <option value="plain">Plain DNS</option>
+                  <option value="tls">DoT</option>
+                  <option value="https">DoH</option>
+                </select>
+                {r.proto === 'https' ? (
+                  <input
+                    className="grow"
+                    placeholder="https://dns.example.net/dns-query"
+                    value={r.url}
+                    onChange={(e) => setRow(i, { url: e.target.value })}
+                  />
+                ) : (
+                  <>
+                    <input
+                      className="grow"
+                      placeholder="host / IP (e.g. 1.1.1.1)"
+                      value={r.host}
+                      onChange={(e) => setRow(i, { host: e.target.value })}
+                    />
+                    <input
+                      className="port"
+                      placeholder={r.proto === 'tls' ? '853' : '53'}
+                      value={r.port}
+                      onChange={(e) => setRow(i, { port: e.target.value })}
+                      aria-label="Port"
+                    />
+                    {r.proto === 'tls' && (
+                      <input
+                        className="grow"
+                        placeholder="TLS server name (e.g. cloudflare-dns.com)"
+                        value={r.name}
+                        onChange={(e) => setRow(i, { name: e.target.value })}
+                      />
+                    )}
+                  </>
+                )}
+                <button type="button" className="del" onClick={() => delRow(i)} aria-label="Remove resolver">
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button type="button" className="btn ghost" onClick={addRow}>
+              + Add resolver
+            </button>
+          </div>
+        )}
+
         <p className="hint" style={{ textAlign: 'left' }}>
-          A quick-fill replaces the box; click <strong>Save changes</strong> below to apply.
+          <button type="button" className="linklike" onClick={toggleRaw}>
+            {rawUpstreams ? '← Back to editor' : 'Edit as text'}
+          </button>{' '}
+          · Click <strong>Save changes</strong> below to apply.
         </p>
       </details>
 
@@ -375,10 +532,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       {cls && (
         <details className="settings-card" open>
-          <summary>AI classification (local LLM)</summary>
+          <summary>Domain classification</summary>
           <label className="muted">
-            Classify newly-seen domains with a local OpenAI-compatible model (Ollama, llama.cpp, LM Studio) instead of
-            maintaining blocklists. Runs on the master; auto-blocks also propagate to workers.
+            Score newly-seen domains for risk instead of maintaining blocklists by hand. Every domain starts fully
+            legitimate and each <strong>static signal</strong> — threat-intel feeds, the trusted/popular list, reputation
+            services, WHOIS age, risky TLDs and look-alike/DGA name patterns — adjusts the score. A local AI model is an{' '}
+            <strong>optional</strong> extra signal (configured below) that mainly reduces false positives; leave it blank
+            and classification runs on the static signals alone. Runs on the master; auto-blocks also propagate to workers.
           </label>
           <div className="field">
             <label className="toggle">
@@ -386,7 +546,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               <span className="track">
                 <span className="thumb" />
               </span>
-              <span className="toggle-label">Enable classification</span>
+              <span className="toggle-label">Enable domain classification</span>
             </label>
           </div>
           <div className="field">
@@ -397,8 +557,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               <option value="auto">Auto-block</option>
             </select>
           </div>
+
+          <h4 style={{ margin: '14px 0 4px' }}>Optional AI layer (local LLM)</h4>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            Point this at a local OpenAI-compatible model (Ollama, llama.cpp, LM Studio) to fold its read in as one more
+            bounded signal — it also adds content categories (social, streaming, …). <strong>Leave the endpoint and model
+            blank to disable AI</strong> and use static analysis only.
+          </p>
           <div className="field">
-            <label>Model endpoint (OpenAI-compatible base URL)</label>
+            <label>Model endpoint (OpenAI-compatible base URL) — blank = no AI</label>
             <input
               value={cls.endpoint}
               onChange={(e) => setCls({ ...cls, endpoint: e.target.value })}
@@ -406,7 +573,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             />
           </div>
           <div className="field">
-            <label>Model</label>
+            <label>Model — blank = no AI</label>
             <input value={cls.model} onChange={(e) => setCls({ ...cls, model: e.target.value })} placeholder="llama3.2" />
           </div>
           <div className="field">

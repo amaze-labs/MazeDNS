@@ -94,6 +94,43 @@ func (s *Store) InsertClassification(c Classification) (bool, error) {
 	return n > 0, nil
 }
 
+// CleanDomains returns the registered domains currently recorded as clean and
+// not trusted — the candidates to re-check when a threat feed is refreshed.
+// Trusted-clean rows are excluded: a trusted domain stays legitimate even if a
+// feed lists it (consistent with the scorer's trusted short-circuit).
+func (s *Store) CleanDomains() ([]string, error) {
+	rows, err := s.read.Query(`SELECT domain FROM classifications WHERE status = ? AND trusted = 0`, ClassClean)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// FlagThreat flips a clean verdict to a threat block because a refreshed feed now
+// lists the domain. It only touches rows still status='clean' (and untrusted), so
+// human decisions and existing blocks are preserved. Returns whether a row changed.
+func (s *Store) FlagThreat(domain, status, reason string) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE classifications
+		 SET block = 1, threat = 1, status = ?, category = 'malware', reason = ?, updated_at = ?
+		 WHERE domain = ? AND status = ? AND trusted = 0`,
+		status, reason, time.Now().UnixMilli(), domain, ClassClean)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // SetClassificationStatus updates a verdict's status (approve/reject from the UI).
 func (s *Store) SetClassificationStatus(domain, status string) error {
 	_, err := s.db.Exec(

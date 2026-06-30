@@ -126,20 +126,27 @@ type NodeStats struct {
 // Node is a cluster worker enrolled on the master. The API key itself is never
 // stored — only its hash (for auth) and a short prefix (for display).
 type Node struct {
-	Name        string `json:"name"`
-	KeyPrefix   string `json:"key_prefix"`
-	Address     string `json:"address"`
-	Version     string `json:"version"` // short content hash the node last reported
-	LastSeen    int64  `json:"last_seen"`
-	CreatedAt   int64  `json:"created_at"`
-	IsMaster    bool   `json:"is_master"`   // the master node (always online; no key to renew)
-	Maintenance bool   `json:"maintenance"` // drained: this node answers SERVFAIL
+	Name             string `json:"name"`
+	KeyPrefix        string `json:"key_prefix"`
+	Address          string `json:"address"`
+	Version          string `json:"version"` // short content hash the node last reported
+	LastSeen         int64  `json:"last_seen"`
+	CreatedAt        int64  `json:"created_at"`
+	IsMaster         bool   `json:"is_master"`          // the master node (always online; no key to renew)
+	Maintenance      bool   `json:"maintenance"`        // drained: this node answers SERVFAIL
+	ControlPlaneOnly bool   `json:"control_plane_only"` // master only: coordinates the cluster but serves no DNS (answers REFUSED)
+	Site             string `json:"site"`               // site grouping ('' = unassigned)
+	Role             string `json:"role"`               // '' | 'primary' | 'backup' (advisory: both serve DNS)
 	NodeStats
 }
 
 // masterMaintenanceKey holds the master's own drain flag (the master isn't a row
 // in the nodes table — it's synthesized in the API), as 0/1 in app_meta.
 const masterMaintenanceKey = "master_maintenance"
+
+// masterControlPlaneOnlyKey holds the master's DNS-role flag: when set the master
+// runs as a control plane only (coordinates the cluster, serves no DNS).
+const masterControlPlaneOnlyKey = "master_control_plane_only"
 
 // MasterMaintenance reports whether the master is drained (answering SERVFAIL).
 func (s *Store) MasterMaintenance() bool {
@@ -150,6 +157,18 @@ func (s *Store) MasterMaintenance() bool {
 // SetMasterMaintenance persists the master's drain flag.
 func (s *Store) SetMasterMaintenance(on bool) error {
 	return s.SetMetaInt(masterMaintenanceKey, int64(boolToInt(on)))
+}
+
+// MasterControlPlaneOnly reports whether the master is running as a control plane
+// only (no DNS — every query is answered REFUSED).
+func (s *Store) MasterControlPlaneOnly() bool {
+	v, _ := s.GetMetaInt(masterControlPlaneOnlyKey)
+	return v != 0
+}
+
+// SetMasterControlPlaneOnly persists the master's control-plane-only flag.
+func (s *Store) SetMasterControlPlaneOnly(on bool) error {
+	return s.SetMetaInt(masterControlPlaneOnlyKey, int64(boolToInt(on)))
 }
 
 // SetNodeMaintenance toggles a worker node's drain (maintenance) flag. The worker
@@ -262,7 +281,7 @@ func (s *Store) AllNodeInsights() (map[string]Insights, error) {
 func (s *Store) ListNodes() ([]Node, error) {
 	rows, err := s.read.Query(
 		`SELECT name, key_prefix, address, version, last_seen, created_at,
-		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance
+		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance, site, role
 		 FROM nodes ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -273,7 +292,7 @@ func (s *Store) ListNodes() ([]Node, error) {
 		var n Node
 		var maintenance int
 		if err := rows.Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt,
-			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors, &maintenance); err != nil {
+			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors, &maintenance, &n.Site, &n.Role); err != nil {
 			return nil, err
 		}
 		n.Maintenance = maintenance != 0

@@ -144,10 +144,12 @@ func main() {
 	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {
 		res.SetBlockPausedUntil(ts)
 	}
-	// The master restores its own maintenance (drain) state across restarts; a
-	// worker learns its flag from the master on its first config poll.
+	// The master restores its own maintenance (drain) and control-plane-only (no
+	// DNS) state across restarts; a worker learns its flags from the master on its
+	// first config poll.
 	if !worker {
 		res.SetMaintenance(st.MasterMaintenance())
+		res.SetControlPlaneOnly(st.MasterControlPlaneOnly())
 	}
 
 	// Build the filtering/rewrite policy from file blocklists + DB rules/rewrites.

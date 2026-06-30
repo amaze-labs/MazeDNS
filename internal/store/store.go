@@ -234,6 +234,21 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 	completion_tokens INTEGER NOT NULL DEFAULT 0,
 	latency_ms_total INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS sites (
+	name TEXT PRIMARY KEY,
+	description TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS reputation_usage (
+	day TEXT NOT NULL,                           -- UTC date (YYYY-MM-DD)
+	service TEXT NOT NULL,                        -- 'virustotal' | 'abuseipdb'
+	calls INTEGER NOT NULL DEFAULT 0,
+	errors INTEGER NOT NULL DEFAULT 0,
+	rate_limited INTEGER NOT NULL DEFAULT 0,      -- count of 429 (quota) responses
+	remaining INTEGER NOT NULL DEFAULT -1,        -- last API-reported quota remaining (-1 = unknown)
+	limit_total INTEGER NOT NULL DEFAULT -1,      -- last API-reported daily limit (-1 = unknown)
+	PRIMARY KEY (day, service)
+);
 `
 	if _, err := s.db.Exec(schema); err != nil {
 		return fmt.Errorf("migrate: %w", err)
@@ -261,6 +276,8 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 		`ALTER TABLE classifications ADD COLUMN factors TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE classifications ADD COLUMN note TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN site TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN role TEXT NOT NULL DEFAULT ''`, // '' | 'primary' | 'backup'
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migrate alter: %w", err)

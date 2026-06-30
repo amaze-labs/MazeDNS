@@ -161,6 +161,11 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
 			mux.HandleFunc("POST /api/cluster/nodes/{name}/key", s.requireRole(roleAdmin, s.renewNodeKey))
 			mux.HandleFunc("PUT /api/cluster/nodes/{name}/maintenance", s.requireRole(roleAdmin, s.setNodeMaintenance))
+			mux.HandleFunc("PUT /api/cluster/master/control-plane-only", s.requireRole(roleAdmin, s.setMasterControlPlaneOnly))
+			mux.HandleFunc("PUT /api/cluster/nodes/{name}/site", s.requireRole(roleAdmin, s.setNodeSite))
+			mux.HandleFunc("GET /api/cluster/sites", s.requireRole(roleReadonly, s.listSites))
+			mux.HandleFunc("POST /api/cluster/sites", s.requireRole(roleAdmin, s.createSite))
+			mux.HandleFunc("DELETE /api/cluster/sites/{name}", s.requireRole(roleAdmin, s.deleteSite))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{name}", s.requireRole(roleAdmin, s.deleteNode))
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
@@ -308,11 +313,14 @@ func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	total, blocked, cached, forwarded, rewritten, errs := s.res.StatsSnapshot()
 	ver, _ := s.store.ConfigVersion()
 	master := store.Node{
-		Name:        "master",
-		Version:     ver,
-		LastSeen:    time.Now().Unix(),
-		IsMaster:    true,
-		Maintenance: s.store.MasterMaintenance(),
+		Name:             "master",
+		Version:          ver,
+		LastSeen:         time.Now().Unix(),
+		IsMaster:         true,
+		Maintenance:      s.store.MasterMaintenance(),
+		ControlPlaneOnly: s.store.MasterControlPlaneOnly(),
+		Site:             s.store.MasterSite(),
+		Role:             s.store.MasterRole(),
 		NodeStats: store.NodeStats{
 			Total: int64(total), Blocked: int64(blocked), Cached: int64(cached),
 			Forwarded: int64(forwarded), Rewritten: int64(rewritten), Errors: int64(errs),
@@ -346,6 +354,86 @@ func (s *Server) setNodeMaintenance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "maintenance": in.On})
+}
+
+// setMasterControlPlaneOnly toggles the master's DNS role: when on, the master
+// serves no DNS (answers REFUSED) and acts purely as the cluster control plane.
+// Applied to the resolver immediately and persisted across restarts.
+func (s *Server) setMasterControlPlaneOnly(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.store.SetMasterControlPlaneOnly(in.On); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.res.SetControlPlaneOnly(in.On)
+	writeJSON(w, http.StatusOK, map[string]any{"control_plane_only": in.On})
+}
+
+// listSites returns the configured sites (named node groups).
+func (s *Server) listSites(w http.ResponseWriter, _ *http.Request) {
+	sites, err := s.store.ListSites()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sites)
+}
+
+// createSite adds (or re-describes) a site.
+func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.store.CreateSite(in.Name, in.Description); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": strings.TrimSpace(in.Name)})
+}
+
+// deleteSite removes a site and unassigns its nodes.
+func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteSite(r.PathValue("name")); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": r.PathValue("name")})
+}
+
+// setNodeSite assigns a node (or "master") to a site with a role (primary/backup).
+// Roles are advisory labels — every node still serves DNS.
+func (s *Server) setNodeSite(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var in struct {
+		Site string `json:"site"`
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	var err error
+	if name == "master" {
+		err = s.store.SetMasterSite(in.Site, in.Role)
+	} else {
+		err = s.store.SetNodeSite(name, in.Site, in.Role)
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "site": strings.TrimSpace(in.Site), "role": in.Role})
 }
 
 // addNode enrolls a worker, generating its API key (returned once, in clear).

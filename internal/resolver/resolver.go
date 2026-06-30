@@ -156,6 +156,10 @@ type Resolver struct {
 	// maintenance, when set, drains this node: every query is answered SERVFAIL so
 	// clients fail over to another DNS server.
 	maintenance atomic.Bool
+	// controlPlaneOnly, when set (master only), makes this node a control plane that
+	// serves no DNS: every query is answered REFUSED. Distinct from maintenance — it
+	// is a deliberate role, not a temporary drain.
+	controlPlaneOnly atomic.Bool
 }
 
 // SetMaintenance toggles maintenance (drain) mode for this node. While on, every
@@ -164,6 +168,14 @@ func (r *Resolver) SetMaintenance(on bool) { r.maintenance.Store(on) }
 
 // InMaintenance reports whether this node is draining (answering SERVFAIL).
 func (r *Resolver) InMaintenance() bool { return r.maintenance.Load() }
+
+// SetControlPlaneOnly toggles control-plane-only mode (master only). While on,
+// every DNS query is answered REFUSED so this node serves only the cluster
+// control plane (config, dashboard, enrollment) and not DNS.
+func (r *Resolver) SetControlPlaneOnly(on bool) { r.controlPlaneOnly.Store(on) }
+
+// ControlPlaneOnly reports whether this node serves no DNS (answering REFUSED).
+func (r *Resolver) ControlPlaneOnly() bool { return r.controlPlaneOnly.Load() }
 
 // SetBlockPausedUntil suspends block enforcement until ts (unix seconds); 0
 // resumes immediately. Allow/rewrite/cache/forward are unaffected.
@@ -306,6 +318,15 @@ func (r *Resolver) CacheLen() int {
 func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 	client := clientIP(w.RemoteAddr())
+
+	// Control-plane-only (master): this node serves no DNS by design, so answer
+	// REFUSED — a clear "not a resolver" signal that makes clients use another server.
+	if r.ControlPlaneOnly() {
+		m := new(dns.Msg)
+		m.SetRcode(req, dns.RcodeRefused)
+		_ = w.WriteMsg(m)
+		return
+	}
 
 	// Maintenance/drain: answer SERVFAIL so clients fail over to another DNS server.
 	// Done before any pipeline work, and not logged, to keep a drained node quiet.

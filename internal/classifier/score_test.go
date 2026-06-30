@@ -1,6 +1,9 @@
 package classifier
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func block(cat string, conf float64) Verdict { return Verdict{Category: cat, Confidence: conf} }
 
@@ -55,6 +58,23 @@ func TestComputeScore(t *testing.T) {
 			// VT-clean floor keeps it >= blockThreshold despite a confident phishing verdict
 			minLegit: reputationFloor,
 		},
+		// --- static-only path (no AI): the verdict is the zero value ---
+		{
+			name:      "static-only: threat feed blocks with no model verdict",
+			in:        ScoreInput{Domain: "evil.example", Threat: true, Whois: WhoisInfo{AgeDays: 4000}},
+			wantBlock: true, maxLegit: blockThreshold - 1,
+		},
+		{
+			name:      "static-only: VirusTotal-malicious blocks with no model verdict",
+			in:        ScoreInput{Domain: "evil.example", Whois: WhoisInfo{AgeDays: 3000}, Rep: Reputation{VTChecked: true, VTMalicious: 6}},
+			wantBlock: true, maxLegit: blockThreshold - 1,
+		},
+		{
+			name: "static-only: clean unknown domain is not blocked without a threat indicator",
+			in:   ScoreInput{Domain: "newstartup.com", Whois: WhoisInfo{AgeDays: 20}},
+			// young deducts, but no threat/rep indicator and no model -> not a candidate
+			minLegit: 1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,6 +97,25 @@ func TestComputeScore(t *testing.T) {
 	}
 }
 
+func TestAIConfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Settings
+		want bool
+	}{
+		{"both set", Settings{Endpoint: "http://localhost:11434/v1", Model: "llama3.2"}, true},
+		{"endpoint only", Settings{Endpoint: "http://localhost:11434/v1"}, false},
+		{"model only", Settings{Model: "llama3.2"}, false},
+		{"neither (static only)", Settings{}, false},
+		{"whitespace is blank", Settings{Endpoint: "  ", Model: "\t"}, false},
+	}
+	for _, c := range cases {
+		if got := aiConfigured(c.s); got != c.want {
+			t.Errorf("%s: aiConfigured = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestRiskyTLDAndLexical(t *testing.T) {
 	if _, risky := riskyTLD("foo.xyz"); !risky {
 		t.Error(".xyz should be flagged risky")
@@ -89,5 +128,31 @@ func TestRiskyTLDAndLexical(t *testing.T) {
 	}
 	if fs := lexicalFactors("google.com"); len(fs) != 0 {
 		t.Errorf("clean name should have no lexical factors, got %+v", fs)
+	}
+}
+
+func TestBrandImpersonation(t *testing.T) {
+	flagged := []string{
+		"paypa1.com",              // homoglyph: 1 -> l
+		"g00gle.net",              // homoglyph: 0 -> o
+		"secure-paypal-login.xyz", // brand as a token
+		"login-apple-id.top",      // brand as a token
+	}
+	for _, d := range flagged {
+		label := d[:strings.IndexByte(d, '.')]
+		if _, ok := brandImpersonationFactor(label); !ok {
+			t.Errorf("%q should be flagged as brand impersonation", d)
+		}
+	}
+	clean := []string{
+		"paypal",     // the brand itself — not impersonation
+		"google",     // the brand itself
+		"applesauce", // contains "apple" but not as a separate token
+		"mystartup",  // unrelated
+	}
+	for _, label := range clean {
+		if f, ok := brandImpersonationFactor(label); ok {
+			t.Errorf("%q should NOT be flagged, got %+v", label, f)
+		}
 	}
 }

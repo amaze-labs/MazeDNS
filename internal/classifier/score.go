@@ -234,7 +234,70 @@ func lexicalFactors(domain string) []Factor {
 	if len(label) >= 12 && entropy(label) > 3.8 {
 		fs = append(fs, Factor{"Lexical: randomness", "high-entropy name — looks machine-generated (DGA)", -12})
 	}
+	if f, ok := brandImpersonationFactor(label); ok {
+		fs = append(fs, f)
+	}
 	return fs
+}
+
+// impersonationTargets are high-value brands commonly imitated for phishing. A
+// domain that looks like one of these but isn't it (a real brand domain is caught
+// earlier by the trusted/nameserver short-circuits) is a classic look-alike.
+var impersonationTargets = []string{
+	"paypal", "google", "apple", "icloud", "microsoft", "office365", "outlook",
+	"amazon", "facebook", "instagram", "whatsapp", "netflix", "linkedin", "dropbox",
+	"coinbase", "binance", "metamask", "wellsfargo", "chase", "bankofamerica",
+	"americanexpress", "yahoo", "gmail", "steam", "roblox", "discord", "spotify",
+}
+
+// homoglyphs maps look-alike characters to the letter they imitate, so a
+// "paypa1" / "g00gle" style swap can be normalized back to the brand.
+var homoglyphs = map[rune]rune{
+	'0': 'o', '1': 'l', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's',
+}
+
+func normalizeHomoglyphs(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if n, ok := homoglyphs[r]; ok {
+			b.WriteRune(n)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// brandImpersonationFactor flags a primary label that imitates a known brand:
+// either a homoglyph look-alike (normalizes to the brand but isn't typed as it,
+// e.g. "paypa1") or the brand embedded as a separate token alongside extra text
+// (e.g. "secure-paypal-login"). It deliberately does NOT fire on the brand itself.
+// On its own this only lowers the score — a block still needs a threat indicator —
+// so it's safe to be a little aggressive.
+func brandImpersonationFactor(label string) (Factor, bool) {
+	if len(label) < 4 {
+		return Factor{}, false
+	}
+	norm := normalizeHomoglyphs(label)
+	tokens := strings.FieldsFunc(label, func(r rune) bool { return r == '-' || r == '.' || r == '_' })
+	for _, b := range impersonationTargets {
+		if label == b {
+			return Factor{}, false // it IS the brand's name — not impersonation
+		}
+		if norm == b {
+			return Factor{Label: "Lexical: look-alike", Detail: fmt.Sprintf("imitates %q via look-alike characters", b), Delta: -28}, true
+		}
+		// Brand as a distinct token within a longer, multi-part name.
+		if len(tokens) > 1 {
+			for _, t := range tokens {
+				if t == b {
+					return Factor{Label: "Lexical: brand in name", Detail: fmt.Sprintf("contains the brand %q with extra text — possible look-alike", b), Delta: -22}, true
+				}
+			}
+		}
+	}
+	return Factor{}, false
 }
 
 // entropy is the Shannon entropy (bits/char) of a string — high values flag

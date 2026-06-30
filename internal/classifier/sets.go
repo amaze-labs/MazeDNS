@@ -20,6 +20,9 @@ type setHolder struct {
 	set  atomic.Pointer[TrustedSet]
 	src  atomic.Value // string key of the sources the current set was built from
 	busy atomic.Bool
+	// onChange, if set, fires after the set is successfully (re)loaded — used to
+	// re-check existing verdicts against a refreshed threat feed.
+	onChange func()
 }
 
 func newSetHolder(name string) *setHolder { return &setHolder{name: name} }
@@ -54,6 +57,33 @@ func (h *setHolder) ensureSync(sources []domainSource) {
 	h.set.Store(set)
 	h.src.Store(key)
 	slog.Info(h.name+" list loaded", "domains", set.Count())
+	if h.onChange != nil {
+		h.onChange()
+	}
+}
+
+// refresh re-fetches the set from its current sources even when the source key is
+// unchanged — threat feeds (URLhaus, etc.) update continuously, so a long-running
+// node must periodically re-pull them rather than trusting the startup snapshot.
+func (h *setHolder) refresh(sources []domainSource) {
+	if len(sources) == 0 {
+		return
+	}
+	if !h.busy.CompareAndSwap(false, true) {
+		return // a load is already in flight
+	}
+	defer h.busy.Store(false)
+	set, err := loadSources(sources)
+	if err != nil {
+		slog.Warn(h.name+" list refresh failed", "err", err)
+		return
+	}
+	h.set.Store(set)
+	h.src.Store(sourcesKey(sources))
+	slog.Info(h.name+" list refreshed", "domains", set.Count())
+	if h.onChange != nil {
+		h.onChange()
+	}
 }
 
 func sourcesKey(sources []domainSource) string {

@@ -235,9 +235,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Master: LLM domain classifier. The worker always runs (it no-ops while
-	// disabled) so the feature can be turned on/repointed live from the Settings
-	// UI without a restart. Config seeds the persisted settings on first run.
+	// Master: domain classifier. Scores newly-seen domains from static signals
+	// (threat feeds, trusted list, reputation, WHOIS age, heuristics), with a local
+	// LLM as an optional extra signal when an endpoint+model are configured. The
+	// worker always runs (it no-ops while disabled) so the feature can be turned
+	// on/repointed live from the Settings UI without a restart. Config seeds the
+	// persisted settings on first run.
 	if !worker {
 		defaults := classifier.Settings{
 			Enabled:               cfg.Classifier.Enabled,

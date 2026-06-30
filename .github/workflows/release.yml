@@ -1,0 +1,100 @@
+name: Build latest binaries (manual)
+
+# Manual-only, mirroring the container `:latest` flow (build-latest.yml): build
+# self-contained MazeDNS binaries for Linux/macOS/Windows and publish them to a
+# single, rolling "latest" GitHub Release that is overwritten on every run.
+#
+# No versioning: filenames are stable (mazedns_<os>_<arch>.tar.gz|.zip), so the
+# download URLs never change, and `mazedns` reports the build's commit + date.
+# The web UI is embedded and the SQLite driver is pure Go (CGO off), so one Linux
+# runner cross-compiles every target.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write # move the `latest` tag and publish the release
+
+jobs:
+  release:
+    name: Build & publish latest binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the web UI (embedded into the binary)
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+
+      - name: Build version string
+        id: ver
+        run: echo "version=latest+$(git rev-parse --short HEAD) ($(date -u +%Y-%m-%d))" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-compile and package
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
+          for t in $targets; do
+            os="${t%/*}"; arch="${t#*/}"
+            name="mazedns_${os}_${arch}"
+            stage="dist/${name}"
+            mkdir -p "$stage"
+            bin="mazedns"; [ "$os" = "windows" ] && bin="mazedns.exe"
+            echo "==> building ${t}"
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -tags embed_dist -trimpath \
+                -ldflags="-s -w -X 'main.version=${VERSION}'" \
+                -o "${stage}/${bin}" ./cmd/mazedns
+            cp configs/mazedns.yaml "${stage}/mazedns.yaml.example"
+            [ -f README.md ] && cp README.md "${stage}/" || true
+            [ -f LICENSE ] && cp LICENSE "${stage}/" || true
+            if [ "$os" = "windows" ]; then
+              (cd dist && zip -qr "${name}.zip" "${name}")
+            else
+              tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            fi
+            rm -rf "$stage"
+          done
+          (cd dist && sha256sum mazedns_*.tar.gz mazedns_*.zip > "mazedns_checksums.txt")
+          ls -lh dist
+
+      - name: Move the 'latest' tag to this commit
+        run: |
+          git tag -f latest "${GITHUB_SHA}"
+          git push -f origin latest
+
+      - name: Publish the 'latest' release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest build
+          make_latest: true
+          body: |
+            Rolling build of `main` — overwritten on each run.
+
+            **Build:** `${{ steps.ver.outputs.version }}`
+
+            Pick the archive for your OS/arch below. Verify with `mazedns_checksums.txt`.
+            Each archive contains the `mazedns` binary plus `mazedns.yaml.example`.
+          files: |
+            dist/mazedns_*.tar.gz
+            dist/mazedns_*.zip
+            dist/mazedns_checksums.txt

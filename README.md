@@ -32,7 +32,7 @@ multi-site **clustering**.
 |------------|--------------------------------------------------------------------|
 | DNS engine | **Go** + [`miekg/dns`](https://github.com/miekg/dns) (wire codec only) |
 | API        | Go HTTP (JSON REST) + Prometheus `/metrics`                        |
-| Datastore  | **SQLite** (pure-Go driver, static-binary friendly)                |
+| Datastore  | **SQLite** (pure-Go, embedded — default) or external **PostgreSQL** |
 | Frontend   | **React + Vite + TypeScript** SPA                                   |
 | Auth       | Local (argon2id) **or** OIDC (Authentik)                            |
 | Deploy     | Docker, then k3s                                                    |
@@ -42,6 +42,13 @@ auth, clustering — is custom. `miekg/dns` is used only for RFC-correct DNS pac
 encoding/decoding, nothing more.
 
 See [docs/architecture.md](docs/architecture.md) for the full design.
+
+## Install
+
+Grab a self-contained binary for Linux/macOS/Windows from the rolling
+[**`latest` release**](https://github.com/IPMaze/MazeDNS/releases/latest), or run the container
+(`ghcr.io/ipmaze/mazedns:latest`). Full instructions — including how to choose
+where the SQLite database lives — are in [docs/install.md](docs/install.md).
 
 ## Quick start
 

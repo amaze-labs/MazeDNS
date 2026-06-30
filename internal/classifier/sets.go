@@ -16,18 +16,22 @@ type domainSource struct {
 // setHolder owns a domain set that is (re)loaded in the background when its
 // configured sources change. All access is lock-free via the atomic pointer.
 type setHolder struct {
-	name string
-	set  atomic.Pointer[TrustedSet]
-	src  atomic.Value // string key of the sources the current set was built from
-	busy atomic.Bool
+	name      string
+	countHits bool // build a per-domain source count (threat sets only)
+	set       atomic.Pointer[TrustedSet]
+	src       atomic.Value // string key of the sources the current set was built from
+	busy      atomic.Bool
 	// onChange, if set, fires after the set is successfully (re)loaded — used to
 	// re-check existing verdicts against a refreshed threat feed.
 	onChange func()
 }
 
-func newSetHolder(name string) *setHolder { return &setHolder{name: name} }
+func newSetHolder(name string, countHits bool) *setHolder {
+	return &setHolder{name: name, countHits: countHits}
+}
 
 func (h *setHolder) has(domain string) bool          { return h.set.Load().Has(domain) }
+func (h *setHolder) hits(domain string) int          { return h.set.Load().Hits(domain) }
 func (h *setHolder) count() int                      { return h.set.Load().Count() }
 func (h *setHolder) search(q string, n int) []string { return h.set.Load().Search(q, n) }
 
@@ -49,7 +53,7 @@ func (h *setHolder) ensureSync(sources []domainSource) {
 		return // a background load is already in flight
 	}
 	defer h.busy.Store(false)
-	set, err := loadSources(sources)
+	set, err := loadSources(sources, h.countHits)
 	if err != nil {
 		slog.Warn(h.name+" list load failed", "err", err)
 		return
@@ -73,7 +77,7 @@ func (h *setHolder) refresh(sources []domainSource) {
 		return // a load is already in flight
 	}
 	defer h.busy.Store(false)
-	set, err := loadSources(sources)
+	set, err := loadSources(sources, h.countHits)
 	if err != nil {
 		slog.Warn(h.name+" list refresh failed", "err", err)
 		return
@@ -94,10 +98,14 @@ func sourcesKey(sources []domainSource) string {
 	return strings.Join(parts, "|")
 }
 
-// loadSources loads and unions every source. A failed source is logged and
-// skipped; only an all-empty result with an error is treated as a failure.
-func loadSources(sources []domainSource) (*TrustedSet, error) {
+// loadSources loads and unions every source. When count is set (threat feeds), it
+// also records how many distinct sources list each domain. A failed source is
+// logged and skipped; only an all-empty result with an error is a failure.
+func loadSources(sources []domainSource, count bool) (*TrustedSet, error) {
 	set := &TrustedSet{domains: make(map[string]struct{})}
+	if count {
+		set.counts = make(map[string]int)
+	}
 	var firstErr error
 	for _, s := range sources {
 		one, err := LoadTrusted(s.url, s.topN)
@@ -110,6 +118,9 @@ func loadSources(sources []domainSource) (*TrustedSet, error) {
 		}
 		for d := range one.domains {
 			set.domains[d] = struct{}{}
+			if count {
+				set.counts[d]++ // one more source lists this domain
+			}
 		}
 	}
 	if len(set.domains) == 0 && firstErr != nil {

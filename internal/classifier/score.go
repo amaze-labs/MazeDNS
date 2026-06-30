@@ -46,17 +46,36 @@ type ScoreInput struct {
 	ListTrusted bool       // on the popular/trusted-domains allowlist
 	CDN         bool       // a CDN / cloud-edge provider (whole provider is trusted)
 	NSTrustedOn string     // registered domain of trusted authoritative nameservers, if any
-	Threat      bool       // on a threat-intel feed
+	Threat      bool       // on at least one threat-intel feed
+	ThreatHits  int        // how many feeds list it (corroboration; 1 may be a misreport)
 	ThreatLabel string     // which feed/source matched (for the breakdown)
 	Whois       WhoisInfo  // registration data
 	Rep         Reputation // public reputation services (VirusTotal / AbuseIPDB)
 	Verdict     Verdict    // the model's assessment
 }
 
+// threatHits returns how many feeds list the domain, tolerating callers that only
+// set the legacy Threat bool (treated as a single hit).
+func (in ScoreInput) threatHits() int {
+	if in.ThreatHits > 0 {
+		return in.ThreatHits
+	}
+	if in.Threat {
+		return 1
+	}
+	return 0
+}
+
 // RepMalicious reports whether the reputation services indicate the domain is
 // malicious (so it becomes a block candidate on its own).
-func (in ScoreInput) RepMalicious() bool {
-	return in.Rep.VTMalicious >= 2 || (in.Rep.AbuseChecked && in.Rep.AbuseScore >= 50)
+func (in ScoreInput) RepMalicious() bool { return in.Rep.Malicious() }
+
+// StrongThreat reports a *corroborated* malicious signal: the domain is on two or
+// more threat feeds, or a reputation service flags it. A single-feed hit is NOT
+// strong on its own (it can be a misreport of an otherwise-clean domain), so it
+// does not bypass the established / reputation-clean floors below.
+func (in ScoreInput) StrongThreat() bool {
+	return in.threatHits() >= 2 || in.RepMalicious()
 }
 
 func imin(a, b int) int {
@@ -92,14 +111,25 @@ func computeScore(in ScoreInput) Score {
 	}
 	note := func(label, detail string) { fs = append(fs, Factor{Label: label, Detail: detail, Delta: 0}) }
 
-	// Threat intel — strong, but (per the user) not an absolute golden rule: it is
-	// weighed alongside age and trust, not taken alone.
-	if in.Threat {
-		src := in.ThreatLabel
-		if src == "" {
-			src = "a public threat-intel feed"
+	// Threat intel — weighed by corroboration. A domain on a single feed may be a
+	// misreport (threat lists do carry clean domains reported by mistake), so it
+	// deducts less and respects the established / reputation-clean floors below.
+	// Listing on several feeds is strong, near-definitive evidence.
+	if hits := in.threatHits(); hits > 0 {
+		var delta int
+		var detail string
+		switch {
+		case hits >= 3:
+			delta, detail = -90, fmt.Sprintf("listed on %d threat-intel feeds — strongly corroborated", hits)
+		case hits == 2:
+			delta, detail = -70, "listed on 2 threat-intel feeds — corroborated"
+		default:
+			delta, detail = -45, "listed on 1 threat-intel feed — single source (possible misreport)"
 		}
-		add("Threat intel", "listed on "+src, -70)
+		if in.ThreatLabel != "" && hits == 1 {
+			detail = "listed on " + in.ThreatLabel + " — single source (possible misreport)"
+		}
+		add("Threat intel", detail, delta)
 	}
 
 	// Domain age — the single best phishing/malware indicator (they are young and
@@ -164,17 +194,19 @@ func computeScore(in ScoreInput) Score {
 		note("Model assessment", cat+" — not a threat category")
 	}
 
-	// Established-domain floor — phishing/malware is overwhelmingly young, so an
-	// old domain that is NOT on a threat feed can't be dragged into block range by
-	// soft signals (model + lexical) alone.
-	if in.Whois.AgeDays >= establishedDays && !in.Threat && !in.RepMalicious() && legit < establishedFloor {
+	// Established-domain floor — phishing/malware is overwhelmingly young, so an old
+	// domain without a *corroborated* threat signal can't be dragged into block
+	// range by soft signals (model + lexical + a lone feed) alone. A single-feed
+	// hit on an old domain is treated as a likely misreport and floored here.
+	if in.Whois.AgeDays >= establishedDays && !in.StrongThreat() && legit < establishedFloor {
 		add("Established floor", fmt.Sprintf("%d-day-old domain — soft signals alone don't block it", in.Whois.AgeDays), establishedFloor-legit)
 	}
 
-	// Reputation-clean floor — a domain VirusTotal reports clean (and that no feed
-	// flags) shouldn't be sunk into block range by the model or name shape alone.
+	// Reputation-clean floor — a domain VirusTotal reports clean (and that isn't
+	// corroborated as malicious) shouldn't be sunk into block range by the model, a
+	// lone feed, or name shape alone.
 	repClean := in.Rep.VTChecked && in.Rep.VTMalicious == 0 && in.Rep.VTSuspicious == 0 && in.Rep.VTHarmless > 0
-	if repClean && !in.Threat && !in.RepMalicious() && legit < reputationFloor {
+	if repClean && !in.StrongThreat() && legit < reputationFloor {
 		add("Reputation floor", "VirusTotal reports it clean — soft signals alone don't block it", reputationFloor-legit)
 	}
 

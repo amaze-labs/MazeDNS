@@ -133,8 +133,8 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		reload:  reload,
 		queue:   make(chan string, 2048),
 		recent:  make(map[string]time.Time),
-		trusted: newSetHolder("trusted"),
-		threat:  newSetHolder("threat"),
+		trusted: newSetHolder("trusted", false),
+		threat:  newSetHolder("threat", true), // count how many feeds list each domain
 		whois:   NewWhoisCache(),
 		rep:     NewRepCache(),
 	}
@@ -275,27 +275,38 @@ func (w *Worker) rescanThreat() {
 		slog.Warn("threat rescan: list clean domains failed", "err", err)
 		return
 	}
-	status := store.ClassSuggested
-	if ParseMode(s.Mode) == ModeAuto {
-		status = store.ClassAuto // a threat-feed hit alone is confident enough to enforce
-	}
-	flipped := 0
+	autoMode := ParseMode(s.Mode) == ModeAuto
+	flipped, autoFlipped := 0, 0
 	for _, d := range domains {
-		if !w.threat.has(d) {
+		hits := w.threat.hits(d)
+		if hits == 0 {
 			continue
 		}
-		ok, err := w.store.FlagThreat(d, status, "re-flagged: now listed on a threat-intel feed")
+		// A lone feed could be a misreport — only multi-feed corroboration auto-blocks
+		// a previously-clean domain; a single feed is sent to review instead.
+		status := store.ClassSuggested
+		reason := "re-flagged: now listed on 1 threat-intel feed — review (possible misreport)"
+		if hits >= 2 {
+			reason = fmt.Sprintf("re-flagged: now listed on %d threat-intel feeds", hits)
+			if autoMode {
+				status = store.ClassAuto
+			}
+		}
+		ok, err := w.store.FlagThreat(d, status, reason)
 		if err != nil {
 			slog.Warn("threat rescan: flag failed", "domain", d, "err", err)
 			continue
 		}
 		if ok {
 			flipped++
+			if status == store.ClassAuto {
+				autoFlipped++
+			}
 		}
 	}
 	if flipped > 0 {
-		slog.Info("threat rescan re-flagged clean domains", "count", flipped, "status", status)
-		if status == store.ClassAuto && w.reload != nil {
+		slog.Info("threat rescan re-flagged clean domains", "count", flipped, "auto", autoFlipped)
+		if autoFlipped > 0 && w.reload != nil {
 			_ = w.reload()
 		}
 	}
@@ -364,18 +375,27 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		}
 	}
 
-	// Not trusted: now spend the remaining signals. Threat-feed membership is an
-	// in-memory set lookup; reputation may hit external services (key-gated).
-	threat := w.threat.has(domain)
-	rep := w.rep.Lookup(ctx, domain, s)
+	// Not trusted: spend the remaining signals. Threat-feed membership is a cheap
+	// in-memory lookup that also tells us how many feeds list the domain. A hit on
+	// 2+ feeds is corroborated enough to be a definitive block, so we can skip the
+	// costly reputation + LLM work entirely (saves API quota and LLM tokens).
+	threatHits := w.threat.hits(domain)
+	threat := threatHits > 0
+	strong := threatHits >= 2
 
-	// The local LLM is an OPTIONAL enrichment layer. When an endpoint + model are
-	// configured we fold its read in as one more (bounded) signal — mainly to cut
-	// false positives. With them left blank, classification runs purely on the
-	// deterministic signals above (threat feeds, reputation, WHOIS age, risky TLD,
-	// brand look-alikes and lexical heuristics) — a full static analysis with no AI.
+	var rep Reputation
+	if !strong {
+		rep = w.rep.Lookup(ctx, domain, s)
+		strong = rep.Malicious()
+	}
+
+	// The local LLM is an OPTIONAL enrichment layer mainly used to cut false
+	// positives. Skip it when a corroborated threat / reputation hit already makes
+	// the block definitive — the model can't reduce a false positive there, so the
+	// call would only spend tokens. With AI off (or no model), classification runs
+	// purely on the deterministic signals above.
 	var v Verdict
-	if aiConfigured(s) {
+	if aiConfigured(s) && !strong {
 		start := time.Now()
 		vv, usage, err := w.clientFor(s).Classify(ctx, domain, Hints{Threat: threat, Whois: whois.summary(), Reputation: rep.summary()})
 		_ = w.store.RecordLLMUsage(err != nil, usage.PromptTokens, usage.CompletionTokens, int(time.Since(start).Milliseconds()))
@@ -389,11 +409,10 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		v = vv
 	}
 
-	// Score the domain: start at 100% legitimate and let every risk factor deduct
-	// (the model's read is just one bounded factor). This is what actually decides
-	// the verdict — not the model's raw confidence. (Trusted/CDN/NS-trust were
-	// already handled by the fast paths above, so they're zero here.)
-	in := ScoreInput{Domain: domain, Threat: threat, Whois: whois, Rep: rep, Verdict: v}
+	// Score the domain: start at 100% legitimate and let every risk factor deduct.
+	// A lone threat-feed hit is weighed as a possible misreport (see computeScore);
+	// corroboration across feeds, or a reputation flag, blocks decisively.
+	in := ScoreInput{Domain: domain, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v}
 	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security

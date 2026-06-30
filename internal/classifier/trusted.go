@@ -33,6 +33,10 @@ const DefaultThreatURL = "https://urlhaus.abuse.ch/downloads/hostfile/"
 // trusted domain, MazeDNS does not auto-block it — it asks for review instead.
 type TrustedSet struct {
 	domains map[string]struct{}
+	// counts, when non-nil (threat sets only), records how many distinct sources
+	// list each domain — so a single-feed hit (a possible misreport) can be weighed
+	// less than corroboration across several feeds.
+	counts map[string]int
 }
 
 // Has reports whether name's registered domain is in the trusted set.
@@ -46,6 +50,25 @@ func (t *TrustedSet) Has(name string) bool {
 	}
 	_, ok := t.domains[d]
 	return ok
+}
+
+// Hits reports how many sources list name's registered domain (0 = absent). For a
+// set built without counting it returns 1 when present, 0 otherwise.
+func (t *TrustedSet) Hits(name string) int {
+	if t == nil || len(t.domains) == 0 {
+		return 0
+	}
+	d := RegisteredDomain(name)
+	if d == "" {
+		return 0
+	}
+	if t.counts != nil {
+		return t.counts[d]
+	}
+	if _, ok := t.domains[d]; ok {
+		return 1
+	}
+	return 0
 }
 
 // Count returns the number of registered domains in the set.

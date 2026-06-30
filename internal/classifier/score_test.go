@@ -31,8 +31,19 @@ func TestComputeScore(t *testing.T) {
 			wantBlock: true, maxLegit: blockThreshold - 1,
 		},
 		{
-			name:      "threat-feed hit blocks even when the model missed it",
-			in:        ScoreInput{Domain: "evil.example", Threat: true, Whois: WhoisInfo{AgeDays: 4000}, Verdict: block("other", 0.4)},
+			name:      "corroborated threat (2+ feeds) blocks even when the model missed it",
+			in:        ScoreInput{Domain: "evil.example", Threat: true, ThreatHits: 2, Whois: WhoisInfo{AgeDays: 4000}, Verdict: block("other", 0.4)},
+			wantBlock: true, maxLegit: blockThreshold - 1,
+		},
+		{
+			name: "single-feed hit on an established domain is floored (possible misreport)",
+			in:   ScoreInput{Domain: "oldcorp.com", Threat: true, ThreatHits: 1, Whois: WhoisInfo{AgeDays: 4000}},
+			// one feed alone can't drag an established domain into block range
+			minLegit: establishedFloor,
+		},
+		{
+			name:      "single-feed hit on a YOUNG domain still blocks",
+			in:        ScoreInput{Domain: "evil.example", Threat: true, ThreatHits: 1, Whois: WhoisInfo{AgeDays: 10}},
 			wantBlock: true, maxLegit: blockThreshold - 1,
 		},
 		{
@@ -60,8 +71,8 @@ func TestComputeScore(t *testing.T) {
 		},
 		// --- static-only path (no AI): the verdict is the zero value ---
 		{
-			name:      "static-only: threat feed blocks with no model verdict",
-			in:        ScoreInput{Domain: "evil.example", Threat: true, Whois: WhoisInfo{AgeDays: 4000}},
+			name:      "static-only: corroborated threat (2 feeds) blocks with no model verdict",
+			in:        ScoreInput{Domain: "evil.example", Threat: true, ThreatHits: 2, Whois: WhoisInfo{AgeDays: 4000}},
 			wantBlock: true, maxLegit: blockThreshold - 1,
 		},
 		{

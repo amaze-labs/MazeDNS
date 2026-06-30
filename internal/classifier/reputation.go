@@ -44,6 +44,12 @@ func (r Reputation) summary() string {
 // any reports whether any source was actually checked.
 func (r Reputation) any() bool { return r.VTChecked || r.AbuseChecked }
 
+// Malicious reports whether the reputation services flag the domain malicious
+// (≥2 VirusTotal vendors, or an AbuseIPDB confidence ≥50%) — a definitive signal.
+func (r Reputation) Malicious() bool {
+	return r.VTMalicious >= 2 || (r.AbuseChecked && r.AbuseScore >= 50)
+}
+
 // RepCall describes one reputation-API call made, for usage accounting. Remaining
 // and Limit are the API-reported quota figures (-1 when the service doesn't report
 // them).

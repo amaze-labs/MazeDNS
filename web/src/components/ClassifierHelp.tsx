@@ -17,13 +17,15 @@ const Arrow = () => <div className="flow-arrow">↓</div>
 
 export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="How AI classification &amp; scoring works" onClose={onClose}>
+    <Modal title="How domain classification &amp; scoring works" onClose={onClose}>
       <p className="muted" style={{ textAlign: 'left' }}>
         Every <em>new registered domain</em> your network queries is scored like a SOC analyst would: it{' '}
-        <strong>starts at 100% legitimate</strong>, and each risk factor deducts from that score. The local model's read
-        is just <em>one</em> of those factors (and a bounded one), so a confidently-wrong model can no longer
-        single-handedly block a legitimate site. Nothing runs on the DNS hot path — scoring is asynchronous, so
-        resolution stays fast.
+        <strong>starts at 100% legitimate</strong>, and each risk factor deducts from that score. The bulk of the work is{' '}
+        <strong>static analysis</strong> — threat feeds, reputation services, WHOIS age, risky TLDs and look-alike name
+        shapes — which runs with <em>no AI at all</em>. A local AI model is an <strong>optional</strong> extra signal
+        (configured in Settings) that mainly cuts false positives; it's just <em>one</em> bounded factor, so a
+        confidently-wrong model can never single-handedly block a legitimate site. Nothing runs on the DNS hot path —
+        scoring is asynchronous, so resolution stays fast.
       </p>
 
       <h4>How the score is built</h4>
@@ -50,11 +52,15 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         <Branch tone="block" label="−15">
           <strong>risky TLD</strong> (TLDs with disproportionate abuse)
         </Branch>
-        <Branch tone="block" label="−8…−20">
-          <strong>look-alike name shape</strong> (punycode/homograph, random/DGA, digit- or hyphen-heavy)
+        <Branch tone="block" label="−8…−28">
+          <strong>look-alike name shape</strong> (brand impersonation, punycode/homograph, random/DGA, digit- or
+          hyphen-heavy)
+        </Branch>
+        <Branch tone="block" label="−0…−60">
+          <strong>reputation</strong> — VirusTotal / AbuseIPDB flags (a clean report instead <em>raises</em> the floor)
         </Branch>
         <Branch tone="block" label="−0…−50">
-          <strong>model assessment</strong> — scaled by its confidence, but capped so it can't sink a domain alone
+          <strong>AI model</strong> (optional) — scaled by its confidence, but capped so it can't sink a domain alone
         </Branch>
         <Arrow />
         <Step tone="allow">
@@ -63,8 +69,9 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         </Step>
         <Arrow />
         <Step tone="mode">
-          Block candidate when legitimacy <strong>&lt; 50%</strong> AND there's a real threat indicator (model security
-          category or a threat-feed hit) — so a merely <em>young</em> legit site is never blocked on structure alone
+          Block candidate when legitimacy <strong>&lt; 50%</strong> AND there's a real threat indicator (a threat-feed
+          hit, a reputation flag, or the AI model's security category) — so a merely <em>young</em> legit site is never
+          blocked on structure alone
         </Step>
         <div className="flow-outcomes">
           <div className="flow-box block">
@@ -84,15 +91,17 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         </li>
         <li>
           <strong>🛡 threat</strong> — on a known-malware/phishing feed. A heavy deduction that also catches domains the
-          model alone would have missed — but it's weighed against age and trust, not taken as an absolute rule.
+          model alone would have missed — but it's weighed against age and trust, not taken as an absolute rule. Feeds
+          refresh in the background, and a domain already marked clean is automatically re-flagged if it later lands on a
+          feed.
         </li>
         <li>
           <strong>✓ trusted</strong> — a well-known legitimate site (or on trusted infrastructure). Scores 100 and is
           never blocked — this is the main false-positive guard, and it wins over a threat-list hit.
         </li>
         <li>
-          <strong>Category</strong> — security categories (red) can drive a block; content categories (blue) are labels
-          only; <code>other</code> is legitimate-but-unclassified.
+          <strong>Category</strong> — security categories (red) can drive a block; content categories (blue, e.g. social
+          / streaming — these need the AI model) are labels only; <code>other</code> is legitimate-but-unclassified.
         </li>
       </ul>
 

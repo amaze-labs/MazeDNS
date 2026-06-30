@@ -58,6 +58,8 @@ export default function DomainDetail({
   // back gracefully for old verdicts that predate scoring.
   const score = typeof c.score === 'number' ? c.score : 100
   const factors = c.factors || []
+  // A static-only verdict has no LLM behind it (model is "static analysis" / empty).
+  const aiVerdict = !!c.model && c.model !== 'static analysis'
 
   return (
     <Modal title={c.domain} onClose={onClose}>
@@ -75,8 +77,8 @@ export default function DomainDetail({
             {statusText(c.status)}
           </span>
         </span>
-        <span className="muted">Model</span>
-        <span>{c.model || '—'}</span>
+        <span className="muted">Classified by</span>
+        <span>{aiVerdict ? <>AI model · <code>{c.model}</code></> : 'Static analysis (no AI)'}</span>
         <span className="muted">Summary</span>
         <span>{c.reason || '—'}</span>
         <span className="muted">Review note</span>
@@ -86,8 +88,11 @@ export default function DomainDetail({
       <h4>Legitimacy scorecard</h4>
       <p className="muted" style={{ textAlign: 'left' }}>
         Every domain starts <strong>100% legitimate</strong>. Each risk factor below — weighed the way a SOC analyst
-        would — deducts from the score. The model's own read is just one (bounded) factor, so it can't single-handedly
-        sink a legitimate domain. Below {/* blockThreshold */}50% it becomes a block candidate.
+        would — deducts from the score.{' '}
+        {aiVerdict
+          ? "The AI model's read is just one (bounded) factor, so it can't single-handedly sink a legitimate domain."
+          : 'This verdict used the static signals only (no AI model).'}{' '}
+        Below {/* blockThreshold */}50% it becomes a block candidate.
       </p>
       <div className="scorecard">
         <div className="score-row base">

@@ -630,6 +630,33 @@ tr:last-child td {
   gap: 6px;
   align-items: center;
 }
+/* Some chips are clickable (open the trusted/threat list viewer). Reset the
+   default <button> chrome; a colour variant (.allow/.info/.blocked) supplies the
+   look, with a neutral fallback for a variant-less chip. */
+button.cat-chip {
+  font: inherit;
+  cursor: pointer;
+  border: 0;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--fg);
+}
+button.cat-chip:hover {
+  filter: brightness(1.15);
+}
+
+/* Engine-status card: the "Active signals" panel at the top of the classifier. */
+.cls-engine {
+  margin-bottom: 18px;
+}
+.cls-engine-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.cls-engine-head .badge {
+  margin-left: auto;
+}
 
 .row {
   display: flex;
@@ -775,13 +802,17 @@ textarea.import {
   font-size: 15px;
 }
 
-/* Collapsible settings sections: <details class="settings-card"><summary>… */
+/* Collapsible settings sections: <details class="settings-card"><summary>…
+   The card pads its sides (so full-width children like <textarea> stay inside
+   the box instead of overflowing the right edge); the summary cancels that pad
+   with negative side margins so its divider spans the whole card. */
 details.settings-card {
-  padding: 0;
+  padding: 0 20px;
 }
 details.settings-card > summary {
   list-style: none;
   cursor: pointer;
+  margin: 0 -20px;
   padding: 14px 20px;
   font-size: 15px;
   font-weight: 600;
@@ -804,15 +835,10 @@ details.settings-card[open] > summary::before {
 }
 details.settings-card[open] > summary {
   border-bottom: 1px solid var(--line);
-  margin-bottom: 4px;
+  margin-bottom: 14px;
 }
-/* the content after <summary> gets the usual card padding */
-details.settings-card > summary ~ * {
-  margin-left: 20px;
-  margin-right: 20px;
-}
-details.settings-card > .settings-actions:last-child,
-details.settings-card > div:last-child {
+/* Bottom breathing room below the last child (only rendered when open). */
+details.settings-card[open] > :last-child {
   margin-bottom: 16px;
 }
 
@@ -876,6 +902,46 @@ details.settings-card > div:last-child {
 .settings .field input[type='number'],
 .settings .field select {
   max-width: 280px;
+}
+
+/* Upstream resolver editor (quick-fill + structured per-resolver rows). */
+.quick-fill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+.quick-fill > .muted {
+  margin-right: 2px;
+}
+
+.upstream-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.upstream-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upstream-row > select {
+  flex: 0 0 auto;
+  min-width: 96px;
+}
+.upstream-row > input {
+  min-width: 0; /* let inputs shrink so the row never overflows the card */
+}
+.upstream-row > input.grow {
+  flex: 1 1 120px;
+}
+.upstream-row > input.port {
+  flex: 0 0 72px;
+  min-width: 56px;
+}
+.upstream-list > .btn.ghost {
+  align-self: flex-start;
 }
 
 /* Button system (used in Settings and reusable elsewhere) */

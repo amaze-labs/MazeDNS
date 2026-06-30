@@ -103,11 +103,13 @@ func TestAIConfigured(t *testing.T) {
 		s    Settings
 		want bool
 	}{
-		{"both set", Settings{Endpoint: "http://localhost:11434/v1", Model: "llama3.2"}, true},
-		{"endpoint only", Settings{Endpoint: "http://localhost:11434/v1"}, false},
-		{"model only", Settings{Model: "llama3.2"}, false},
+		{"both set", Settings{AIEnabled: true, Endpoint: "http://localhost:11434/v1", Model: "llama3.2"}, true},
+		{"toggle off", Settings{AIEnabled: false, Endpoint: "http://localhost:11434/v1", Model: "llama3.2"}, false},
+		{"endpoint only", Settings{AIEnabled: true, Endpoint: "http://localhost:11434/v1"}, false},
+		{"model only (openai needs endpoint)", Settings{AIEnabled: true, Model: "llama3.2"}, false},
+		{"anthropic needs only a model", Settings{AIEnabled: true, Provider: "anthropic", Model: "claude-haiku-4-5"}, true},
 		{"neither (static only)", Settings{}, false},
-		{"whitespace is blank", Settings{Endpoint: "  ", Model: "\t"}, false},
+		{"whitespace is blank", Settings{AIEnabled: true, Endpoint: "  ", Model: "\t"}, false},
 	}
 	for _, c := range cases {
 		if got := aiConfigured(c.s); got != c.want {

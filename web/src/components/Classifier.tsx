@@ -148,7 +148,7 @@ export default function Classifier() {
   const st = info?.settings
   // AI is on when a model is set and the provider is reachable: Anthropic uses its
   // public API (no endpoint needed); OpenAI-compatible needs an endpoint.
-  const aiOn = !!(st?.model?.trim() && (st?.provider === 'anthropic' || st?.endpoint?.trim()))
+  const aiOn = !!(st?.ai_enabled && st?.model?.trim() && (st?.provider === 'anthropic' || st?.endpoint?.trim()))
   const trustedCount = info?.trusted_count ?? 0
   const threatCount = info?.threat_count ?? 0
   const feedCount = st?.threat_feeds?.length ?? 0

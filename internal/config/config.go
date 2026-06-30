@@ -178,6 +178,7 @@ type OIDC struct {
 // from here and then changeable at runtime from the UI.
 type Classifier struct {
 	Enabled    bool   `yaml:"enabled"`
+	AIDisabled bool   `yaml:"ai_disabled"` // turn the optional LLM layer off (static analysis only)
 	Provider   string `yaml:"provider"`    // openai (OpenAI-compatible, default) | anthropic
 	Endpoint   string `yaml:"endpoint"`    // OpenAI-compatible base URL, e.g. http://localhost:11434/v1
 	Model      string `yaml:"model"`       // model name, e.g. "llama3.2"

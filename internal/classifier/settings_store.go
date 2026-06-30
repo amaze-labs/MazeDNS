@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
@@ -23,6 +24,13 @@ func LoadSettings(st *store.Store, def Settings) Settings {
 	}
 	if s.Mode == "" {
 		s.Mode = string(ModeOff)
+	}
+	// Migration: settings saved before the ai_enabled switch existed have no such
+	// key — preserve their behaviour (AI ran whenever a model was configured) so an
+	// upgrade doesn't silently turn the LLM off.
+	if !strings.Contains(raw, `"ai_enabled"`) {
+		s.AIEnabled = strings.TrimSpace(s.Model) != "" &&
+			(normalizeProvider(s.Provider) == ProviderAnthropic || strings.TrimSpace(s.Endpoint) != "")
 	}
 	return s
 }

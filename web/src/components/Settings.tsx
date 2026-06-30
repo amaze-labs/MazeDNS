@@ -561,71 +561,83 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           <h4 style={{ margin: '14px 0 4px' }}>Optional AI layer</h4>
           <p className="muted" style={{ textAlign: 'left' }}>
             Fold an LLM's read in as one more bounded signal — it also adds content categories (social, streaming, …).
-            Use a local/OpenAI-compatible endpoint or a hosted provider. <strong>Leave the model blank to disable AI</strong>{' '}
-            and use static analysis only.
+            Use a local/OpenAI-compatible endpoint or a hosted provider. Turn this off to run on the static signals only.
           </p>
           <div className="field">
-            <label>Provider</label>
-            <select value={cls.provider || 'openai'} onChange={(e) => setCls({ ...cls, provider: e.target.value })}>
-              <option value="openai">OpenAI-compatible (Ollama, OpenAI, LM Studio, vLLM, …)</option>
-              <option value="anthropic">Anthropic (Claude)</option>
-            </select>
-          </div>
-          {cls.provider !== 'anthropic' && (
-            <div className="field">
-              <label>Model endpoint (OpenAI-compatible base URL) — blank = no AI</label>
-              <input
-                value={cls.endpoint}
-                onChange={(e) => setCls({ ...cls, endpoint: e.target.value })}
-                placeholder="http://localhost:11434/v1"
-              />
-            </div>
-          )}
-          <div className="field">
-            <label>Model — blank = no AI</label>
-            <input
-              value={cls.model}
-              onChange={(e) => setCls({ ...cls, model: e.target.value })}
-              placeholder={cls.provider === 'anthropic' ? 'claude-haiku-4-5' : 'llama3.2'}
-            />
-          </div>
-          <div className="field">
-            <label>
-              API key{' '}
-              {cls.provider === 'anthropic' ? '(required)' : '(optional; usually empty for local models)'}{' '}
-              {clsInfo?.has_api_key && <span className="badge allow">key set</span>}
+            <label className="toggle">
+              <input type="checkbox" checked={!!cls.ai_enabled} onChange={(e) => setCls({ ...cls, ai_enabled: e.target.checked })} />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">Use an AI model</span>
             </label>
-            <input
-              type="password"
-              value={cls.api_key}
-              onChange={(e) => setCls({ ...cls, api_key: e.target.value })}
-              placeholder={
-                clsInfo?.has_api_key
-                  ? '•••••••••••••• (saved — leave blank to keep)'
-                  : cls.provider === 'anthropic'
-                  ? 'sk-ant-…'
-                  : 'usually empty for local models'
-              }
-            />
           </div>
-          <div className="field">
-            <label>Min gap between model calls (ms)</label>
-            <input
-              type="number"
-              min={0}
-              value={cls.min_gap_ms}
-              onChange={(e) => setCls({ ...cls, min_gap_ms: Number(e.target.value) })}
-            />
-          </div>
-          <div className="field">
-            <label>Request timeout (seconds) — raise it if a local model is slow to warm up</label>
-            <input
-              type="number"
-              min={1}
-              value={cls.timeout_sec}
-              onChange={(e) => setCls({ ...cls, timeout_sec: Number(e.target.value) })}
-            />
-          </div>
+          {cls.ai_enabled && (
+            <>
+              <div className="field">
+                <label>Provider</label>
+                <select value={cls.provider || 'openai'} onChange={(e) => setCls({ ...cls, provider: e.target.value })}>
+                  <option value="openai">OpenAI-compatible (Ollama, OpenAI, LM Studio, vLLM, …)</option>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                </select>
+              </div>
+              {cls.provider !== 'anthropic' && (
+                <div className="field">
+                  <label>Model endpoint (OpenAI-compatible base URL)</label>
+                  <input
+                    value={cls.endpoint}
+                    onChange={(e) => setCls({ ...cls, endpoint: e.target.value })}
+                    placeholder="http://localhost:11434/v1"
+                  />
+                </div>
+              )}
+              <div className="field">
+                <label>Model</label>
+                <input
+                  value={cls.model}
+                  onChange={(e) => setCls({ ...cls, model: e.target.value })}
+                  placeholder={cls.provider === 'anthropic' ? 'claude-haiku-4-5' : 'llama3.2'}
+                />
+              </div>
+              <div className="field">
+                <label>
+                  API key{' '}
+                  {cls.provider === 'anthropic' ? '(required)' : '(optional; usually empty for local models)'}{' '}
+                  {clsInfo?.has_api_key && <span className="badge allow">key set</span>}
+                </label>
+                <input
+                  type="password"
+                  value={cls.api_key}
+                  onChange={(e) => setCls({ ...cls, api_key: e.target.value })}
+                  placeholder={
+                    clsInfo?.has_api_key
+                      ? '•••••••••••••• (saved — leave blank to keep)'
+                      : cls.provider === 'anthropic'
+                      ? 'sk-ant-…'
+                      : 'usually empty for local models'
+                  }
+                />
+              </div>
+              <div className="field">
+                <label>Min gap between model calls (ms)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={cls.min_gap_ms}
+                  onChange={(e) => setCls({ ...cls, min_gap_ms: Number(e.target.value) })}
+                />
+              </div>
+              <div className="field">
+                <label>Request timeout (seconds) — raise it if a local model is slow to warm up</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={cls.timeout_sec}
+                  onChange={(e) => setCls({ ...cls, timeout_sec: Number(e.target.value) })}
+                />
+              </div>
+            </>
+          )}
           <h4 style={{ margin: '14px 0 4px' }}>Trusted list (reduce false positives)</h4>
           <p className="muted" style={{ textAlign: 'left' }}>
             Domains on the trusted list are never blocked, even if the model flags them.

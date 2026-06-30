@@ -146,6 +146,7 @@ export interface ClientIdentity {
 
 export interface ClassifierSettings {
   enabled: boolean
+  ai_enabled: boolean // master switch for the optional LLM layer
   provider: string // 'openai' (OpenAI-compatible) | 'anthropic'
   endpoint: string
   model: string

@@ -37,7 +37,8 @@ func ParseMode(s string) Mode {
 // store and read fresh on every use, so changes apply without a restart).
 type Settings struct {
 	Enabled    bool   `json:"enabled"`
-	Provider   string `json:"provider"` // openai (OpenAI-compatible) | anthropic
+	AIEnabled  bool   `json:"ai_enabled"` // master switch for the optional LLM layer
+	Provider   string `json:"provider"`   // openai (OpenAI-compatible) | anthropic
 	Endpoint   string `json:"endpoint"`
 	Model      string `json:"model"`
 	APIKey     string `json:"api_key"`
@@ -70,12 +71,13 @@ type Settings struct {
 	AbuseIPDBAPIKey  string `json:"abuseipdb_api_key"`
 }
 
-// aiConfigured reports whether the optional LLM layer should run. A model is
-// always required; an endpoint is required only for the OpenAI-compatible
-// provider (Anthropic uses its public API by default). Otherwise classification
-// falls back to static analysis on the deterministic signals alone.
+// aiConfigured reports whether the optional LLM layer should run. The AI master
+// switch must be on, a model is always required, and an endpoint is required only
+// for the OpenAI-compatible provider (Anthropic uses its public API by default).
+// Otherwise classification falls back to static analysis on the deterministic
+// signals alone.
 func aiConfigured(s Settings) bool {
-	if strings.TrimSpace(s.Model) == "" {
+	if !s.AIEnabled || strings.TrimSpace(s.Model) == "" {
 		return false
 	}
 	if normalizeProvider(s.Provider) == ProviderAnthropic {

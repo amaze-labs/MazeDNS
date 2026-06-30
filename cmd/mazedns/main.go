@@ -249,6 +249,7 @@ func main() {
 	if !worker {
 		defaults := classifier.Settings{
 			Enabled:               cfg.Classifier.Enabled,
+			AIEnabled:             !cfg.Classifier.AIDisabled, // LLM on by default; ai_disabled opts out
 			Provider:              cfg.Classifier.Provider,
 			Endpoint:              cfg.Classifier.Endpoint,
 			Model:                 cfg.Classifier.Model,

@@ -40,18 +40,18 @@ Common causes:
 The agent image binds `53` as a non-root user via a file capability, so this
 normally just works. If the logs show a bind/permission error:
 
-- **Port already in use on the host.** Another resolver owns `:53`
-  (`systemd-resolved`, `dnsmasq`, Pi-hole). Free it, or map a different host port
-  (`-p 5353:53`) and point clients there.
+- **Port already in use on the host.** Another DNS service already owns `:53` — a
+  host stub resolver (`resolved`), `dnsmasq`, or Pi-hole. Free it, or map a different
+  host port (`-p 5353:53`) and point clients there.
 - **Restrictive runtime.** If your platform strips default capabilities, either run
   with host networking (default caps include `NET_BIND_SERVICE`) or set
   `MAZEDNS_LISTEN_PORT` to an unprivileged port and remap.
 
-Verify what the container is listening on:
+Verify the container is up and what it bound:
 
 ```bash
-docker exec mazedns-agent /usr/local/bin/dns-agent --version   # container is alive
-docker logs mazedns-agent --tail 20                            # look for "listener up ... addr=:53"
+docker ps --filter name=mazedns-agent          # is it running / restarting?
+docker logs mazedns-agent --tail 20            # look for "listener up ... addr=:53"
 ```
 
 ## DNS doesn't resolve through the agent
@@ -111,8 +111,11 @@ sudo sysctl --system
 ```
 
 The agent shares the host network namespace under `network_mode: host`, so these
-host sysctls apply to it. On a busy multi-core resolver you can also set
-`MAZEDNS_UDP_LISTENERS` to the core count to spread the UDP read loop.
+host sysctls apply to it. The agent already spreads the UDP read loop across cores
+by default (one `SO_REUSEPORT` socket per available CPU, capped at 8). If that
+causes trouble on a given host — e.g. uneven load distribution or memory pressure
+from the per-socket 8 MiB buffers — pin it with `MAZEDNS_UDP_LISTENERS` (set `1`
+for a single socket, or an explicit count).
 
 **Verify** the drops stop under a burst (run from a client host):
 

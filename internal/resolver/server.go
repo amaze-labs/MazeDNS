@@ -7,6 +7,7 @@ import (
 	"os"
 	stdruntime "runtime"
 	"strconv"
+	"strings"
 
 	"github.com/miekg/dns"
 )
@@ -23,18 +24,33 @@ const udpSocketBuf = 8 << 20 // 8 MiB
 // maxUDPListeners bounds how many SO_REUSEPORT UDP sockets we may open.
 const maxUDPListeners = 8
 
-// udpListeners returns how many UDP sockets to open. Multi-socket SO_REUSEPORT
-// ingestion is OPT-IN via MAZEDNS_UDP_LISTENERS (default 1 = a single socket, the
-// long-standing behavior). Set it to >1 (e.g. the core count) to spread the UDP
-// read loop across cores. Defaulting to 1 keeps the safe single-listener path
-// unless an operator explicitly enables the multi-socket path.
+// udpListeners returns how many UDP sockets to open, sharing the port via
+// SO_REUSEPORT so the kernel spreads inbound packets across them and the read
+// loop runs on several cores.
+//
+// By default this auto-scales to the host's available CPUs: one socket per CPU,
+// bounded by maxUDPListeners. "Available CPUs" is GOMAXPROCS(0), which since Go
+// 1.25 honors the container's CPU quota (cgroup), so an agent limited to N CPUs
+// gets N sockets, not the host's full core count.
+//
+// MAZEDNS_UDP_LISTENERS overrides the count: set it to 1 to force the single-
+// socket path, or to a specific number (capped at maxUDPListeners) to pin it.
 func udpListeners() int {
-	v, _ := strconv.Atoi(os.Getenv("MAZEDNS_UDP_LISTENERS"))
-	if v <= 1 {
-		return 1
+	// Auto default: one socket per available CPU, bounded.
+	auto := stdruntime.GOMAXPROCS(0)
+	if auto > maxUDPListeners {
+		auto = maxUDPListeners
 	}
-	if n := stdruntime.GOMAXPROCS(0); v > n {
-		v = n
+	if auto < 1 {
+		auto = 1
+	}
+	raw := strings.TrimSpace(os.Getenv("MAZEDNS_UDP_LISTENERS"))
+	if raw == "" {
+		return auto // unset -> scale to host resources
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 1 {
+		return auto // unparseable/0 -> fall back to auto
 	}
 	if v > maxUDPListeners {
 		v = maxUDPListeners
@@ -42,9 +58,9 @@ func udpListeners() int {
 	return v
 }
 
-// Server runs the UDP and TCP DNS listeners for a Resolver. UDP uses a single
-// socket by default, or several sharing the port via SO_REUSEPORT when
-// MAZEDNS_UDP_LISTENERS > 1.
+// Server runs the UDP and TCP DNS listeners for a Resolver. UDP opens one socket
+// per available CPU by default (sharing the port via SO_REUSEPORT), or the count
+// pinned by MAZEDNS_UDP_LISTENERS.
 type Server struct {
 	addr string
 	udp  []*dns.Server

@@ -42,8 +42,9 @@ remaining wins concentrate.
 - **Sharded cache** — 16 lock-striped shards, deep copy done *outside* the lock so
   concurrent hits don't serialize; sampled TTL-nearest eviction; negative caching
   from the SOA (`cache.go`).
-- **Listener tuning** — opt-in SO_REUSEPORT multi-socket (`MAZEDNS_UDP_LISTENERS`),
-  8 MiB socket buffers, EDNS-sized reads (`server.go`).
+- **Listener tuning** — SO_REUSEPORT multi-socket auto-scaled to available CPUs by
+  default (override with `MAZEDNS_UDP_LISTENERS`), 8 MiB socket buffers, EDNS-sized
+  reads (`server.go`).
 - **Non-blocking query log** — `QueryLogWriter.Write` drops on a full 4096 buffer
   instead of stalling the DNS goroutine (`store` writer).
 - **GC tuning** — `GOGC` defaulted to 200 to cut tail-latency jitter (`boot.go`).

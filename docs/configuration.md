@@ -65,7 +65,7 @@ mistake.
 | `MAZEDNS_NODE_KEY` | No | *(auto-issued)* | Per-node API key. Leave empty when using a join token — one is issued and persisted automatically. |
 | `MAZEDNS_LISTEN_ADDRESS` | No | `0.0.0.0` | DNS bind address. |
 | `MAZEDNS_LISTEN_PORT` | No | `53` | DNS listen port. The image binds `53` as non-root via a `CAP_NET_BIND_SERVICE` file capability. |
-| `MAZEDNS_UDP_LISTENERS` | No | `1` | Number of `SO_REUSEPORT` UDP sockets. Set `>1` (e.g. the core count) to spread the UDP read loop across cores on a busy resolver. |
+| `MAZEDNS_UDP_LISTENERS` | No | *(auto)* | Number of `SO_REUSEPORT` UDP sockets that share the port so the kernel spreads packets across cores. **Defaults to one per available CPU** (bounded at 8; scales with the container's CPU quota). Set to `1` to force a single socket, or to a specific number to pin it. Each socket reserves an 8 MiB read + 8 MiB write buffer, so more sockets means more memory. |
 
 ### Shared (both components)
 
@@ -85,8 +85,8 @@ mistake.
 > the source of truth. Use PostgreSQL for the control plane if you want managed
 > backups/HA, and leave agents on their local SQLite.
 
-The Go runtime variables `GOGC` (raised to `200` internally to cut GC jitter) and
-`GOMEMLIMIT` are also honored on both images.
+The Go garbage-collector knobs `GOGC` (raised to `200` internally to cut GC jitter)
+and `GOMEMLIMIT` are also honored on both images.
 
 ---
 

@@ -50,7 +50,12 @@ remaining wins concentrate.
 
 ## Open strategies
 
-### P1 — Drop the per-query lock in filter matching *(low effort, medium–high impact)*
+### P1 — Drop the per-query lock in filter matching — DONE *(low effort, medium–high impact)*
+Implemented: `filter.Engine.Seal()` freezes the map after `boot.BuildPolicy`
+publishes it, and the lookup path reads lock-free once sealed. A parallel match
+benchmark (`internal/filter/bench_test.go`) drops from ~70ns/op to ~8ns/op on 4
+cores, 0 allocs; `-race` is clean. Original analysis:
+
 `filter.Engine.Match` takes `mu.RLock()` on every call (`filter.go:89`), and
 `Resolve` calls it **twice per query** (`Block.Match` + `Allow.IsBlocked`,
 `resolver.go:405`). But an `Engine` is built once inside `boot.BuildPolicy` and
@@ -61,7 +66,12 @@ across every resolver goroutine. **Strategy:** seal the engine after build and r
 the map lock-free (a `sealed` flag, or a dedicated immutable read path). Keep the
 lock only on `Add`/`LoadHostsFile` during construction.
 
-### P2 — Normalize the query name once *(low effort, medium impact)*
+### P2 — Normalize the query name once — DONE (filter path) *(low effort, medium impact)*
+Implemented for the block/allow match: `Resolve` calls `MatchNormalized`/
+`IsBlockedNormalized` with the already-normalized name. The cache key still
+lowercases independently (`cache.keyFor`) — left as a smaller follow-up. Original
+analysis:
+
 The name is lowercased up to three times per query: `Resolve` (`:386`),
 `Engine.Match` internally (`filter.go:85`), and `cache.keyFor` (`cache.go:80`).
 Each `ToLower` allocates when the name has any uppercase. **Strategy:** normalize
@@ -86,10 +96,9 @@ RR tree. Biggest potential win, biggest change — profile first.
 pre-resolve the handful of action counters once at startup; optionally pool
 `QueryEvent`. Off the client latency path, but reduces GC churn at high QPS.
 
-### P6 — Make dropped query-log entries observable *(trivial)*
-The non-blocking `Write` silently drops on a full buffer, so the dashboard/
-VictoriaLogs undercount under sustained overload with no signal. **Strategy:** add
-a `mazedns_querylog_dropped_total` counter incremented in the `default` branch.
+### P6 — Make dropped query-log entries observable — DONE *(trivial)*
+Implemented: `QueryLogWriter` counts drops and exposes
+`mazedns_querylog_dropped_total` (registered by the dns-agent).
 
 ### P7 — Bounded UDP worker pool + buffer pooling *(medium–high effort, high-load only)*
 `miekg/dns` spawns a goroutine per packet. Under extreme bursts this is scheduler/

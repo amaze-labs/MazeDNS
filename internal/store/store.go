@@ -221,7 +221,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 	q_rewritten INTEGER NOT NULL DEFAULT 0,
 	q_errors INTEGER NOT NULL DEFAULT 0,
 	insights TEXT NOT NULL DEFAULT '',
-	maintenance INTEGER NOT NULL DEFAULT 0   -- node is drained (answers SERVFAIL)
+	maintenance INTEGER NOT NULL DEFAULT 0,  -- node is drained (answers SERVFAIL)
+	approved INTEGER NOT NULL DEFAULT 1      -- token-enrolled node is admitted to the cluster
 );
 CREATE TABLE IF NOT EXISTS settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -309,6 +310,7 @@ func (s *Store) migrate() error {
 		`ALTER TABLE nodes ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN site TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN role TEXT NOT NULL DEFAULT ''`, // '' | 'primary' | 'backup'
+		`ALTER TABLE nodes ADD COLUMN approved INTEGER NOT NULL DEFAULT 1`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)

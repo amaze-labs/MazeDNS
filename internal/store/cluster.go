@@ -137,6 +137,7 @@ type Node struct {
 	ControlPlaneOnly bool   `json:"control_plane_only"` // master only: coordinates the cluster but serves no DNS (answers REFUSED)
 	Site             string `json:"site"`               // site grouping ('' = unassigned)
 	Role             string `json:"role"`               // '' | 'primary' | 'backup' (advisory: both serve DNS)
+	Approved         bool   `json:"approved"`           // admitted to the cluster (false = pending admin approval)
 	NodeStats
 }
 
@@ -216,6 +217,33 @@ func (s *Store) CreateNode(name, keyHash, keyPrefix string) error {
 	return err
 }
 
+// EnrollNode admits a token-joining agent: it creates the node with the given
+// API key hash + display prefix, or if the name already exists rotates its key in
+// place (existing stats/site/role are preserved). approved sets whether the node
+// is immediately admitted or left pending an admin's approval. Used by the
+// self-service /api/cluster/enroll flow.
+func (s *Store) EnrollNode(name, keyHash, keyPrefix string, approved bool) error {
+	_, err := s.db.Exec(
+		`INSERT INTO nodes(name, key_hash, key_prefix, address, version, last_seen, created_at, approved)
+		 VALUES(?,?,?,'','',0,?,?)
+		 ON CONFLICT(name) DO UPDATE SET key_hash=excluded.key_hash, key_prefix=excluded.key_prefix`,
+		name, keyHash, keyPrefix, time.Now().Unix(), boolToInt(approved))
+	return err
+}
+
+// SetNodeApproved admits (or re-holds) an enrolled node. A pending node's config
+// pulls and log shipments are refused until it is approved.
+func (s *Store) SetNodeApproved(name string, approved bool) error {
+	res, err := s.db.Exec(`UPDATE nodes SET approved=? WHERE name=?`, boolToInt(approved), name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("node not found")
+	}
+	return nil
+}
+
 // EnsureNode creates a node or, if the name already exists, updates its key.
 // Used to pre-provision nodes from configuration (the key is authoritative);
 // existing stats are preserved. Idempotent across restarts.
@@ -234,11 +262,11 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 		return nil, nil
 	}
 	n := &Node{}
-	var maintenance int
+	var maintenance, approved int
 	err := s.read.QueryRow(
-		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance
+		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance, approved
 		 FROM nodes WHERE key_hash=?`, keyHash).
-		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance)
+		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance, &approved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -246,6 +274,7 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 		return nil, err
 	}
 	n.Maintenance = maintenance != 0
+	n.Approved = approved != 0
 	return n, nil
 }
 
@@ -292,7 +321,7 @@ func (s *Store) AllNodeInsights() (map[string]Insights, error) {
 func (s *Store) ListNodes() ([]Node, error) {
 	rows, err := s.read.Query(
 		`SELECT name, key_prefix, address, version, last_seen, created_at,
-		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance, site, role
+		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance, site, role, approved
 		 FROM nodes ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -301,12 +330,13 @@ func (s *Store) ListNodes() ([]Node, error) {
 	var out []Node
 	for rows.Next() {
 		var n Node
-		var maintenance int
+		var maintenance, approved int
 		if err := rows.Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt,
-			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors, &maintenance, &n.Site, &n.Role); err != nil {
+			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors, &maintenance, &n.Site, &n.Role, &approved); err != nil {
 			return nil, err
 		}
 		n.Maintenance = maintenance != 0
+		n.Approved = approved != 0
 		out = append(out, n)
 	}
 	return out, rows.Err()

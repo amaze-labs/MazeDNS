@@ -1,26 +1,31 @@
-# Production compose: pulls the published image and runs a master (UI) plus a
-# worker that replicates the master's config. In a real multi-site deployment the
-# worker runs on a separate host/site (reaching the master over your private
-# overlay); here both are shown on one host for illustration.
+# Production compose: pulls the published images and runs a control-plane
+# (dashboard/API, no DNS) plus a DNS agent that self-enrolls with a shared join
+# token and serves DNS. In a real multi-site deployment each agent runs on a
+# separate host/site (reaching the control plane over your private overlay); here
+# both are shown on one host for illustration.
 #
-#   1. MAZEDNS_ADMIN_PASSWORD=... docker compose -f docker-compose.prod.yml up -d master
-#   2. In the UI (Cluster tab) enroll a node and copy its key.
-#   3. Put that key in MAZEDNS_NODE_KEY below and start the worker.
+#   MAZEDNS_ADMIN_PASSWORD=... MAZEDNS_JOIN_TOKEN=... \
+#     docker compose -f docker-compose.prod.yml up -d
+#
+# Agents appear in the control-plane UI (Cluster tab) automatically once they
+# present the join token — no key to copy. Set MAZEDNS_REQUIRE_APPROVAL=true on
+# the control plane if you want to approve each agent before it serves.
 
 name: mazedns
 
 services:
-  master:
-    image: ghcr.io/ipmaze/mazedns:latest
-    container_name: mazedns-master
+  control-plane:
+    image: ghcr.io/ipmaze/mazedns-control-plane:latest
+    container_name: mazedns-control-plane
     restart: unless-stopped
     environment:
-      MAZEDNS_MODE: master
       MAZEDNS_API_ADDRESS: "0.0.0.0"
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_ADMIN_USERNAME: "admin"
       MAZEDNS_ADMIN_PASSWORD: "${MAZEDNS_ADMIN_PASSWORD:?set a strong admin password}"
-      MAZEDNS_CLUSTER_ENABLED: "true"   # serve cluster endpoints + enroll nodes in the UI
+      MAZEDNS_CLUSTER_ENABLED: "true"
+      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?set a shared cluster join token}"
+      # MAZEDNS_REQUIRE_APPROVAL: "true"   # hold new agents until you approve them
       # --- SSO via OIDC (optional) — uncomment and fill in to enable a
       #     "Sign in with SSO" button without editing the config file:
       # MAZEDNS_OIDC_ISSUER: "https://id.example.com/application/o/mazedns/"
@@ -30,31 +35,27 @@ services:
       # MAZEDNS_OIDC_GROUPS_CLAIM: "groups"
       # MAZEDNS_OIDC_ADMIN_GROUP: "mazedns-admins"
     ports:
-      - "53:5300/udp"
-      - "53:5300/tcp"
       - "8080:8080"     # web UI + API (keep behind your VPN / firewall)
     volumes:
-      - master-data:/data
+      - control-plane-data:/data
 
-  worker:
-    image: ghcr.io/ipmaze/mazedns:latest
-    container_name: mazedns-worker
+  dns-agent:
+    image: ghcr.io/ipmaze/mazedns-dns-agent:latest
+    container_name: mazedns-agent
     restart: unless-stopped
-    depends_on: [master]
+    depends_on: [control-plane]
     environment:
-      MAZEDNS_MODE: worker
-      MAZEDNS_API_ADDRESS: "0.0.0.0"      # worker exposes only /healthz + /metrics
       MAZEDNS_DB_PATH: "/data/mazedns.db"
-      MAZEDNS_MASTER_URL: "http://master:8080"
-      # Enroll this node in the master UI (Cluster tab) and paste its key here:
-      MAZEDNS_NODE_KEY: "${MAZEDNS_NODE_KEY:?enroll a node in the master UI and set its key}"
+      MAZEDNS_CP_URL: "http://control-plane:8080"
+      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?set a shared cluster join token}"
+      MAZEDNS_NODE_NAME: "agent-1"
     ports:
-      - "5301:5300/udp"   # example second resolver on this host
-      - "5301:5300/tcp"
-      - "9090:8080"       # worker /metrics + /healthz
+      - "53:5300/udp"
+      - "53:5300/tcp"
+      - "9090:8080"       # agent /metrics + /healthz
     volumes:
-      - worker-data:/data
+      - agent-data:/data
 
 volumes:
-  master-data:
-  worker-data:
+  control-plane-data:
+  agent-data:

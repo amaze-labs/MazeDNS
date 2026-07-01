@@ -258,7 +258,7 @@ export default function Dashboard() {
   const clientNames = useClientNames(clientRows.map((c) => c.client))
 
   const now = Date.now() / 1000
-  const onlineNodes = nodes.filter((n) => n.is_master || (n.last_seen && now - n.last_seen < ONLINE_WINDOW)).length
+  const onlineNodes = nodes.filter((n) => n.last_seen && now - n.last_seen < ONLINE_WINDOW).length
   // Worker query/blocked counts are derived from the windowed, focus-aware
   // per-node breakdown (not the since-start node counters), so the Cluster cards
   // honor the time range + node focus like the rest of the dashboard.

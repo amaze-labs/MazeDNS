@@ -47,9 +47,8 @@ export interface Node {
   version: string
   last_seen: number
   created_at: number
-  is_master: boolean
   maintenance: boolean
-  control_plane_only: boolean // master only: serves no DNS (answers REFUSED)
+  approved: boolean // admitted to the cluster (false = pending admin approval)
   site: string // site grouping ('' = unassigned)
   role: string // '' | 'primary' | 'backup' (advisory)
   total: number
@@ -601,11 +600,11 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ on }),
     }).then(j),
-  setMasterControlPlaneOnly: (on: boolean) =>
-    fetch('/api/cluster/master/control-plane-only', {
+  approveNode: (name: string, approved: boolean) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/approve`, {
       method: 'PUT',
       headers: jsonHeaders,
-      body: JSON.stringify({ on }),
+      body: JSON.stringify({ approved }),
     }).then(j),
   clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
   createSite: (name: string, description = '') =>

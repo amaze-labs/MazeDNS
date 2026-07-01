@@ -1,8 +1,9 @@
 # MazeDNS — build & dev tasks
-BINARY  := mazedns
-PKG     := ./cmd/mazedns
-BIN_DIR := bin
-IMAGE   ?= ghcr.io/ipmaze/mazedns
+CP_PKG    := ./cmd/control-plane
+AGENT_PKG := ./cmd/dns-agent
+BIN_DIR   := bin
+CP_IMAGE    ?= ghcr.io/ipmaze/mazedns-control-plane
+AGENT_IMAGE ?= ghcr.io/ipmaze/mazedns-dns-agent
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
@@ -35,39 +36,36 @@ web: ## install + build the frontend (web/dist)
 	npm --prefix web run build
 
 .PHONY: build
-build: ## build the binary (no embedded UI)
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(PKG)
+build: ## build the dns-agent binary (lean, no UI)
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/dns-agent $(AGENT_PKG)
 
-.PHONY: build-ui
-build-ui: web ## build the binary with the embedded web UI
-	CGO_ENABLED=0 go build -tags embed_dist -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) $(PKG)
+.PHONY: build-cp
+build-cp: web ## build the control-plane binary with the embedded web UI
+	CGO_ENABLED=0 go build -tags embed_dist -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/control-plane $(CP_PKG)
 
-.PHONY: run
-run: ## run in master mode without the UI (API only)
-	go run $(PKG) --config configs/mazedns.yaml
+.PHONY: run-cp
+run-cp: web ## run the control plane with the embedded UI (:8080, no DNS)
+	go run -tags embed_dist $(CP_PKG) --config configs/mazedns.yaml
 
-.PHONY: run-ui
-run-ui: web ## run in master mode with the embedded UI
-	go run -tags embed_dist $(PKG) --config configs/mazedns.yaml
-
-.PHONY: run-worker
-run-worker: ## run in worker mode (resolver + /metrics, no UI/API)
-	go run $(PKG) --config configs/mazedns.yaml --mode worker
+.PHONY: run-agent
+run-agent: ## run a dns-agent (resolver + /metrics, no UI/API)
+	go run $(AGENT_PKG) --config configs/mazedns.yaml
 
 .PHONY: docker
-docker: ## build the container image (single image, master/worker via MAZEDNS_MODE)
-	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest .
+docker: ## build both container images (control-plane + dns-agent)
+	docker build --target control-plane --build-arg VERSION=$(VERSION) -t $(CP_IMAGE):$(VERSION) -t $(CP_IMAGE):latest .
+	docker build --target dns-agent     --build-arg VERSION=$(VERSION) -t $(AGENT_IMAGE):$(VERSION) -t $(AGENT_IMAGE):latest .
 
 .PHONY: compose-dev
-compose-dev: ## build + run the dev cluster (master UI on :8080 + 2 workers)
+compose-dev: ## build + run the dev cluster (control plane UI on :8080 + 2 agents)
 	docker compose up --build
 
-.PHONY: compose-master
-compose-master: ## build + run only the master (UI on :8080)
-	docker compose up --build mazedns
+.PHONY: compose-cp
+compose-cp: ## build + run only the control plane (UI on :8080)
+	docker compose up --build control-plane
 
 .PHONY: compose-prod
-compose-prod: ## run the production compose (master + worker, pulls the image)
+compose-prod: ## run the production compose (control plane + agent, pulls the images)
 	docker compose -f docker-compose.prod.yml up -d
 
 .PHONY: clean

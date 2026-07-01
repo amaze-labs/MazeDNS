@@ -15,11 +15,14 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.arch }})
+    name: Build ${{ matrix.image }} (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
+        image: [control-plane, dns-agent]
+        arch: [amd64, arm64]
+        # runner + platform are attached per arch (not extra axes).
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -34,7 +37,7 @@ jobs:
 
       - name: Set image name
         id: repo
-        run: echo "image_name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "image_name=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.image }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -52,6 +55,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: ${{ matrix.image }}
           platforms: ${{ matrix.platform }}
           provenance: false
           build-args: |
@@ -67,25 +71,28 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.arch }}
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   manifest:
-    name: Create manifest
+    name: Create manifest (${{ matrix.image }})
     runs-on: ubuntu-latest
     needs: build
+    strategy:
+      matrix:
+        image: [control-plane, dns-agent]
     steps:
       - name: Set image name
         id: repo
-        run: echo "image_name=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "image_name=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.image }}" >> "$GITHUB_OUTPUT"
 
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-${{ matrix.image }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
@@ -103,10 +110,9 @@ jobs:
         env:
           IMAGE: ${{ steps.repo.outputs.image_name }}
         run: |
-          # `latest` is the primary tag GHCR surfaces on the package page, so it
-          # is the only floating tag we publish; releases also get their version
+          # `latest` is the primary floating tag; releases also get their version
           # tag. The source commit stays traceable via the baked VERSION
-          # (mazedns --version) and the image digest — no floating sha- tag.
+          # (--version) and the image digest.
           TAGS=(-t "${IMAGE}:latest")
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             TAGS+=(-t "${IMAGE}:${GITHUB_REF_NAME}")

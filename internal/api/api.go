@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
@@ -46,7 +47,18 @@ type Server struct {
 	statsCache          *ttlCache
 	classifierAvailable bool // master only — classifier endpoints/tab are offered
 	cls                 classifierStatus
+	enqueue             func(string) // feed classifier from ingested agent logs (may be nil)
 	enricher            *netbird.Enricher
+	joinToken           string // shared secret for agent self-enrollment ('' disables it)
+	requireApproval     bool   // hold self-enrolled agents until an admin approves
+}
+
+// SetClusterEnrollment configures token-based agent self-enrollment: joinToken is
+// the shared secret agents present at /api/cluster/enroll, and requireApproval
+// holds newly-joined agents until an admin approves them.
+func (s *Server) SetClusterEnrollment(joinToken string, requireApproval bool) {
+	s.joinToken = strings.TrimSpace(joinToken)
+	s.requireApproval = requireApproval
 }
 
 // classifierStatus exposes the classifier worker's runtime state to the API
@@ -61,6 +73,12 @@ type classifierStatus interface {
 
 // SetClassifierStatus wires the running classifier worker into the API.
 func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
+
+// SetClassifierEnqueue wires the classifier's enqueue hook so domains arriving in
+// agents' shipped query logs are fed to the classifier. On the control plane no
+// DNS is served locally, so this ingest path is the classifier's source of newly
+// seen domains.
+func (s *Server) SetClassifierEnqueue(fn func(name string)) { s.enqueue = fn }
 
 // SetEnricher wires the running NetBird/reverse-DNS client enricher into the API.
 func (s *Server) SetEnricher(e *netbird.Enricher) { s.enricher = e }
@@ -161,12 +179,13 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
 			mux.HandleFunc("POST /api/cluster/nodes/{name}/key", s.requireRole(roleAdmin, s.renewNodeKey))
 			mux.HandleFunc("PUT /api/cluster/nodes/{name}/maintenance", s.requireRole(roleAdmin, s.setNodeMaintenance))
-			mux.HandleFunc("PUT /api/cluster/master/control-plane-only", s.requireRole(roleAdmin, s.setMasterControlPlaneOnly))
+			mux.HandleFunc("PUT /api/cluster/nodes/{name}/approve", s.requireRole(roleAdmin, s.approveNode))
 			mux.HandleFunc("PUT /api/cluster/nodes/{name}/site", s.requireRole(roleAdmin, s.setNodeSite))
 			mux.HandleFunc("GET /api/cluster/sites", s.requireRole(roleReadonly, s.listSites))
 			mux.HandleFunc("POST /api/cluster/sites", s.requireRole(roleAdmin, s.createSite))
 			mux.HandleFunc("DELETE /api/cluster/sites/{name}", s.requireRole(roleAdmin, s.deleteSite))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{name}", s.requireRole(roleAdmin, s.deleteNode))
+			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)    // join-token auth
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
 		}
@@ -215,6 +234,74 @@ func hashKey(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// clusterEnroll lets an agent self-register using the shared cluster join token.
+// On success it issues a fresh per-node API key (returned once, in clear) which
+// the agent persists locally. Re-enrolling an existing name rotates its key —
+// safe because the join token is the trust boundary and lets an agent that lost
+// its local key recover. When require_approval is set the node is created pending
+// an admin's approval and cannot pull config until admitted.
+func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
+	if s.joinToken == "" {
+		writeError(w, http.StatusForbidden, "self-enrollment is disabled (no cluster join token configured)")
+		return
+	}
+	var in struct {
+		Name  string `json:"name"`
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// Constant-time comparison so a wrong token can't be timed out character by
+	// character.
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(in.Token)), []byte(s.joinToken)) != 1 {
+		writeError(w, http.StatusUnauthorized, "invalid join token")
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if name == "master" || name == "control-plane" {
+		writeError(w, http.StatusBadRequest, "reserved node name")
+		return
+	}
+	key, err := auth.NewToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "key generation failed")
+		return
+	}
+	prefix := key
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	if err := s.store.EnrollNode(name, hashKey(key), prefix, !s.requireApproval); err != nil {
+		writeError(w, http.StatusInternalServerError, "enroll failed: "+err.Error())
+		return
+	}
+	slog.Info("cluster node self-enrolled", "name", name, "approved", !s.requireApproval)
+	writeJSON(w, http.StatusCreated, map[string]any{"name": name, "key": key, "approved": !s.requireApproval})
+}
+
+// approveNode admits a pending self-enrolled node (or re-holds it).
+func (s *Server) approveNode(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var in struct {
+		Approved bool `json:"approved"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.store.SetNodeApproved(name, in.Approved); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "approved": in.Approved})
+}
+
 // clusterSnapshot serves the config snapshot to a worker authenticated by its
 // per-node API key (Bearer). It also refreshes the node's last-seen state.
 func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +318,10 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	if node == nil {
 		writeError(w, http.StatusUnauthorized, "invalid node key")
+		return
+	}
+	if !node.Approved {
+		writeError(w, http.StatusForbidden, "node pending approval")
 		return
 	}
 	ver := r.Header.Get("X-MazeDNS-Node-Version")
@@ -295,6 +386,10 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid node key")
 		return
 	}
+	if !node.Approved {
+		writeError(w, http.StatusForbidden, "node pending approval")
+		return
+	}
 	var entries []store.QueryLogEntry
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20)).Decode(&entries); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -304,40 +399,30 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.enqueue != nil {
+		for _, e := range entries {
+			s.enqueue(e.Name)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ingested": len(entries)})
 }
 
+// clusterNodes lists the enrolled DNS agents. The control plane itself is not a
+// resolver, so it does not appear here — the cluster view is the data plane only.
 func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
-	workers, err := s.store.ListNodes()
+	nodes, err := s.store.ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// Prepend the master itself as a node so the cluster view counts it (it is a
-	// resolver too). The master is always "online" — its last_seen is now.
-	total, blocked, cached, forwarded, rewritten, errs := s.res.StatsSnapshot()
-	ver, _ := s.store.ConfigVersion()
-	master := store.Node{
-		Name:             "master",
-		Address:          s.store.MasterAdvertiseAddr(),
-		Version:          ver,
-		LastSeen:         time.Now().Unix(),
-		IsMaster:         true,
-		Maintenance:      s.store.MasterMaintenance(),
-		ControlPlaneOnly: s.store.MasterControlPlaneOnly(),
-		Site:             s.store.MasterSite(),
-		Role:             s.store.MasterRole(),
-		NodeStats: store.NodeStats{
-			Total: int64(total), Blocked: int64(blocked), Cached: int64(cached),
-			Forwarded: int64(forwarded), Rewritten: int64(rewritten), Errors: int64(errs),
-		},
+	if nodes == nil {
+		nodes = []store.Node{}
 	}
-	nodes := append([]store.Node{master}, workers...)
 	writeJSON(w, http.StatusOK, nodes)
 }
 
-// setNodeMaintenance toggles a node's drain (maintenance) flag. The master applies
-// it to its own resolver immediately; a worker picks up its flag on the next poll.
+// setNodeMaintenance toggles an agent's drain (maintenance) flag. The agent picks
+// it up on its next config poll and starts/stops answering SERVFAIL.
 func (s *Server) setNodeMaintenance(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	var in struct {
@@ -347,38 +432,11 @@ func (s *Server) setNodeMaintenance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if name == "master" {
-		if err := s.store.SetMasterMaintenance(in.On); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		s.res.SetMaintenance(in.On)
-	} else {
-		if err := s.store.SetNodeMaintenance(name, in.On); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	if err := s.store.SetNodeMaintenance(name, in.On); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "maintenance": in.On})
-}
-
-// setMasterControlPlaneOnly toggles the master's DNS role: when on, the master
-// serves no DNS (answers REFUSED) and acts purely as the cluster control plane.
-// Applied to the resolver immediately and persisted across restarts.
-func (s *Server) setMasterControlPlaneOnly(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		On bool `json:"on"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	if err := s.store.SetMasterControlPlaneOnly(in.On); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.res.SetControlPlaneOnly(in.On)
-	writeJSON(w, http.StatusOK, map[string]any{"control_plane_only": in.On})
 }
 
 // listSites returns the configured sites (named node groups).
@@ -418,7 +476,7 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 }
 
 // setNodeSite assigns a node (or "master") to a site with a role (primary/backup).
-// Roles are advisory labels — every node still serves DNS.
+// Roles are advisory labels — every agent still serves DNS.
 func (s *Server) setNodeSite(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	var in struct {
@@ -429,12 +487,7 @@ func (s *Server) setNodeSite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	var err error
-	if name == "master" {
-		err = s.store.SetMasterSite(in.Site, in.Role)
-	} else {
-		err = s.store.SetNodeSite(name, in.Site, in.Role)
-	}
+	err := s.store.SetNodeSite(name, in.Site, in.Role)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

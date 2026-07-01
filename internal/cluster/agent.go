@@ -32,7 +32,14 @@ type Agent struct {
 	setMaintenance func(bool)
 	client         *http.Client
 	lastShipped    int64
+	reenroll       func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
 }
+
+// SetReenroll installs a callback the agent uses to recover when the control
+// plane rejects its key (HTTP 401): it re-enrolls with the shared join token,
+// receives a fresh key, persists it, and returns it. Enables zero-touch key
+// rotation and self-healing after a control-plane DB reset.
+func (a *Agent) SetReenroll(fn func(ctx context.Context) (string, error)) { a.reenroll = fn }
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
 // the master; stats (may be nil) reports this node's query counters each poll;
@@ -217,6 +224,17 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized && a.reenroll != nil {
+		// Our key was rejected (revoked, or the control plane lost its DB). Re-join
+		// with the shared token to get a fresh one; the next cycle uses it.
+		if newKey, rerr := a.reenroll(ctx); rerr != nil {
+			slog.Warn("cluster re-enroll failed", "err", rerr)
+		} else {
+			a.nodeKey = newKey
+			slog.Info("cluster re-enrolled after key rejection")
+		}
+		return nil, statusError(resp)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, statusError(resp)
 	}

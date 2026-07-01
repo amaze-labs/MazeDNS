@@ -63,6 +63,52 @@ func TestUpdateNodeKeyRotation(t *testing.T) {
 	}
 }
 
+func TestEnrollNodeApproval(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Enroll pending (require_approval): the key authenticates but the node is held.
+	if err := s.EnrollNode("agent-a", "hashA", "prefA", false); err != nil {
+		t.Fatal(err)
+	}
+	n, _ := s.NodeByKeyHash("hashA")
+	if n == nil || n.Name != "agent-a" || n.Approved {
+		t.Fatalf("pending node: %+v", n)
+	}
+	// Approve it.
+	if err := s.SetNodeApproved("agent-a", true); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.NodeByKeyHash("hashA"); n == nil || !n.Approved {
+		t.Fatalf("node should be approved: %+v", n)
+	}
+
+	// Re-enrolling the same name rotates the key in place (self-heal on key loss).
+	if err := s.EnrollNode("agent-a", "hashB", "prefB", true); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.NodeByKeyHash("hashA"); n != nil {
+		t.Error("old key must stop working after re-enroll")
+	}
+	if n, _ := s.NodeByKeyHash("hashB"); n == nil || !n.Approved {
+		t.Fatalf("rotated key must work: %+v", n)
+	}
+
+	// Auto-approve path.
+	if err := s.EnrollNode("agent-c", "hashC", "prefC", true); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.NodeByKeyHash("hashC"); n == nil || !n.Approved {
+		t.Fatalf("auto-approved node: %+v", n)
+	}
+	if err := s.SetNodeApproved("missing", true); err == nil {
+		t.Error("approving a missing node should error")
+	}
+}
+
 func TestNodeMaintenanceFlag(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {

@@ -60,14 +60,41 @@ without a redesign. Tables: `settings`, `upstreams`, `blocklists`, `rules`,
 - **OIDC (Authentik):** authorization-code + PKCE; map Authentik groups → roles
   (RBAC: admin / read-only). Selected via config; both can be enabled at once.
 
-## Clustering (later phase, designed-for now)
+## Clustering
 
-- **Master** = source of truth (its SQLite). **Agents** replicate config by
-  pulling diffs (an `updated_at` / version cursor) from the master API; query
-  logs + stats stay local per node and are aggregated for the dashboard.
+MazeDNS separates the **control plane** from the **data plane** so dashboard,
+API, and classifier load can never affect resolver latency. They ship as two
+images (`mazedns-control-plane`, `mazedns-dns-agent`).
+
+- **Control plane** = source of truth (its SQLite/Postgres). It serves the web UI,
+  API, auth, classifier, list refresher, cluster coordination, and the
+  cluster-wide dashboard. It **never answers DNS**.
+- **DNS agents** = the data plane. Each agent serves DNS (UDP/TCP, optional
+  DoT/DoH), replicates its effective filtering config from the control plane, and
+  ships its query log + counters back for the dashboard. Agents keep resolving
+  from their local copy even if the control plane is unreachable.
+
+**Replication.** Each agent polls `GET /api/cluster/snapshot` on its interval,
+authenticating with a per-node API key (Bearer). The snapshot carries the rules
+and rewrites plus a short content **version hash** (`store.ConfigVersion`, an
+order-independent hash of the replicated config); the agent applies a new snapshot
+only when its own hash differs, so steady state is a cheap no-op. Query logs and
+counters flow the other way via `POST /api/cluster/log`. None of this touches the
+DNS hot path.
+
+**Enrollment (token auto-join).** The control plane holds a shared **join token**
+(`MAZEDNS_JOIN_TOKEN`). An agent boots with the control-plane URL, the join token,
+and a node name, and self-registers at `POST /api/cluster/enroll`; the control
+plane validates the token (constant-time), issues a per-node key, and the agent
+persists that key locally (in its `app_meta`) for all later polls. If the control
+plane sets `require_approval`, the node is created **pending** and cannot pull
+config until an admin approves it in the Cluster tab. An agent that loses its key
+(or whose key is revoked) re-enrolls automatically with the join token. A per-node
+key can also be issued manually from the UI when no join token is used.
+
 - Transport over a **WireGuard mesh**; deploy on Docker + k3s; HA via multiple
-  resolvers (and later anycast). The row-versioned schema above is what makes
-  this incremental rather than a rewrite.
+  agents (and later anycast). The row-versioned schema above is what makes this
+  incremental rather than a rewrite.
 
 ## Observability
 

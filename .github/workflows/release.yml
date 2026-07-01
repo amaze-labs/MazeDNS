@@ -57,12 +57,17 @@ jobs:
             name="mazedns_${os}_${arch}"
             stage="dist/${name}"
             mkdir -p "$stage"
-            bin="mazedns"; [ "$os" = "windows" ] && bin="mazedns.exe"
+            ext=""; [ "$os" = "windows" ] && ext=".exe"
             echo "==> building ${t}"
+            # control-plane carries the embedded web UI; dns-agent is lean (no UI).
             GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
               go build -tags embed_dist -trimpath \
                 -ldflags="-s -w -X 'main.version=${VERSION}'" \
-                -o "${stage}/${bin}" ./cmd/mazedns
+                -o "${stage}/control-plane${ext}" ./cmd/control-plane
+            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
+              go build -trimpath \
+                -ldflags="-s -w -X 'main.version=${VERSION}'" \
+                -o "${stage}/dns-agent${ext}" ./cmd/dns-agent
             cp configs/mazedns.yaml "${stage}/mazedns.yaml.example"
             [ -f README.md ] && cp README.md "${stage}/" || true
             [ -f LICENSE ] && cp LICENSE "${stage}/" || true
@@ -93,7 +98,7 @@ jobs:
             **Build:** `${{ steps.ver.outputs.version }}`
 
             Pick the archive for your OS/arch below. Verify with `mazedns_checksums.txt`.
-            Each archive contains the `mazedns` binary plus `mazedns.yaml.example`.
+            Each archive contains the `control-plane` and `dns-agent` binaries plus `mazedns.yaml.example`.
           files: |
             dist/mazedns_*.tar.gz
             dist/mazedns_*.zip

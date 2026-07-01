@@ -208,15 +208,23 @@ type Classifier struct {
 	AbuseIPDBAPIKey  string `yaml:"abuseipdb_api_key"`
 }
 
-// Cluster configures master<->worker configuration replication. The master
-// serves cluster endpoints when enabled; each worker authenticates with a
-// per-node API key issued by the master's "add node" flow.
+// Cluster configures control-plane<->agent configuration replication. The
+// control plane serves cluster endpoints when enabled; each agent authenticates
+// with a per-node API key. Agents obtain that key automatically by self-enrolling
+// with the shared JoinToken, or it can be supplied directly via NodeKey.
 type Cluster struct {
-	Enabled   bool     `yaml:"enabled"`
-	MasterURL string   `yaml:"master_url"` // worker: master base URL, e.g. http://master:8080
-	MasterIP  string   `yaml:"master_ip"`  // worker: pin the master's IP (skip DNS); TLS still uses the URL host
-	NodeKey   string   `yaml:"node_key"`   // worker: per-node API key from the master
-	Interval  Duration `yaml:"interval"`   // worker: snapshot poll interval
+	Enabled bool `yaml:"enabled"`
+	// Control-plane side.
+	JoinToken       string `yaml:"join_token"`       // shared secret agents present to self-enroll ('' disables auto-join)
+	RequireApproval bool   `yaml:"require_approval"` // hold self-enrolled agents until an admin approves them
+
+	// Agent side.
+	CPURL     string   `yaml:"cp_url"`     // agent: control-plane base URL, e.g. http://control-plane:8080
+	MasterURL string   `yaml:"master_url"` // deprecated alias of cp_url
+	MasterIP  string   `yaml:"master_ip"`  // agent: pin the control-plane IP (skip DNS); TLS still uses the URL host
+	NodeName  string   `yaml:"node_name"`  // agent: name to enroll under (defaults to the hostname)
+	NodeKey   string   `yaml:"node_key"`   // agent: per-node API key (auto-issued when using join_token)
+	Interval  Duration `yaml:"interval"`   // agent: snapshot poll interval
 	// AdvertiseAddr is the address other hosts use to reach this node's DNS (the
 	// site-reachable IP). Set it when the auto-detected address would be wrong —
 	// e.g. a docker-internal IP that doesn't exist on the LAN. Used for display and
@@ -359,15 +367,27 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
 	}
-	if v := os.Getenv("MAZEDNS_MASTER_URL"); v != "" {
-		cfg.Cluster.MasterURL = v
+	// Agent: control-plane URL (MAZEDNS_CP_URL, or the deprecated MAZEDNS_MASTER_URL).
+	if v := firstEnv("MAZEDNS_CP_URL", "MAZEDNS_MASTER_URL"); v != "" {
+		cfg.Cluster.CPURL = v
 		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_NODE_KEY"); v != "" {
 		cfg.Cluster.NodeKey = v
 		cfg.Cluster.Enabled = true
 	}
-	if v := os.Getenv("MAZEDNS_MASTER_IP"); v != "" {
+	if v := os.Getenv("MAZEDNS_NODE_NAME"); v != "" {
+		cfg.Cluster.NodeName = v
+	}
+	// Agent: shared join token for self-enrollment.
+	if v := os.Getenv("MAZEDNS_JOIN_TOKEN"); v != "" {
+		cfg.Cluster.JoinToken = v
+		cfg.Cluster.Enabled = true
+	}
+	if v := os.Getenv("MAZEDNS_REQUIRE_APPROVAL"); v == "true" || v == "1" {
+		cfg.Cluster.RequireApproval = true
+	}
+	if v := firstEnv("MAZEDNS_MASTER_IP", "MAZEDNS_CP_IP"); v != "" {
 		cfg.Cluster.MasterIP = v
 	}
 	if v := os.Getenv("MAZEDNS_ADVERTISE_ADDR"); v != "" {
@@ -459,6 +479,26 @@ func envClean(key string) string {
 		}
 	}
 	return v
+}
+
+// firstEnv returns the first non-empty environment variable among keys (used to
+// accept a new variable name while still honoring a deprecated alias).
+func firstEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ControlPlaneURL returns the agent's control-plane base URL, honoring the
+// deprecated master_url alias when cp_url is unset.
+func (c Cluster) ControlPlaneURL() string {
+	if c.CPURL != "" {
+		return c.CPURL
+	}
+	return c.MasterURL
 }
 
 // splitList parses a comma- or space-separated list, trimming blanks.

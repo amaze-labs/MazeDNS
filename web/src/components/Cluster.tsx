@@ -3,7 +3,7 @@ import { api, type Node, type Site } from '../api'
 import { pollWhileVisible } from '../poll'
 
 const ONLINE_WINDOW = 120 // seconds
-const IMAGE = 'ghcr.io/ipmaze/mazedns:latest'
+const IMAGE = 'ghcr.io/ipmaze/mazedns-dns-agent:latest'
 
 function ago(unixSec: number): string {
   if (!unixSec) return 'never'
@@ -74,14 +74,14 @@ export default function Cluster() {
   }
 
   const del = async (n: string) => {
-    if (!window.confirm(`Remove node “${n}”? Its key is revoked.`)) return
+    if (!window.confirm(`Remove agent “${n}”? Its key is revoked.`)) return
     await api.deleteNode(n)
     if (newKey?.name === n) setNewKey(null)
     load()
   }
 
   const renew = async (n: string) => {
-    if (!window.confirm(`Rotate the key for “${n}”? The old key stops working immediately — update the worker's MAZEDNS_NODE_KEY.`)) return
+    if (!window.confirm(`Rotate the key for “${n}”? The old key stops working immediately.`)) return
     try {
       const r = await api.renewNodeKey(n)
       setNewKey(r)
@@ -92,9 +92,19 @@ export default function Cluster() {
     }
   }
 
+  const approve = async (n: Node) => {
+    try {
+      await api.approveNode(n.name, !n.approved)
+      setErr('')
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   const toggleMaintenance = async (n: Node) => {
     const on = !n.maintenance
-    if (on && !window.confirm(`Put “${n.name}” into maintenance? It will stop serving DNS (answers SERVFAIL) so clients fail over to another node.`)) return
+    if (on && !window.confirm(`Put “${n.name}” into maintenance? It will stop serving DNS (answers SERVFAIL) so clients fail over to another agent.`)) return
     try {
       await api.setNodeMaintenance(n.name, on)
       setErr('')
@@ -105,45 +115,25 @@ export default function Cluster() {
   }
 
   const now = Date.now() / 1000
-  const isOnline = (n: Node) => n.is_master || (!!n.last_seen && now - n.last_seen < ONLINE_WINDOW)
-  // A node serves DNS when it's online, not draining, and not a control-plane-only master.
-  const isServing = (n: Node) => isOnline(n) && !n.maintenance && !(n.is_master && n.control_plane_only)
-  // statusOf summarises a node's DNS state for the status column / dot colour.
+  const isOnline = (n: Node) => !!n.last_seen && now - n.last_seen < ONLINE_WINDOW
+  // An agent serves DNS when it's online, approved, and not draining.
+  const isServing = (n: Node) => isOnline(n) && n.approved && !n.maintenance
+  // statusOf summarises an agent's DNS state for the status column / dot colour.
   const statusOf = (n: Node): { dot: 'on' | 'off' | 'warn'; label: string } => {
+    if (!n.approved) return { dot: 'warn', label: 'Pending approval' }
     if (!isOnline(n)) return { dot: 'off', label: 'Offline' }
-    if (n.is_master && n.control_plane_only) return { dot: 'warn', label: 'Control plane only' }
     if (n.maintenance) return { dot: 'warn', label: 'Draining' }
     return { dot: 'on', label: 'Serving DNS' }
   }
 
-  const master = nodes.find((n) => n.is_master)
   const online = nodes.filter(isOnline).length
   const serving = nodes.filter(isServing).length
+  const pending = nodes.filter((n) => !n.approved).length
   const totalQ = nodes.reduce((sum, n) => sum + n.total, 0)
   const totalB = nodes.reduce((sum, n) => sum + n.blocked, 0)
 
-  const setControlPlane = async (on: boolean) => {
-    if (on) {
-      const otherServing = nodes.filter((n) => !n.is_master && isServing(n)).length
-      if (
-        otherServing === 0 &&
-        !window.confirm(
-          'No worker node is currently serving DNS. Turning this on means the cluster answers no DNS queries until a worker comes online. Continue?',
-        )
-      )
-        return
-    }
-    try {
-      await api.setMasterControlPlaneOnly(on)
-      setErr('')
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
-  }
-
-  const masterHost = window.location.hostname || '<master-host>'
-  const masterURL = `http://${masterHost}:8080`
+  const cpHost = window.location.hostname || '<control-plane-host>'
+  const cpURL = `${window.location.protocol}//${cpHost}${window.location.port ? ':' + window.location.port : ''}`
 
   // ---- Sites: create / delete / assign nodes ----
   const addSite = async (e: FormEvent) => {
@@ -159,7 +149,7 @@ export default function Cluster() {
     }
   }
   const delSite = async (n: string) => {
-    if (!window.confirm(`Delete site “${n}”? Its nodes are unassigned (they keep serving DNS).`)) return
+    if (!window.confirm(`Delete site “${n}”? Its agents are unassigned (they keep serving DNS).`)) return
     try {
       await api.deleteSite(n)
       load()
@@ -169,7 +159,7 @@ export default function Cluster() {
   }
   const assignSite = async (n: Node, site: string, role: string) => {
     try {
-      await api.setNodeSite(n.is_master ? 'master' : n.name, site, role)
+      await api.setNodeSite(n.name, site, role)
       setErr('')
       load()
     } catch (e: any) {
@@ -180,33 +170,39 @@ export default function Cluster() {
   // Role helpers: primary leads, then backups, then unlabelled.
   const roleRank = (r: string) => (r === 'primary' ? 0 : r === 'backup' ? 1 : 2)
   const roleLabel = (r: string) => (r === 'primary' ? 'Primary' : r === 'backup' ? 'Backup' : '—')
-  // A node's site-reachable DNS address (IP). Comes from each node's reported
-  // address — the master's is its MAZEDNS_ADVERTISE_ADDR — never the dashboard host.
   const nodeIP = (n: Node) => (n.address || '').replace(/:\d+$/, '')
-  // Group nodes by site, members ordered primary-first.
   const membersOf = (site: string) =>
     nodes.filter((n) => n.site === site).sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name))
   const sitesInUse = Array.from(new Set([...sites.map((s) => s.name), ...nodes.map((n) => n.site).filter(Boolean)])).sort()
-  const dockerRun = newKey
-    ? `docker run -d --name mazedns-${newKey.name} --restart unless-stopped \\
-  -e MAZEDNS_MODE=worker \\
-  -e MAZEDNS_MASTER_URL=${masterURL} \\
-  -e MAZEDNS_NODE_KEY=${newKey.key} \\
+
+  // Zero-touch join: agents self-enroll with the shared join token you set on the
+  // control plane (MAZEDNS_JOIN_TOKEN). The token is never shown here.
+  const joinRun = `docker run -d --name mazedns-agent --restart unless-stopped \\
+  -e MAZEDNS_CP_URL=${cpURL} \\
+  -e MAZEDNS_JOIN_TOKEN=<your-cluster-join-token> \\
+  -e MAZEDNS_NODE_NAME=site-a-1 \\
   -p 53:5300/udp -p 53:5300/tcp \\
   ${IMAGE}`
-    : ''
-  const dockerCompose = newKey
-    ? `services:
-  mazedns-${newKey.name}:
+  const joinCompose = `services:
+  dns-agent:
     image: ${IMAGE}
     restart: unless-stopped
     environment:
-      MAZEDNS_MODE: worker
-      MAZEDNS_MASTER_URL: "${masterURL}"
-      MAZEDNS_NODE_KEY: "${newKey.key}"
+      MAZEDNS_CP_URL: "${cpURL}"
+      MAZEDNS_JOIN_TOKEN: "\${MAZEDNS_JOIN_TOKEN:?set the cluster join token}"
+      MAZEDNS_NODE_NAME: "site-a-1"
     ports:
       - "53:5300/udp"
       - "53:5300/tcp"`
+
+  // Legacy per-node key flow (no join token configured).
+  const dockerRun = newKey
+    ? `docker run -d --name mazedns-${newKey.name} --restart unless-stopped \\
+  -e MAZEDNS_CP_URL=${cpURL} \\
+  -e MAZEDNS_NODE_KEY=${newKey.key} \\
+  -e MAZEDNS_NODE_NAME=${newKey.name} \\
+  -p 53:5300/udp -p 53:5300/tcp \\
+  ${IMAGE}`
     : ''
 
   return (
@@ -215,46 +211,54 @@ export default function Cluster() {
       {err && <div className="error">{err}</div>}
 
       <div className="cards">
-        <Card label="Nodes" value={nodes.length} />
+        <Card label="Agents" value={nodes.length} />
         <Card label="Online" value={online} />
         <Card label="Serving DNS" value={serving} accent={serving === 0 ? 'danger' : undefined} />
+        <Card label="Pending" value={pending} accent={pending > 0 ? 'danger' : undefined} />
         <Card label="Cluster queries" value={totalQ} />
         <Card label="Cluster blocked" value={totalB} accent="danger" />
       </div>
 
-      {/* Master role: control plane + DNS, or control plane only (no DNS). */}
       <div className="settings-card role-card">
-        <h3>Master role</h3>
+        <h3>How MazeDNS is deployed</h3>
         <p className="muted" style={{ textAlign: 'left', marginTop: 0 }}>
-          Choose whether this master also answers DNS, or runs purely as the cluster <strong>control plane</strong>
-          (config, dashboard, node enrollment, log aggregation) while the worker nodes serve DNS. Applies live — no
-          restart.
-        </p>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={!!master?.control_plane_only}
-            onChange={(e) => setControlPlane(e.target.checked)}
-          />
-          <span className="track">
-            <span className="thumb" />
-          </span>
-          <span className="toggle-label">Control plane only — the master serves no DNS (answers REFUSED)</span>
-        </label>
-        <p className="muted" style={{ textAlign: 'left', marginBottom: 0 }}>
-          Currently:{' '}
-          <strong>{master?.control_plane_only ? 'Control plane only — no DNS' : 'Control plane + DNS'}</strong>.
-          {master?.control_plane_only
-            ? ' Point your clients at the worker nodes below.'
-            : ' The master both coordinates the cluster and resolves DNS.'}
+          This is the <strong>control plane</strong>: it holds the config, dashboard, and cluster coordination and{' '}
+          <strong>does not answer DNS</strong>. All resolving is done by the <strong>DNS agents</strong> below. Point your
+          clients at the agents’ addresses.
         </p>
       </div>
 
+      <h2>Add a DNS agent</h2>
+      <p className="muted">
+        Agents self-enroll with the shared <strong>join token</strong> you set on the control plane
+        (<code>MAZEDNS_JOIN_TOKEN</code>). Run the agent image below and it appears here automatically — no key to copy.
+      </p>
+      <CodeBlock label="Zero-touch join — docker run" text={joinRun} />
+      <CodeBlock label="Zero-touch join — docker compose" text={joinCompose} />
+
+      <details className="settings-card" style={{ marginTop: 12 }}>
+        <summary>No join token? Issue a per-agent key manually</summary>
+        <form className="row" onSubmit={add} style={{ marginTop: 12 }}>
+          <input placeholder="new agent name (e.g. site-b)" value={name} onChange={(e) => setName(e.target.value)} />
+          <button type="submit" className="btn primary">
+            Issue key
+          </button>
+        </form>
+        {newKey && (
+          <div className="enroll">
+            <div className="ok-msg">
+              <strong>Key for agent “{newKey.name}” — shown once</strong> (stored hashed). Set it as{' '}
+              <code>MAZEDNS_NODE_KEY</code> on the agent.
+            </div>
+            <CodeBlock label="docker run" text={dockerRun} />
+          </div>
+        )}
+      </details>
+
       <h2>Sites</h2>
       <p className="muted">
-        Group nodes into sites and label each <strong>Primary</strong> or <strong>Backup</strong>. Roles are advisory —
-        every node serves DNS; clients fail over via the order in their <code>resolv.conf</code> / DHCP. Assign nodes in
-        the table below.
+        Group agents into sites and label each <strong>Primary</strong> or <strong>Backup</strong>. Roles are advisory —
+        every agent serves DNS; clients fail over via the order in their <code>resolv.conf</code> / DHCP.
       </p>
       <form className="row" onSubmit={addSite}>
         <input placeholder="new site name (e.g. office-london)" value={siteName} onChange={(e) => setSiteName(e.target.value)} />
@@ -285,7 +289,7 @@ export default function Cluster() {
                   {members.map((n) => {
                     const st = statusOf(n)
                     return (
-                      <li key={n.name} className={n.is_master ? 'is-master' : ''}>
+                      <li key={n.name}>
                         <span className={`node-dot ${st.dot}`} title={st.label} />
                         <span className={`badge ${n.role === 'primary' ? 'allow' : ''}`}>{roleLabel(n.role)}</span>
                         <strong>{n.name}</strong>
@@ -293,46 +297,23 @@ export default function Cluster() {
                       </li>
                     )
                   })}
-                  {members.length === 0 && <li className="muted">No nodes assigned yet</li>}
+                  {members.length === 0 && <li className="muted">No agents assigned yet</li>}
                 </ul>
               </div>
             )
           })}
         </div>
       ) : (
-        <p className="muted">No sites yet — create one above, then assign nodes in the table below.</p>
+        <p className="muted">No sites yet — create one above, then assign agents in the table below.</p>
       )}
 
-      <h2>Add a worker node</h2>
-      <p className="muted">
-        Enroll a node to get a one-time key, then run the worker from the prebuilt image <code>{IMAGE}</code>.
-      </p>
-      <form className="row" onSubmit={add}>
-        <input placeholder="new node name (e.g. site-b)" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="submit" className="btn primary">
-          Add node
-        </button>
-      </form>
-
-      {newKey && (
-        <div className="enroll">
-          <div className="ok-msg">
-            <strong>Key for node “{newKey.name}” — shown once</strong> (stored hashed). Run the worker with it, or update
-            its <code>MAZEDNS_NODE_KEY</code> if you rotated. Adjust <code>{masterURL}</code> if the worker reaches the
-            master at a different address.
-          </div>
-          <CodeBlock label="Option A — docker run" text={dockerRun} />
-          <CodeBlock label="Option B — docker compose (add to your compose file)" text={dockerCompose} />
-        </div>
-      )}
-
-      <h2>Nodes</h2>
+      <h2>Agents</h2>
       <div className="table-scroll">
       <table>
         <thead>
           <tr>
             <th>Status</th>
-            <th>Node</th>
+            <th>Agent</th>
             <th>Address</th>
             <th>Queries</th>
             <th>Blocked</th>
@@ -346,7 +327,7 @@ export default function Cluster() {
           {nodes.map((n) => {
             const st = statusOf(n)
             return (
-            <tr key={n.name} className={n.is_master ? 'master-row' : ''}>
+            <tr key={n.name} className={!n.approved ? 'master-row' : ''}>
               <td>
                 <span className="node-status">
                   <span className={`node-dot ${st.dot}`} title={st.label} />
@@ -355,9 +336,9 @@ export default function Cluster() {
               </td>
               <td>
                 {n.name}
-                {n.is_master && n.control_plane_only && (
-                  <span className="badge info" title="Control plane only — serves no DNS" style={{ marginLeft: 6 }}>
-                    control plane
+                {!n.approved && (
+                  <span className="badge info" title="Pending approval" style={{ marginLeft: 6 }}>
+                    pending
                   </span>
                 )}
               </td>
@@ -365,7 +346,7 @@ export default function Cluster() {
               <td>{n.total.toLocaleString()}</td>
               <td>{n.blocked.toLocaleString()}</td>
               <td>{n.version ? <code>{n.version}</code> : <span className="muted">pending</span>}</td>
-              <td>{n.is_master ? 'now' : ago(n.last_seen)}</td>
+              <td>{ago(n.last_seen)}</td>
               <td>
                 <div className="ql-filters">
                   <select value={n.site} onChange={(e) => assignSite(n, e.target.value, e.target.value ? n.role || 'backup' : '')}>
@@ -386,26 +367,26 @@ export default function Cluster() {
               </td>
               <td>
                 <div className="ql-filters">
-                  {/* Maintenance is moot for a control-plane-only master (already no DNS). */}
-                  {!(n.is_master && n.control_plane_only) && (
-                    <button
-                      className={`btn ${n.maintenance ? 'primary' : ''}`}
-                      onClick={() => toggleMaintenance(n)}
-                      title={n.maintenance ? 'Resume serving DNS' : 'Drain: stop serving DNS so clients fail over'}
-                    >
-                      {n.maintenance ? 'Resume' : 'Maintenance'}
-                    </button>
-                  )}
-                  {!n.is_master && (
-                    <>
-                      <button className="btn" onClick={() => renew(n.name)} title="Rotate this node's key">
-                        Renew key
-                      </button>
-                      <button className="del" onClick={() => del(n.name)}>
-                        ✕
-                      </button>
-                    </>
-                  )}
+                  <button
+                    className={`btn ${n.approved ? '' : 'primary'}`}
+                    onClick={() => approve(n)}
+                    title={n.approved ? 'Revoke admission (hold this agent)' : 'Admit this agent to the cluster'}
+                  >
+                    {n.approved ? 'Hold' : 'Approve'}
+                  </button>
+                  <button
+                    className={`btn ${n.maintenance ? 'primary' : ''}`}
+                    onClick={() => toggleMaintenance(n)}
+                    title={n.maintenance ? 'Resume serving DNS' : 'Drain: stop serving DNS so clients fail over'}
+                  >
+                    {n.maintenance ? 'Resume' : 'Maintenance'}
+                  </button>
+                  <button className="btn" onClick={() => renew(n.name)} title="Rotate this agent's key">
+                    Renew key
+                  </button>
+                  <button className="del" onClick={() => del(n.name)}>
+                    ✕
+                  </button>
                 </div>
               </td>
             </tr>
@@ -414,7 +395,7 @@ export default function Cluster() {
           {nodes.length === 0 && (
             <tr>
               <td colSpan={9} className="muted">
-                No nodes enrolled — add one above
+                No agents enrolled — run one with the join command above
               </td>
             </tr>
           )}

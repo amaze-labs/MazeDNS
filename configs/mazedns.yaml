@@ -103,12 +103,17 @@ classifier:                    # optional LLM domain classification (master only
   abuseipdb_enabled: false
   abuseipdb_api_key: ""
 
-cluster:                       # master<->worker config replication
-  enabled: false               # worker: start the sync agent (auto-enabled when master_url+node_key are set). The master's control plane is always on — enroll nodes in the UI.
-  master_url: ""               # worker: master base URL (or MAZEDNS_MASTER_URL)
-  master_ip: ""                # worker: pin the master's IP to skip DNS (or MAZEDNS_MASTER_IP); TLS still uses the URL host
-  node_key: ""                 # worker: per-node API key from the master (or MAZEDNS_NODE_KEY)
-  interval: "30s"              # worker: snapshot poll interval
+cluster:                       # control-plane <-> dns-agent config replication
+  enabled: false               # agent: start the sync agent (auto-enabled when cp_url + join_token/node_key are set)
+  # --- control-plane side ---
+  join_token: ""               # shared secret agents present to self-enroll (or MAZEDNS_JOIN_TOKEN); '' disables auto-join
+  require_approval: false      # hold self-enrolled agents until an admin approves them (or MAZEDNS_REQUIRE_APPROVAL)
+  # --- agent side ---
+  cp_url: ""                   # agent: control-plane base URL (or MAZEDNS_CP_URL)
+  master_ip: ""                # agent: pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still uses the URL host
+  node_name: ""                # agent: name to enroll under (or MAZEDNS_NODE_NAME; defaults to the hostname)
+  node_key: ""                 # agent: per-node API key (auto-issued via join_token; or MAZEDNS_NODE_KEY)
+  interval: "30s"              # agent: snapshot poll interval
 
 database:
   driver: "sqlite"             # "sqlite" (default, embedded) | "postgres" (external)

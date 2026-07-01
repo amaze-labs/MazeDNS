@@ -49,8 +49,10 @@ Grab the self-contained binaries for Linux/macOS/Windows from the rolling
 [**`latest` release**](https://github.com/IPMaze/MazeDNS/releases/latest), or run the containers
 (`ghcr.io/ipmaze/mazedns-control-plane:latest` and
 `ghcr.io/ipmaze/mazedns-dns-agent:latest`). Full instructions — including how to
-choose where the SQLite database lives — are in
-[docs/install.md](docs/install.md).
+choose where the database lives — are in
+[docs/install.md](docs/install.md) (bare host / Docker / Kubernetes). Every
+setting, split by control plane / agent / infrastructure, is in
+[docs/configuration.md](docs/configuration.md).
 
 MazeDNS runs as two components: a **control plane** (dashboard/API, no DNS) and
 one or more **DNS agents** (resolvers that replicate config from the control

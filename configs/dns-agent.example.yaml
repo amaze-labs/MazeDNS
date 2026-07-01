@@ -1,0 +1,107 @@
+# MazeDNS — dns-agent example config (pure-binary deployments).
+#
+# Run:  ./dns-agent --config dns-agent.yaml
+#
+# The dns-agent is the data plane: it serves DNS (UDP/TCP, optionally DoT/DoH),
+# replicates its filtering rules from the control plane, and exposes only
+# /healthz + /metrics over HTTP. It has no UI, auth, or classifier — those live
+# on the control plane.
+#
+# Operational settings (upstreams, forwarders, rate_limit, dnssec, cache,
+# filter.block_response) are SEEDED from this file into the agent's local DB on
+# first run, then editable per-node. Rules/rewrites are replicated FROM the
+# control plane and are not configured here. File blocklists (filter.blocklist_files)
+# are loaded locally by each agent — they are not replicated, so mount them on
+# every agent that should use them.
+#
+# Most fields can also be set via MAZEDNS_* environment variables (noted inline).
+
+listen:
+  address: "0.0.0.0"           # bind all interfaces so clients can reach the resolver (or MAZEDNS_LISTEN_ADDRESS)
+  port: 5300                   # non-privileged port; map host 53 -> 5300 in Docker, or run with CAP_NET_BIND_SERVICE
+
+upstreams:                     # tried in order, first to answer wins
+  - "1.1.1.1:53"               # plain UDP (TCP fallback)
+  - "9.9.9.9:53"
+  # Encrypted upstreams are supported too:
+  # - "tls://1.1.1.1:853#cloudflare-dns.com"   # DNS-over-TLS (servername after #)
+  # - "https://dns.quad9.net/dns-query"         # DNS-over-HTTPS
+
+forwarders: []                 # split-horizon: e.g. - { suffix: "corp.internal", upstreams: ["udp://10.0.0.53:53"] }
+
+rate_limit:
+  enabled: false
+  qpm: 600                     # max queries per minute per client IP (REFUSED beyond)
+
+dnssec:
+  enabled: false               # force the DO bit upstream and surface the AD flag
+
+zones: []                      # authoritative zones served locally, e.g.
+                               # - name: "home.lan"
+                               #   records:
+                               #     - { name: "@",   type: "A", value: "192.168.1.1" }
+                               #     - { name: "nas", type: "A", value: "192.168.1.10" }
+
+# Encrypted DNS endpoints for clients (uses a self-signed cert if tls.* is empty)
+dot:
+  enabled: false
+  address: "0.0.0.0"
+  port: 853                    # DNS-over-TLS
+doh:
+  enabled: false
+  address: "0.0.0.0"
+  port: 8443                   # DNS-over-HTTPS
+  path: "/dns-query"
+tls:
+  cert_file: ""                # PEM cert; empty -> self-signed generated on start
+  key_file: ""
+
+cache:
+  enabled: true
+  max_entries: 10000
+  min_ttl: "10s"
+  max_ttl: "24h"
+
+filter:
+  enabled: true
+  block_response: "nxdomain"   # "nxdomain" or "zeroip" (0.0.0.0 / ::)
+  # File blocklists loaded locally by THIS agent (not replicated). Paths are
+  # relative to this config file, or set MAZEDNS_BLOCKLIST_FILES (absolute paths).
+  # blocklist_files:
+  #   - "blocklist.hosts"
+  blocklist_files: []
+
+api:
+  enabled: true
+  # The agent's HTTP surface is only /healthz + /metrics and is UNAUTHENTICATED,
+  # so it binds loopback by default. To let Prometheus scrape it, set this to the
+  # agent's overlay/VPN IP (recommended) or 0.0.0.0 (or MAZEDNS_API_ADDRESS).
+  address: "127.0.0.1"
+  port: 8080
+
+cluster:                       # agent side of config replication
+  enabled: true                # auto-enabled anyway once cp_url + join_token/node_key are set
+  cp_url: ""                   # control-plane base URL, e.g. https://dns.example.com (or MAZEDNS_CP_URL)
+  join_token: ""               # shared secret to self-enroll; the control plane issues a per-node key (or MAZEDNS_JOIN_TOKEN)
+  master_ip: ""                # pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still verifies the URL host
+  node_name: ""                # name to enroll under (or MAZEDNS_NODE_NAME; defaults to the hostname)
+  node_key: ""                 # per-node API key — leave empty when using join_token (or MAZEDNS_NODE_KEY)
+  interval: "30s"              # snapshot poll interval
+
+database:
+  driver: "sqlite"             # the agent keeps a small local DB for its issued node key + a short query-log buffer
+  path: "mazedns.db"           # or MAZEDNS_DB_PATH
+
+log:
+  level: "info"                # debug|info|warn|error (or MAZEDNS_LOG_LEVEL)
+  query_log: false             # set true to log every query locally (shipped to the control plane regardless)
+
+metrics:
+  victoria_metrics:            # each agent pushes its own metrics, labelled by instance
+    enabled: false
+    url: "http://victoriametrics:8428"
+    interval: "15s"
+    job: "mazedns"
+    instance: ""               # empty -> hostname
+    username: ""
+    password: ""

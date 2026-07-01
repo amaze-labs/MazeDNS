@@ -1,0 +1,89 @@
+# MazeDNS — control-plane example config (pure-binary deployments).
+#
+# Run:  ./control-plane --config control-plane.yaml
+#
+# The control plane runs the API, web UI, auth, domain classifier, cluster
+# coordination, and dashboard aggregation. It NEVER serves DNS — every query is
+# answered by the dns-agent fleet — so this file has no listen/upstreams/cache/
+# filter sections. Any resolver setting omitted here falls back to a harmless
+# built-in default (the control plane just doesn't use it).
+#
+# Most fields can also be set via MAZEDNS_* environment variables (noted inline),
+# which is the preferred way to configure containers.
+
+api:
+  enabled: true
+  address: "127.0.0.1"         # UI + API + /metrics + /healthz; keep it off the public internet (or MAZEDNS_API_ADDRESS)
+  port: 8080                   # put a TLS reverse proxy in front for remote access
+
+auth:
+  enabled: true                # require login for the API + UI
+  session_ttl: "24h"
+  admin:                       # first-run bootstrap admin (created only if no users exist)
+    username: "admin"          # or MAZEDNS_ADMIN_USERNAME
+    password: ""               # or MAZEDNS_ADMIN_PASSWORD; empty -> random, logged once at first start
+  oidc:                        # optional SSO (Authentik or any OIDC provider); all fields also via MAZEDNS_OIDC_*
+    enabled: false
+    issuer: ""                 # e.g. https://authentik.example.com/application/o/mazedns/
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""           # e.g. https://dns.example.com/api/auth/oidc/callback (must match the provider exactly)
+    scopes: []
+    groups_claim: "groups"
+    admin_group: ""            # members of this group get the admin role
+    disable_password_login: false  # true = SSO only (no local login)
+    auto_login: false              # true = redirect straight to the SSO provider
+
+cluster:                       # control-plane side of config replication
+  enabled: true
+  join_token: ""               # shared secret agents present to self-enroll (or MAZEDNS_JOIN_TOKEN); '' disables auto-join
+  require_approval: false      # hold self-enrolled agents until an admin approves them (or MAZEDNS_REQUIRE_APPROVAL)
+
+classifier:                    # optional domain classification (static signals + optional LLM). Control plane only.
+  # These values SEED the database on first run; afterwards edit them live in the
+  # UI under Settings → "AI classification" (no restart needed).
+  enabled: false               # off by default
+  endpoint: "http://localhost:11434/v1"  # OpenAI-compatible base (Ollama/llama.cpp/LM Studio)
+  model: "llama3.2"
+  api_key: ""                  # usually empty for local models
+  mode: "suggest"              # off | suggest (approve before blocking) | auto (block immediately)
+  min_gap_ms: 1000             # rate-limit between model calls
+  timeout_sec: 60              # per-request timeout (raise it if a local model warms up slowly)
+  trusted_disable_default: false  # true = don't use the built-in public trusted list (Majestic Million)
+  trusted_list_url: ""            # optional extra custom trusted list (URL or file path)
+  trusted_top_n: 0                # cap the built-in ranked list (0 = top 100k)
+  # Built-in public threat-intel feeds to enable (merged). Available keys:
+  # urlhaus, threatfox, phishing_army, hagezi_tif, openphish.
+  threat_feeds: ["urlhaus", "threatfox", "phishing_army", "hagezi_tif"]
+  threat_list_url: ""             # extra custom threat lists (one per line / comma-separated)
+  whois_enabled: true             # enrich verdicts with RDAP/WHOIS registration data (domain age, registrar)
+  vt_enabled: false               # VirusTotal domain reputation (key-gated)
+  vt_api_key: ""
+  abuseipdb_enabled: false        # AbuseIPDB IP reputation (key-gated)
+  abuseipdb_api_key: ""
+
+database:
+  driver: "sqlite"             # "sqlite" (default, embedded) | "postgres" (external)
+  path: "mazedns.db"           # sqlite: database file (relative to the working dir); or MAZEDNS_DB_PATH
+  # External PostgreSQL (recommended when running more than one control plane / for backups):
+  # driver: "postgres"
+  # dsn: "postgres://user:pass@db-host:5432/mazedns?sslmode=disable"   # or MAZEDNS_DB_DSN
+
+log:
+  level: "info"                # debug|info|warn|error (or MAZEDNS_LOG_LEVEL)
+
+metrics:
+  victoria_metrics:            # push the control plane's own process metrics to VictoriaMetrics
+    enabled: false
+    url: "http://victoriametrics:8428"   # VM base URL (import endpoint is /api/v1/import/prometheus)
+    interval: "15s"
+    job: "mazedns"
+    instance: ""               # empty -> hostname
+    username: ""               # optional HTTP basic auth
+    password: ""
+  victoria_logs:               # ship the cluster-wide query log (control plane holds it) to VictoriaLogs
+    enabled: false
+    url: "http://victorialogs:9428"      # VL base URL (ingest endpoint is /insert/jsonline)
+    interval: "15s"
+    username: ""
+    password: ""

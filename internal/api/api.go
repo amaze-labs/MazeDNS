@@ -282,7 +282,11 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("cluster node self-enrolled", "name", name, "approved", !s.requireApproval)
-	writeJSON(w, http.StatusCreated, map[string]any{"name": name, "key": key, "approved": !s.requireApproval})
+	// cp_address (if the control plane has a configured advertise address) lets the
+	// agent pin the CP's fixed IP for all later polls — see cmd/dns-agent.
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"name": name, "key": key, "approved": !s.requireApproval, "cp_address": s.store.MasterAdvertiseAddr(),
+	})
 }
 
 // approveNode admits a pending self-enrolled node (or re-holds it).

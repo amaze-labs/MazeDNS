@@ -34,6 +34,11 @@ var version = "dev"
 // key issued by the control plane at enrollment.
 const nodeKeyMeta = "node_key"
 
+// cpIPMeta is the app_meta key under which the agent persists the control plane's
+// advertised address, learned at enrollment. Once known it pins the CP's fixed IP
+// so the node keeps reaching the control plane even if DNS/hostname later breaks.
+const cpIPMeta = "cp_ip"
+
 func main() {
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
 	flag.Parse()
@@ -208,15 +213,27 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 	if name == "" {
 		name, _ = os.Hostname()
 	}
-	client := cluster.NewEnrollClient(cfg.Cluster.MasterIP)
+	// Pin the control-plane IP from (in order) the explicit config, then the address
+	// learned at a previous enrollment. Empty = reach the CP via its URL/DNS.
+	pinnedIP := cfg.Cluster.MasterIP
+	if pinnedIP == "" {
+		pinnedIP, _ = st.GetMeta(cpIPMeta)
+	}
+	client := cluster.NewEnrollClient(pinnedIP)
 
-	// reenroll self-registers with the join token and persists the fresh key.
+	// reenroll self-registers with the join token and persists the fresh key. When
+	// the control plane advertises its own address and no explicit master_ip was
+	// configured, it is persisted so the node keeps a fixed CP IP across restarts.
 	reenroll := func(ctx context.Context) (string, error) {
 		r, err := cluster.Enroll(ctx, client, cpURL, name, cfg.Cluster.JoinToken)
 		if err != nil {
 			return "", err
 		}
 		_ = st.SetMeta(nodeKeyMeta, r.Key)
+		if r.CPAddress != "" && cfg.Cluster.MasterIP == "" {
+			_ = st.SetMeta(cpIPMeta, r.CPAddress)
+			slog.Info("learned control-plane address at enrollment", "cp_address", r.CPAddress)
+		}
 		if !r.Approved {
 			slog.Warn("enrolled but pending approval — approve this node in the control-plane UI", "name", name)
 		}
@@ -229,6 +246,14 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		return
 	}
 
+	// Enrollment may have just learned+persisted the CP's fixed address; use it to
+	// pin the replication agent's transport for all later polls.
+	if cfg.Cluster.MasterIP == "" {
+		if learned, _ := st.GetMeta(cpIPMeta); learned != "" {
+			pinnedIP = learned
+		}
+	}
+
 	statsFn := func() store.NodeStats {
 		t, b, ca, fwd, rw, e := res.StatsSnapshot()
 		return store.NodeStats{
@@ -236,7 +261,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 			Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
 		}
 	}
-	ag := cluster.NewAgent(cpURL, cfg.Cluster.MasterIP, nodeKey, cfg.Cluster.AdvertiseAddr,
+	ag := cluster.NewAgent(cpURL, pinnedIP, nodeKey, cfg.Cluster.AdvertiseAddr,
 		cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
 	if cfg.Cluster.JoinToken != "" {
 		ag.SetReenroll(reenroll)

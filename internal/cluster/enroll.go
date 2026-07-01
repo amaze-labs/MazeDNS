@@ -23,6 +23,9 @@ type EnrollResult struct {
 	Name     string `json:"name"`
 	Key      string `json:"key"`
 	Approved bool   `json:"approved"`
+	// CPAddress is the control plane's own advertised address (if it set one). The
+	// agent pins it so it keeps reaching the CP by a fixed IP even if DNS breaks.
+	CPAddress string `json:"cp_address"`
 }
 
 // Enroll self-registers an agent with the control plane using the shared join

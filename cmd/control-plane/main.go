@@ -58,6 +58,15 @@ func main() {
 	defer st.Close()
 	slog.Info("store ready", "backend", boot.StoreBackend(cfg), "path", cfg.Database.Path)
 
+	// Record the control plane's own reachable address (cluster.advertise_addr /
+	// MAZEDNS_ADVERTISE_ADDR). It is handed to each agent at enrollment and pinned
+	// locally, so a node keeps reaching the control plane by its fixed IP even if
+	// DNS/hostname resolution later breaks.
+	if cfg.Cluster.AdvertiseAddr != "" {
+		_ = st.SetMasterAdvertiseAddr(cfg.Cluster.AdvertiseAddr)
+		slog.Info("control-plane advertise address set", "addr", cfg.Cluster.AdvertiseAddr)
+	}
+
 	// Auth: bootstrap admin + optional OIDC.
 	authMgr := auth.NewManager(st, nil, cfg.Auth.SessionTTL.Std())
 	if cfg.Auth.Enabled {

@@ -79,6 +79,7 @@ surrounding quotes to avoid a common `env_file` mistake.
 | `cluster.enabled` | `MAZEDNS_CLUSTER_ENABLED` | `false` | Serve the cluster endpoints. |
 | `cluster.join_token` | `MAZEDNS_JOIN_TOKEN` | *(empty)* | Shared secret agents present to self-enroll. Empty disables auto-join. |
 | `cluster.require_approval` | `MAZEDNS_REQUIRE_APPROVAL` | `false` | Hold self-enrolled agents until an admin approves them in the Cluster tab. |
+| `cluster.advertise_addr` | `MAZEDNS_ADVERTISE_ADDR` | *(empty)* | The control plane's own fixed address (set it to the CP's IP). Handed to each agent at enrollment; the agent pins it, so a node keeps reaching the CP by that IP even if DNS/hostname resolution later breaks. |
 
 Pre-provisioning without a token: set `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` to
 `name1=key1,name2=key2` to seed node keys at startup (dev/automation).
@@ -135,7 +136,7 @@ Encrypted endpoints for clients (self-signed cert if `tls.*` is empty):
 | `cluster.join_token` | `MAZEDNS_JOIN_TOKEN` | *(empty)* | Shared secret used to self-enroll; the control plane issues a per-node key in return. |
 | `cluster.node_key` | `MAZEDNS_NODE_KEY` | *(empty)* | Per-node key — leave empty when using a join token. |
 | `cluster.node_name` | `MAZEDNS_NODE_NAME` | *(hostname)* | Name to enroll under. |
-| `cluster.master_ip` | `MAZEDNS_CP_IP` (or `MAZEDNS_MASTER_IP`) | *(empty)* | Pin the control-plane IP so the agent reaches it without DNS. TLS still verifies the URL host. |
+| `cluster.master_ip` | `MAZEDNS_CP_IP` (or `MAZEDNS_MASTER_IP`) | *(empty)* | Pin the control-plane IP so the agent reaches it without DNS. TLS still verifies the URL host. When left empty, the agent auto-learns and pins the CP address the control plane advertises at enrollment (see `advertise_addr` on the control plane) and persists it across restarts. An explicit value here always wins. |
 | `cluster.advertise_addr` | `MAZEDNS_ADVERTISE_ADDR` | *(auto)* | The site-reachable address the agent reports to the control plane, used for display and generated client config. Set it when the auto-detected address (e.g. a docker-internal IP) would be wrong. |
 | `cluster.interval` | — | `30s` | Snapshot poll interval. |
 

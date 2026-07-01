@@ -45,6 +45,7 @@ services:
     restart: unless-stopped
     depends_on: [control-plane]
     environment:
+      MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind /healthz + /metrics inside the container so the port mapping works
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_CP_URL: "http://control-plane:8080"
       MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?set a shared cluster join token}"

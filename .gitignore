@@ -8,6 +8,9 @@
 
 # Go build artifacts
 /mazedns
+/control-plane
+/dns-agent
+/bin/
 /dist/
 *.test
 

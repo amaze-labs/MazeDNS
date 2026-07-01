@@ -166,14 +166,11 @@ func main() {
 	}
 
 	// Minimal HTTP surface: liveness + Prometheus metrics only (no API/UI). Bind
-	// 0.0.0.0 by default — unlike the control plane, whose loopback default keeps
-	// its sensitive API/UI private, the agent exposes only /healthz + /metrics,
-	// which a remote Prometheus and a container port mapping must be able to reach.
-	httpAddr := cfg.API.Address
-	if httpAddr == "127.0.0.1" {
-		httpAddr = "0.0.0.0"
-	}
-	httpSrv := healthServer(net.JoinHostPort(httpAddr, strconv.Itoa(cfg.API.Port)), mx)
+	// follows cfg.API.Address, whose default is loopback (secure by default): the
+	// endpoint is unauthenticated, so exposing it on the network is an explicit
+	// operator choice via MAZEDNS_API_ADDRESS (set to 0.0.0.0 in the compose files,
+	// or to the overlay IP on a bare host).
+	httpSrv := healthServer(net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port)), mx)
 	go func() {
 		slog.Info("MazeDNS agent HTTP starting (healthz + metrics)", "addr", httpSrv.Addr)
 		if e := httpSrv.ListenAndServe(); e != nil && e != http.ErrServerClosed {

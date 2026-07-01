@@ -690,18 +690,25 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// getStats returns cluster-wide lifetime counters, summed across every agent from
+// the materialized rollups. The control plane doesn't resolve, so these come from
+// the ingested query log rather than a local resolver (which would read zero).
 func (s *Server) getStats(w http.ResponseWriter, _ *http.Request) {
-	total, blocked, cached, forwarded, rewritten, errs := s.res.StatsSnapshot()
+	summary, err := s.store.RollupSummary(0, nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	logged, _ := s.store.CountQueryLog()
+	t := summary.Totals
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total":      total,
-		"blocked":    blocked,
-		"cached":     cached,
-		"forwarded":  forwarded,
-		"rewritten":  rewritten,
-		"errors":     errs,
-		"cache_size": s.res.CacheLen(),
-		"log_count":  logged,
+		"total":     t.Total,
+		"blocked":   t.Blocked,
+		"cached":    t.Cached,
+		"forwarded": t.Forwarded,
+		"rewritten": t.Rewritten,
+		"errors":    t.Errors,
+		"log_count": logged,
 	})
 }
 

@@ -5,7 +5,6 @@ export interface Stats {
   forwarded: number
   rewritten: number
   errors: number
-  cache_size: number
   log_count: number
 }
 

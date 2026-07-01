@@ -48,14 +48,36 @@ services:
       MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind /healthz + /metrics inside the container so the port mapping works
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_CP_URL: "http://control-plane:8080"
+      # Pin the control plane's IP when the agent can't resolve its FQDN — e.g. the
+      # agent is its site's only DNS server, or it runs with network_mode: host and
+      # has no upstream resolver yet. DNS is bypassed for the CP dial; TLS still
+      # verifies the URL host. Left empty here (compose DNS resolves the service
+      # name). Alternatively add extra_hosts below.
+      MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:-}"
       MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?set a shared cluster join token}"
       MAZEDNS_NODE_NAME: "agent-1"
+    # extra_hosts:                       # pure-Docker alternative to MAZEDNS_CP_IP
+    #   - "cp.example.com:10.0.0.5"      #   (Go's resolver honors /etc/hosts)
+    # The agent listens on 53 inside the container (the image's baked default) and
+    # binds it directly as a non-root user via the binary's CAP_NET_BIND_SERVICE
+    # file capability — no cap_add or root needed with Docker's default caps.
     ports:
-      - "53:5300/udp"
-      - "53:5300/tcp"
+      - "53:53/udp"
+      - "53:53/tcp"
       - "9090:8080"       # agent /metrics + /healthz
     volumes:
       - agent-data:/data
+    # --- Host networking (recommended for real deployments) -------------------
+    # Bind the host's own :53 directly so the resolver sees each client's real
+    # source IP (per-client dashboard stats) instead of the docker bridge NAT.
+    # Replace the `ports:` block above with the two lines below (host networking
+    # ignores port mappings). The agent binds :53 out of the box — its baked
+    # config defaults to port 53 and the binary carries CAP_NET_BIND_SERVICE.
+    # Under host networking there's no compose DNS, so reach the CP by an FQDN +
+    # pinned IP (or an IP URL directly):
+    #   MAZEDNS_CP_URL: "https://cp.example.com:8080"
+    #   MAZEDNS_CP_IP:  "10.0.0.5"
+    # network_mode: host
 
 volumes:
   control-plane-data:

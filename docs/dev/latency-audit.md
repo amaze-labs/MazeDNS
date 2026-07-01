@@ -66,10 +66,15 @@ across every resolver goroutine. **Strategy:** seal the engine after build and r
 the map lock-free (a `sealed` flag, or a dedicated immutable read path). Keep the
 lock only on `Add`/`LoadHostsFile` during construction.
 
-### P2 — Normalize the query name once — DONE (filter path) *(low effort, medium impact)*
+### P2 — Normalize the query name once — DONE *(low effort, medium impact)*
 Implemented for the block/allow match: `Resolve` calls `MatchNormalized`/
-`IsBlockedNormalized` with the already-normalized name. The cache key still
-lowercases independently (`cache.keyFor`) — left as a smaller follow-up. Original
+`IsBlockedNormalized` with the already-normalized name. The cache/forward keys
+(`cache.keyFor`, `resolver.forwardKey`) previously re-lowercased via `strings.ToLower`
+and built the key with a `strings.Builder` + two `strconv.FormatUint` calls, several
+allocations each. Both now append into one pre-sized byte buffer with inline ASCII
+lowercasing — a single allocation per key. This shaved one allocation off every cache
+`Get`/`Set` and every forward (e.g. `BenchmarkCacheGetParallel` 7→6 allocs,
+`BenchmarkResolveForward` 13→12 allocs), on the path of every query. Original
 analysis:
 
 The name is lowercased up to three times per query: `Resolve` (`:386`),
@@ -77,11 +82,19 @@ The name is lowercased up to three times per query: `Resolve` (`:386`),
 Each `ToLower` allocates when the name has any uppercase. **Strategy:** normalize
 once and thread the normalized name into `Match`/`IsBlocked` and the cache key.
 
-### P3 — Avoid the double copy on the miss path *(medium effort, medium impact)*
-On a cache miss the forwarded message is copied by `cache.Set` (to store,
-`cache.go:155`) and again by `Resolve` before returning (`resolver.go:458`).
-**Strategy:** store once and return a single copy (mind single-flight sharing — the
-stored copy must not be mutated by a coalesced caller).
+### P3 — Avoid the double copy on the miss path — DONE *(medium effort, medium impact)*
+Implemented: `cache.Set` now takes ownership of the message and stores it directly
+instead of deep-copying it (`cache.go`). This is safe because the resolver only ever
+caches a freshly-forwarded message that it copies (never mutates) before returning to
+callers, and `cache.Get` still hands out an independent `Copy` — so a stored entry is
+never mutated in place. `-race` is clean. `BenchmarkCacheSet` (a small A-record reply):
+257ns/560B/14 allocs → **189ns/312B/9 allocs** per store (−26% time, −44% bytes). The
+saving scales with response size (RRs no longer deep-copied twice per miss). Original
+analysis:
+
+On a cache miss the forwarded message was copied by `cache.Set` (to store) and again by
+`Resolve` before returning. **Strategy:** store once and return a single copy (mind
+single-flight sharing — the stored copy must not be mutated by a coalesced caller).
 
 ### P4 — Cheaper cache hits *(high effort, high impact on cache-heavy loads)*
 Every hit does `e.msg.Copy()` (a full RR deep copy, `cache.go:125`) plus a key
@@ -90,11 +103,18 @@ bytes alongside the message and rewrite TTLs on the wire (or serve from a
 `sync.Pool` of messages), so a hit re-packs from bytes instead of deep-copying the
 RR tree. Biggest potential win, biggest change — profile first.
 
-### P5 — Trim per-query metric/log overhead *(low effort, low–medium impact)*
-`Queries.WithLabelValues(action).Inc()` does a labelled map lookup every query
-(`resolver.go:470`); the `QueryEvent` is allocated per query. **Strategy:**
-pre-resolve the handful of action counters once at startup; optionally pool
-`QueryEvent`. Off the client latency path, but reduces GC churn at high QPS.
+### P5 — Trim per-query metric/log overhead — DONE (counters) *(low effort, low–medium impact)*
+Implemented: the fixed set of action counters is pre-resolved once in `metrics.New`
+and `record` increments them through `Metrics.IncQuery` (a plain map read) instead of
+`Queries.WithLabelValues(action)` (which re-hashes the label set under an internal
+lock) on every query. `BenchmarkIncQuery` vs the old path (parallel, 0 allocs both):
+118.7ns/op → **40.0ns/op** (~2.9× faster under contention). Off the client latency
+path, but cuts CPU/lock traffic on the record path at high QPS. Pooling the
+per-query `QueryEvent` is left as a smaller follow-up. Original analysis:
+
+`Queries.WithLabelValues(action).Inc()` did a labelled map lookup every query; the
+`QueryEvent` is allocated per query. **Strategy:** pre-resolve the handful of action
+counters once at startup; optionally pool `QueryEvent`.
 
 ### P6 — Make dropped query-log entries observable — DONE *(trivial)*
 Implemented: `QueryLogWriter` counts drops and exposes
@@ -106,16 +126,28 @@ GC pressure. **Strategy:** if profiling shows scheduler saturation, add a bounde
 worker pool and a `sync.Pool` for read buffers/messages. SO_REUSEPORT multi-socket
 already spreads ingestion; do this only if it proves necessary.
 
+### Refresh-ahead prefetch — DONE *(low effort, medium impact on hot names)*
+Implemented: `cache.Get` now signals a background refresh not only for stale
+(serve-stale) hits but also when a still-fresh entry enters the last tenth of its
+original TTL (`refreshAheadDivisor`, `cache.go`). The resolver reuses the existing
+`refreshStale` dedup so continuously-queried names are re-fetched just before expiry
+and effectively never go stale — extending serve-stale's first-miss coverage to the
+common "popular record queried every few seconds" case. The entry now carries its
+original clamped TTL to compute the window. Behavior for cold/rarely-hit names is
+unchanged.
+
 ## Longer-term
 - Per-upstream health scoring to pick the historically-fastest primary (beyond the
   fixed 30ms hedge).
-- Cache prefetch for hot names ahead of expiry (serve-stale covers the first-miss
-  case today).
 - DoH3 (HTTP/3) upstreams.
 
 ## How to measure
-- Add Go benchmarks for the two hot paths — cache hit and block/allow match — to
-  quantify P1/P2/P4 before and after.
+- Resolver hot-path benchmarks live in `internal/resolver/bench_test.go`
+  (`BenchmarkResolveCacheHit`, `BenchmarkResolveBlocked`, `BenchmarkResolveForward`,
+  using a stub upstream), the cache store path in `internal/cache` (`BenchmarkCacheSet`,
+  `BenchmarkCacheGetParallel`), the sealed matcher in `internal/filter/bench_test.go`,
+  and the metric-increment path in `internal/metrics/bench_test.go`. Run with
+  `go test -bench . -benchmem ./internal/{resolver,cache,filter,metrics}`.
 - Profile a loaded agent with `pprof` (CPU + alloc) driven by the `dev/traffic`
   generators or `dnsperf`.
 - Watch `mazedns_upstream_tcp_fallback_total`, the cache-hit ratio, and (after P6)

@@ -3,8 +3,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -280,7 +282,7 @@ type VictoriaMetrics struct {
 // Default returns a Config populated with sensible defaults.
 func Default() Config {
 	return Config{
-		Listen:    Listen{Address: "0.0.0.0", Port: 5300},
+		Listen:    Listen{Address: "0.0.0.0", Port: 53},
 		Upstreams: []string{"1.1.1.1:53", "9.9.9.9:53"},
 		DoT:       Endpoint{Enabled: false, Address: "0.0.0.0", Port: 853},
 		DoH:       DoHEndpoint{Enabled: false, Address: "0.0.0.0", Port: 8443, Path: "/dns-query"},
@@ -341,6 +343,14 @@ func Load(path string) (Config, error) {
 	// Deployment-time env overrides (handy for containers).
 	if v := os.Getenv("MAZEDNS_LISTEN_ADDRESS"); v != "" {
 		cfg.Listen.Address = v
+	}
+	// MAZEDNS_LISTEN_PORT overrides the DNS listen port — handy for running on a
+	// non-privileged port during local development without editing the config
+	// (e.g. MAZEDNS_LISTEN_PORT=5300 on macOS, which reserves <1024 for root).
+	if v := os.Getenv("MAZEDNS_LISTEN_PORT"); v != "" {
+		if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cfg.Listen.Port = p
+		}
 	}
 	// MAZEDNS_BLOCKLIST_FILES replaces filter.blocklist_files with a comma/space
 	// separated list of paths — handy for pointing a container at a mounted
@@ -547,6 +557,11 @@ func (c Config) validate() error {
 	}
 	if c.DoH.Enabled && c.DoH.Path == "" {
 		return fmt.Errorf("doh.path is required when doh is enabled")
+	}
+	// A pinned control-plane IP must parse — otherwise the agent would silently
+	// fail to dial the CP at boot (the whole point of the pin is to skip DNS).
+	if c.Cluster.MasterIP != "" && net.ParseIP(c.Cluster.MasterIP) == nil {
+		return fmt.Errorf("cluster.master_ip (MAZEDNS_CP_IP) must be a valid IP address, got %q", c.Cluster.MasterIP)
 	}
 	return nil
 }

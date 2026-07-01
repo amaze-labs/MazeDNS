@@ -417,13 +417,15 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		wantSigned = true
 	}
 
-	// 4. Cache. A stale hit (expired but within the serve-stale window) is served
-	// immediately while a fresh answer is fetched in the background.
+	// 4. Cache. The hit is served immediately; refresh is true when the cache wants
+	// a background re-fetch — either a stale (serve-stale) hit or a still-fresh
+	// entry in the last tenth of its TTL (refresh-ahead) — so hot names are renewed
+	// off the client's latency path before they expire.
 	if rt.cache != nil {
-		if cached, ok, stale := rt.cache.Get(q, wantSigned); ok {
+		if cached, ok, refresh := rt.cache.Get(q, wantSigned); ok {
 			cached.Id = req.Id
 			r.stats.Cached.Add(1)
-			if stale {
+			if refresh {
 				r.refreshStale(rt, req, q, name, wantSigned)
 			}
 			return cached, "cache", ""
@@ -468,7 +470,7 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 	q := req.Question[0]
 	rcode := dns.RcodeToString[resp.Rcode]
 	if r.metrics != nil {
-		r.metrics.Queries.WithLabelValues(action).Inc()
+		r.metrics.IncQuery(action)
 	}
 	if r.queryLog {
 		slog.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype],

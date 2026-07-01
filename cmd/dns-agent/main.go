@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"net"
@@ -240,7 +241,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		return r.Key, nil
 	}
 
-	nodeKey := resolveNodeKey(ctx, st, cfg, name, cpURL, reenroll)
+	nodeKey := resolveNodeKey(ctx, st, cfg, name, cpURL, pinnedIP, reenroll)
 	if nodeKey == "" {
 		slog.Error("no node key: set MAZEDNS_JOIN_TOKEN (auto-enroll) or MAZEDNS_NODE_KEY; running standalone")
 		return
@@ -272,7 +273,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 // resolveNodeKey returns the API key the agent authenticates with: a previously
 // persisted key, then a freshly self-enrolled one (when a join token is set), then
 // an explicitly-supplied MAZEDNS_NODE_KEY.
-func resolveNodeKey(ctx context.Context, st *store.Store, cfg config.Config, name, cpURL string, reenroll func(context.Context) (string, error)) string {
+func resolveNodeKey(ctx context.Context, st *store.Store, cfg config.Config, name, cpURL, pinnedIP string, reenroll func(context.Context) (string, error)) string {
 	if k, _ := st.GetMeta(nodeKeyMeta); k != "" {
 		slog.Info("using persisted node key", "name", name)
 		return k
@@ -283,6 +284,7 @@ func resolveNodeKey(ctx context.Context, st *store.Store, cfg config.Config, nam
 			return k
 		} else {
 			slog.Warn("self-enrollment failed; will retry on the next sync cycle", "err", err)
+			hintUnresolvableCP(err, pinnedIP)
 		}
 	}
 	if cfg.Cluster.NodeKey != "" {
@@ -291,6 +293,21 @@ func resolveNodeKey(ctx context.Context, st *store.Store, cfg config.Config, nam
 		return cfg.Cluster.NodeKey
 	}
 	return ""
+}
+
+// hintUnresolvableCP logs an actionable hint when the control plane couldn't be
+// reached because its hostname didn't resolve and no IP pin is configured — the
+// classic bootstrap trap where the agent is the only DNS on its network, so it
+// can't resolve its own control plane's FQDN. Pinning MAZEDNS_CP_IP skips DNS.
+func hintUnresolvableCP(err error, pinnedIP string) {
+	if pinnedIP != "" {
+		return // already pinning an IP; DNS isn't the problem
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		slog.Warn("control-plane hostname did not resolve — if this agent is the only DNS on its network, "+
+			"pin the control plane's IP with MAZEDNS_CP_IP (TLS still verifies the URL host)", "host", dnsErr.Name)
+	}
 }
 
 // healthServer builds the agent's minimal HTTP server: liveness + metrics only.

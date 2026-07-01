@@ -50,8 +50,8 @@ services:
       MAZEDNS_NODE_NAME: "agent-a"
       MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
-      - "5311:5300/udp"   # agent-a resolver
-      - "5311:5300/tcp"
+      - "5311:53/udp"   # agent-a resolver (host 5311 -> container 53)
+      - "5311:53/tcp"
       - "9091:8080"       # agent-a /metrics + /healthz
     volumes:
       - agent-a-data:/data
@@ -73,8 +73,8 @@ services:
       MAZEDNS_NODE_NAME: "agent-b"
       MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
-      - "5312:5300/udp"   # agent-b resolver
-      - "5312:5300/tcp"
+      - "5312:53/udp"   # agent-b resolver (host 5312 -> container 53)
+      - "5312:53/tcp"
       - "9092:8080"       # agent-b /metrics + /healthz
     volumes:
       - agent-b-data:/data

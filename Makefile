@@ -48,8 +48,8 @@ run-cp: web ## run the control plane with the embedded UI (:8080, no DNS)
 	go run -tags embed_dist $(CP_PKG) --config configs/mazedns.yaml
 
 .PHONY: run-agent
-run-agent: ## run a dns-agent (resolver + /metrics, no UI/API)
-	go run $(AGENT_PKG) --config configs/mazedns.yaml
+run-agent: ## run a dns-agent (resolver + /metrics, no UI/API) on :5300
+	MAZEDNS_LISTEN_PORT=5300 go run $(AGENT_PKG) --config configs/mazedns.yaml
 
 .PHONY: docker
 docker: ## build both container images (control-plane + dns-agent)

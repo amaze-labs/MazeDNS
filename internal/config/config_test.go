@@ -18,7 +18,7 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 const minimalConfig = `
-listen: { address: "0.0.0.0", port: 5300 }
+listen: { address: "0.0.0.0", port: 53 }
 upstreams: ["1.1.1.1:53"]
 database: { path: "mazedns.db" }
 `
@@ -57,6 +57,35 @@ func TestOIDCEnvOverrides(t *testing.T) {
 		if o.Scopes[i] != want[i] {
 			t.Errorf("scopes[%d] = %q, want %q", i, o.Scopes[i], want[i])
 		}
+	}
+}
+
+func TestDefaultListenPort(t *testing.T) {
+	// The default DNS port is 53 so a dns-agent container binds it directly under
+	// host networking without a config override.
+	if got := Default().Listen.Port; got != 53 {
+		t.Errorf("default listen.port = %d, want 53", got)
+	}
+}
+
+func TestListenPortEnvOverride(t *testing.T) {
+	p := writeConfig(t, minimalConfig)
+	t.Setenv("MAZEDNS_LISTEN_PORT", "5300")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Listen.Port != 5300 {
+		t.Errorf("MAZEDNS_LISTEN_PORT not applied: port = %d, want 5300", cfg.Listen.Port)
+	}
+}
+
+func TestMasterIPValidation(t *testing.T) {
+	if _, err := Load(writeConfig(t, minimalConfig+"\ncluster: { master_ip: \"not-an-ip\" }\n")); err == nil {
+		t.Error("expected an error for a non-IP cluster.master_ip")
+	}
+	if _, err := Load(writeConfig(t, minimalConfig+"\ncluster: { master_ip: \"10.0.0.5\" }\n")); err != nil {
+		t.Errorf("a valid cluster.master_ip should load: %v", err)
 	}
 }
 

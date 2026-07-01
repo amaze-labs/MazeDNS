@@ -122,6 +122,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [vl, setVl] = useState<VLExportSettings | null>(null)
   const [vlHasPassword, setVlHasPassword] = useState(false)
 
+  // Which settings view is shown. The page is split into tabs so each concern
+  // has its own focused page; one Save button below still persists them all.
+  const [view, setView] = useState<'resolver' | 'classification' | 'integrations' | 'backup'>('resolver')
+
   const load = async () => {
     try {
       const cur = await api.settings()
@@ -328,6 +332,34 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       </p>
       {err && <div className="error">{err}</div>}
 
+      <div className="settings-subnav" role="tablist">
+        {([
+          { id: 'resolver', label: 'Resolver' },
+          ...(cls ? [{ id: 'classification', label: 'Classification' }] : []),
+          { id: 'integrations', label: 'Integrations' },
+          { id: 'backup', label: 'Backup & restore' },
+        ] as { id: typeof view; label: string }[]).map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={view === t.id}
+            className={`subnav-tab${view === t.id ? ' active' : ''}`}
+            onClick={() => setView(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'integrations' && (
+        <p className="muted" style={{ textAlign: 'left' }}>
+          Connect MazeDNS to external services: NetBird for client identity, and VictoriaMetrics / VictoriaLogs for
+          long-term metrics and query-log retention.
+        </p>
+      )}
+
+      {view === 'resolver' && (
+        <>
       <details className="settings-card" open>
         <summary>Upstream resolvers</summary>
         <label className="muted">
@@ -529,8 +561,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           />
         </div>
       </details>
+        </>
+      )}
 
-      {cls && (
+      {view === 'classification' && cls && (
         <details className="settings-card" open>
           <summary>Domain classification</summary>
           <label className="muted">
@@ -787,6 +821,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </details>
       )}
 
+      {view === 'integrations' && (
+        <>
       {nb && (
         <details className="settings-card" open>
           <summary>NetBird client identity</summary>
@@ -943,7 +979,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </div>
         </details>
       )}
+        </>
+      )}
 
+      {view === 'backup' && (
       <details className="settings-card danger-zone">
         <summary>⚠ Danger zone — backup &amp; restore</summary>
         <label className="muted">
@@ -974,6 +1013,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           />
         </div>
       </details>
+      )}
 
       {/* One global save for every section above. */}
       <div className="settings-savebar">

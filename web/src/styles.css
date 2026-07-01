@@ -2243,3 +2243,31 @@ img.acct-avatar.lg {
   cursor: pointer;
   font-weight: 600;
 }
+
+/* ── Settings: tabbed sub-navigation ────────────────────────────────────── */
+.settings-subnav {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  margin: 4px 0 16px;
+}
+.subnav-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.subnav-tab:hover {
+  color: var(--fg);
+}
+.subnav-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}

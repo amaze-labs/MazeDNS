@@ -59,6 +59,7 @@ func main() {
 
 	qlog := store.NewQueryLogWriter(st, 4096)
 	defer qlog.Close()
+	mx.RegisterQueryLogDropped(func() float64 { return float64(qlog.Dropped()) })
 
 	res := resolver.New(resolver.Options{
 		Timeout:  5 * time.Second,

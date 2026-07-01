@@ -44,6 +44,16 @@ func New() *Metrics {
 	return m
 }
 
+// RegisterQueryLogDropped registers a counter that reports how many query-log
+// entries the async writer dropped (buffer full). fn is polled on each scrape.
+func (m *Metrics) RegisterQueryLogDropped(fn func() float64) {
+	m.reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Namespace: "mazedns",
+		Name:      "querylog_dropped_total",
+		Help:      "Query-log entries dropped because the async writer buffer was full.",
+	}, fn))
+}
+
 // Handler returns the Prometheus metrics HTTP handler.
 func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})

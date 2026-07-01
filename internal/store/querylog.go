@@ -3,6 +3,7 @@ package store
 import (
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -239,8 +240,9 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 // QueryLogWriter batches query-log entries and writes them asynchronously so the
 // DNS hot path never blocks on the database.
 type QueryLogWriter struct {
-	ch   chan QueryLogEntry
-	done chan struct{}
+	ch      chan QueryLogEntry
+	done    chan struct{}
+	dropped atomic.Uint64
 }
 
 // NewQueryLogWriter starts a background writer. Entries are dropped if the buffer
@@ -293,8 +295,14 @@ func (w *QueryLogWriter) Write(e QueryLogEntry) {
 	select {
 	case w.ch <- e:
 	default: // buffer full: drop rather than block the DNS path
+		w.dropped.Add(1)
 	}
 }
+
+// Dropped returns the number of entries dropped because the buffer was full.
+// Exposed as the mazedns_querylog_dropped_total metric so sustained overload
+// (the dashboard/VictoriaLogs undercounting) is observable rather than silent.
+func (w *QueryLogWriter) Dropped() uint64 { return w.dropped.Load() }
 
 // Close stops the writer, flushing any buffered entries.
 func (w *QueryLogWriter) Close() {

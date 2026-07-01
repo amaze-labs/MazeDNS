@@ -227,5 +227,9 @@ func BuildPolicy(st *store.Store, cfg config.Config) (*resolver.Policy, error) {
 			rewrites[key] = append(rewrites[key], rr)
 		}
 	}
+	// Freeze the engines: they are now fully built and about to be published
+	// read-only, so the resolver can match against them lock-free on the hot path.
+	block.Seal()
+	allow.Seal()
 	return &resolver.Policy{Block: block, Allow: allow, Rewrites: rewrites, Wildcards: wildcards}, nil
 }

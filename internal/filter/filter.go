@@ -7,13 +7,21 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Engine holds blocked domains, each tagged with a category. Blocking a domain
 // also blocks all of its subdomains.
+//
+// Lifecycle: an Engine is built (Add/LoadHostsFile), then Seal()ed and published
+// read-only (the resolver swaps it in via an atomic pointer). After Seal the
+// lookup path is lock-free — the map is never mutated again and the atomic publish
+// provides the happens-before barrier — which removes two RWMutex operations from
+// every query. Before Seal, reads take the lock so build-time reads stay safe.
 type Engine struct {
 	mu      sync.RWMutex
 	blocked map[string]string // normalized domain -> category
+	sealed  atomic.Bool
 }
 
 // New returns an empty Engine.
@@ -79,20 +87,44 @@ func (e *Engine) LoadHostsFile(path, category string) (int, error) {
 	return count, sc.Err()
 }
 
-// Match returns the category of the matching (sub)domain and true if name, or
-// any of its parent domains, is blocked.
+// Seal marks the engine immutable so the lookup path can read the map without
+// locking. Call it once after the engine is fully built and before publishing it
+// to the resolver. Add/LoadHostsFile must not be called after Seal.
+func (e *Engine) Seal() { e.sealed.Store(true) }
+
+// Match returns the category of the matching (sub)domain and true if name, or any
+// of its parent domains, is blocked. name is normalized here; hot-path callers
+// that already hold a normalized name should use MatchNormalized.
 func (e *Engine) Match(name string) (string, bool) {
-	name = normalize(name)
+	return e.lookup(normalize(name))
+}
+
+// MatchNormalized is Match for a caller that already holds the normalized name
+// (lowercased, no trailing dot), avoiding a redundant normalization per query.
+func (e *Engine) MatchNormalized(name string) (string, bool) {
+	return e.lookup(name)
+}
+
+// lookup walks name and its parent suffixes against the blocked map. Once the
+// engine is sealed it reads lock-free; before that it takes the read lock.
+func (e *Engine) lookup(name string) (string, bool) {
 	if name == "" {
 		return "", false
 	}
+	if e.sealed.Load() {
+		return matchMap(e.blocked, name)
+	}
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	if len(e.blocked) == 0 {
+	return matchMap(e.blocked, name)
+}
+
+func matchMap(blocked map[string]string, name string) (string, bool) {
+	if len(blocked) == 0 {
 		return "", false
 	}
 	for {
-		if cat, ok := e.blocked[name]; ok {
+		if cat, ok := blocked[name]; ok {
 			return cat, true
 		}
 		i := strings.IndexByte(name, '.')
@@ -106,6 +138,12 @@ func (e *Engine) Match(name string) (string, bool) {
 // IsBlocked reports whether name, or any parent domain, is blocked.
 func (e *Engine) IsBlocked(name string) bool {
 	_, ok := e.Match(name)
+	return ok
+}
+
+// IsBlockedNormalized is IsBlocked for an already-normalized name (hot path).
+func (e *Engine) IsBlockedNormalized(name string) bool {
+	_, ok := e.MatchNormalized(name)
 	return ok
 }
 

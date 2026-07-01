@@ -400,9 +400,10 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 		}
 	}
 
-	// 3. Block (unless explicitly allowed, or block enforcement is paused).
+	// 3. Block (unless explicitly allowed, or block enforcement is paused). Uses the
+	// already-normalized name so the matcher doesn't re-lowercase q.Name twice.
 	if !r.BlockPaused() {
-		if cat, blocked := pol.Block.Match(q.Name); blocked && !pol.Allow.IsBlocked(q.Name) {
+		if cat, blocked := pol.Block.MatchNormalized(name); blocked && !pol.Allow.IsBlockedNormalized(name) {
 			r.stats.Blocked.Add(1)
 			return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
 		}

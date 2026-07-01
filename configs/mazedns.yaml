@@ -9,7 +9,7 @@
 # Editing them here later has no effect unless the DB has no settings row yet.
 listen:
   address: "0.0.0.0"
-  port: 5300              # non-privileged dev port (macOS reserves 5353 for mDNS); map host 53 -> 5300 in Docker
+  port: 53                # standard DNS port. For local non-root dev (macOS/Linux reserve <1024 for root), override with MAZEDNS_LISTEN_PORT=5300
 
 upstreams:                # default upstreams; tried in order, first to answer wins
   - "1.1.1.1:53"          # plain UDP (TCP fallback)

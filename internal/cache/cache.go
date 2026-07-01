@@ -3,7 +3,6 @@ package cache
 
 import (
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,9 +30,18 @@ const staleGrace = 30 * time.Second
 // and pick up the refreshed record.
 const staleTTL = 30
 
+// refreshAheadDivisor triggers a proactive background refresh once a still-fresh
+// entry enters the last 1/N of its original TTL (here the final 10%). Popular
+// names are then re-fetched just before expiry, so a client almost never waits on
+// an upstream round-trip — extending serve-stale's first-miss coverage to the
+// common case where the record is queried continuously. The refresh is deduped by
+// the resolver, so many hits in the window still cause only one upstream fetch.
+const refreshAheadDivisor = 10
+
 type entry struct {
 	msg       *dns.Msg
 	expiresAt time.Time
+	ttl       time.Duration // original (clamped) TTL, for refresh-ahead
 }
 
 type shard struct {
@@ -68,17 +76,35 @@ func New(maxItems int, minTTL, maxTTL time.Duration) *Cache {
 
 // keyFor keys an entry by question AND whether it's the DNSSEC-signed variant, so
 // a signed (DO) answer and an unsigned one are never served to the wrong client.
+//
+// It appends into a single pre-sized byte buffer (with inline ASCII lowercasing of
+// the name) instead of a strings.Builder + strconv.FormatUint + strings.ToLower,
+// which allocated several times per call. This runs on every cache Get and Set.
 func keyFor(q dns.Question, do bool) string {
-	var b strings.Builder
+	// worst case: '+' + 5-digit class + '/' + 5-digit type + '/' + name.
+	buf := make([]byte, 0, len(q.Name)+13)
 	if do {
-		b.WriteByte('+') // signed variant
+		buf = append(buf, '+') // signed variant
 	}
-	b.WriteString(strconv.FormatUint(uint64(q.Qclass), 10))
-	b.WriteByte('/')
-	b.WriteString(strconv.FormatUint(uint64(q.Qtype), 10))
-	b.WriteByte('/')
-	b.WriteString(strings.ToLower(q.Name))
-	return b.String()
+	buf = strconv.AppendUint(buf, uint64(q.Qclass), 10)
+	buf = append(buf, '/')
+	buf = strconv.AppendUint(buf, uint64(q.Qtype), 10)
+	buf = append(buf, '/')
+	buf = appendLower(buf, q.Name)
+	return string(buf)
+}
+
+// appendLower appends s to buf, lowercasing ASCII A–Z in place (DNS names are
+// ASCII; non-ASCII bytes pass through unchanged).
+func appendLower(buf []byte, s string) []byte {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		buf = append(buf, c)
+	}
+	return buf
 }
 
 // shardFor picks a shard by an inline, allocation-free FNV-1a hash of the key.
@@ -96,10 +122,11 @@ func (c *Cache) shardFor(key string) *shard {
 }
 
 // Get returns a cached reply for q (a copy, with TTLs decremented by the elapsed
-// time) and whether it was a hit. The third return reports whether the hit is
-// stale — expired but within the serve-stale grace window — in which case the
-// caller should serve it now and refresh in the background. do selects the
-// DNSSEC-signed variant.
+// time) and whether it was a hit. The third return, refresh, asks the caller to
+// fetch a fresh answer in the background — set either when the hit is stale
+// (expired but within the serve-stale grace window, served with a short TTL) or
+// when a still-fresh entry has entered the last tenth of its TTL (refresh-ahead,
+// served with its real remaining TTL). do selects the DNSSEC-signed variant.
 func (c *Cache) Get(q dns.Question, do bool) (*dns.Msg, bool, bool) {
 	k := keyFor(q, do)
 	s := c.shardFor(k)
@@ -129,13 +156,24 @@ func (c *Cache) Get(q dns.Question, do bool) (*dns.Msg, bool, bool) {
 		adjustTTL(msg, staleTTL)
 		return msg, true, true
 	}
-	remaining := uint32(e.expiresAt.Sub(now).Seconds())
-	adjustTTL(msg, remaining)
-	return msg, true, false
+	left := e.expiresAt.Sub(now)
+	adjustTTL(msg, uint32(left.Seconds()))
+	// Refresh-ahead: once inside the final 1/refreshAheadDivisor of the original
+	// TTL, ask the caller to refresh in the background while still serving the
+	// current (fresh) answer, so hot names are renewed before they ever go stale.
+	refreshAhead := e.ttl > 0 && left <= e.ttl/refreshAheadDivisor
+	return msg, true, refreshAhead
 }
 
 // Set stores msg as the cached reply for q (do = the DNSSEC-signed variant).
 // Empty/NXDOMAIN answers are negative-cached using the SOA minimum when present.
+//
+// Set takes ownership of msg: the caller must not mutate it after the call. The
+// resolver satisfies this by only ever caching a freshly-forwarded message that
+// it copies (never mutates) before returning to callers — so the cache can store
+// the message directly instead of paying a second full RR deep-copy per miss on
+// top of the copy the resolver already makes for its response. Get still hands
+// out an independent Copy, so a stored entry is never mutated in place.
 func (c *Cache) Set(q dns.Question, do bool, msg *dns.Msg) {
 	if msg == nil {
 		return
@@ -152,8 +190,9 @@ func (c *Cache) Set(q dns.Question, do bool, msg *dns.Msg) {
 		evictLocked(s)
 	}
 	s.items[k] = entry{
-		msg:       msg.Copy(),
+		msg:       msg,
 		expiresAt: time.Now().Add(ttl),
+		ttl:       ttl,
 	}
 }
 

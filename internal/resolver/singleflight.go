@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -57,15 +56,23 @@ func (g *singleflight) Do(key string, fn func() (*dns.Msg, time.Duration, error)
 
 // forwardKey identifies a forward request the same way the cache keys an entry
 // (class/type/name + DNSSEC variant), so coalescing matches caching semantics.
+// Built into one pre-sized buffer with inline ASCII lowercasing to avoid the
+// per-call allocations of a strings.Builder + FormatUint + ToLower.
 func forwardKey(q dns.Question, do bool) string {
-	var b strings.Builder
+	buf := make([]byte, 0, len(q.Name)+13)
 	if do {
-		b.WriteByte('+')
+		buf = append(buf, '+')
 	}
-	b.WriteString(strconv.FormatUint(uint64(q.Qclass), 10))
-	b.WriteByte('/')
-	b.WriteString(strconv.FormatUint(uint64(q.Qtype), 10))
-	b.WriteByte('/')
-	b.WriteString(strings.ToLower(q.Name))
-	return b.String()
+	buf = strconv.AppendUint(buf, uint64(q.Qclass), 10)
+	buf = append(buf, '/')
+	buf = strconv.AppendUint(buf, uint64(q.Qtype), 10)
+	buf = append(buf, '/')
+	for i := 0; i < len(q.Name); i++ {
+		c := q.Name[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		buf = append(buf, c)
+	}
+	return string(buf)
 }

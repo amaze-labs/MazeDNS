@@ -119,6 +119,31 @@ func TestCacheServeStale(t *testing.T) {
 	}
 }
 
+// A still-fresh entry in the last tenth of its TTL is served with its real
+// remaining TTL but flags refresh-ahead so the caller renews it before expiry.
+func TestCacheRefreshAhead(t *testing.T) {
+	c := New(100, 0, 0)
+	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	c.Set(q, false, makeReply("example.com", 1000)) // ttl 1000s; last-10% window = 100s
+
+	// Well within the TTL (900s left): a plain fresh hit, no refresh.
+	forceExpiry(c, q, false, time.Now().Add(900*time.Second))
+	if _, ok, refresh := c.Get(q, false); !ok || refresh {
+		t.Fatalf("early in TTL: ok=%v refresh=%v (want hit, no refresh)", ok, refresh)
+	}
+
+	// Inside the final 10% (50s left): still fresh, but refresh-ahead fires. The
+	// served TTL is the real ~50s (> staleTTL), proving it's not the stale path.
+	forceExpiry(c, q, false, time.Now().Add(50*time.Second))
+	got, ok, refresh := c.Get(q, false)
+	if !ok || !refresh {
+		t.Fatalf("late in TTL: ok=%v refresh=%v (want hit + refresh)", ok, refresh)
+	}
+	if ttl := got.Answer[0].Header().Ttl; ttl <= staleTTL {
+		t.Errorf("refresh-ahead should serve the real (~50s) TTL, not the stale TTL; got %d", ttl)
+	}
+}
+
 // Past the serve-stale grace window an entry is a real miss and is evicted on Get.
 func TestCacheHardMiss(t *testing.T) {
 	c := New(100, 0, 0)
@@ -147,6 +172,19 @@ func TestCacheEvictionStaysAtCapacity(t *testing.T) {
 	// Allow the rounding-up of the per-shard cap across all shards.
 	if n := c.Len(); n > max+cacheShards {
 		t.Errorf("cache exceeded capacity: Len=%d > ~max=%d", n, max)
+	}
+}
+
+// BenchmarkCacheSet measures the per-miss store cost. Set now takes ownership of
+// the message instead of deep-copying it, so this should be allocation-light
+// (the caller already owns a fresh forwarded message).
+func BenchmarkCacheSet(b *testing.B) {
+	c := New(1<<20, time.Second, time.Hour)
+	q := dns.Question{Name: dns.Fqdn("example.com"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c.Set(q, false, makeReply("example.com", 300))
 	}
 }
 

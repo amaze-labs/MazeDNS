@@ -2120,3 +2120,126 @@ img.acct-avatar.lg {
 .acct-item.danger:hover .acct-ic {
   color: var(--danger);
 }
+
+/* ── Cluster page: sites header, clickable rows, agent detail modal ─────── */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.section-head h2 {
+  margin: 0;
+}
+
+/* Clickable agent rows (table) and site members (cards) open the detail modal. */
+.agent-row {
+  cursor: pointer;
+}
+.agent-row:hover {
+  background: rgba(78, 161, 255, 0.06);
+}
+.agents-table th.num,
+.agents-table td.num {
+  text-align: right;
+}
+.agents-table select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 13px;
+}
+.site-member {
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.site-member:hover {
+  background: rgba(78, 161, 255, 0.06);
+}
+
+.agent-modal-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+/* Key/value details grid inside the agent modal. */
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 20px;
+  margin: 16px 0 0;
+}
+.kv-grid div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.kv-grid dt {
+  color: var(--muted);
+  margin: 0;
+}
+.kv-grid dd {
+  margin: 0;
+  text-align: right;
+}
+
+.agent-assign {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.agent-assign label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.agent-assign select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.agent-actions-head {
+  margin: 20px 0 8px;
+}
+.agent-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.agent-action button {
+  flex: 0 0 auto;
+  min-width: 110px;
+}
+.agent-action .muted {
+  font-size: 13px;
+}
+
+/* Deployment docs are reference material — collapsed, de-emphasised. */
+.deploy-docs {
+  margin-top: 20px;
+}
+.deploy-docs > summary {
+  cursor: pointer;
+  font-weight: 600;
+}

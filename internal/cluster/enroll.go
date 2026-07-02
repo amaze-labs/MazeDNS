@@ -20,6 +20,7 @@ func NewEnrollClient(cpIP string) *http.Client {
 
 // EnrollResult is the control plane's reply to a self-enrollment request.
 type EnrollResult struct {
+	ID       string `json:"id"` // the node's immutable server-generated identity
 	Name     string `json:"name"`
 	Key      string `json:"key"`
 	Approved bool   `json:"approved"`
@@ -29,13 +30,20 @@ type EnrollResult struct {
 }
 
 // Enroll self-registers an agent with the control plane using the shared join
-// token, returning the per-node API key the control plane issued. The agent
-// persists that key and authenticates all later config pulls with it. Re-enrolling
-// under the same name rotates the key, which lets an agent that lost its local key
-// recover without operator action.
-func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken string) (EnrollResult, error) {
+// token, returning the node's immutable id and per-node API key. The agent
+// persists both and authenticates all later config pulls with the key.
+//
+// nodeID and nodeKey are the agent's currently-persisted identity, sent so a
+// re-enrollment (after a hostname change or a rejected key) re-attaches to the
+// SAME node: the control plane rotates the existing node's key only when the
+// presented nodeKey proves ownership of nodeID. They are empty on first
+// enrollment, which creates a new node. See the control plane's clusterEnroll for
+// the full security model.
+func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken, nodeID, nodeKey string) (EnrollResult, error) {
 	var res EnrollResult
-	body, err := json.Marshal(map[string]string{"name": name, "token": joinToken})
+	body, err := json.Marshal(map[string]string{
+		"name": name, "token": joinToken, "node_id": nodeID, "node_key": nodeKey,
+	})
 	if err != nil {
 		return res, err
 	}

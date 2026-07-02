@@ -33,6 +33,9 @@ type Agent struct {
 	client         *http.Client
 	lastShipped    int64
 	reenroll       func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
+	nodeID         string                                    // persisted immutable node id ('' until learned)
+	saveNodeID     func(string)                              // persist a newly-learned node id (nil = disabled)
+	saveNodeKey    func(string)                              // persist a control-plane-rotated node key (nil = disabled)
 }
 
 // SetReenroll installs a callback the agent uses to recover when the control
@@ -40,6 +43,23 @@ type Agent struct {
 // receives a fresh key, persists it, and returns it. Enables zero-touch key
 // rotation and self-healing after a control-plane DB reset.
 func (a *Agent) SetReenroll(fn func(ctx context.Context) (string, error)) { a.reenroll = fn }
+
+// SetNodeID gives the agent its currently-persisted node id (may be empty) and a
+// sink to persist one learned later. When empty, the agent adopts the id the
+// control plane reports in the config snapshot and persists it via save — the
+// transparent upgrade path for agents that predate UUID identity (they have a key
+// but no stored id).
+func (a *Agent) SetNodeID(current string, save func(string)) {
+	a.nodeID = current
+	a.saveNodeID = save
+}
+
+// SetSaveNodeKey installs a sink the agent calls to persist a node key the control
+// plane rotated to (delivered in the snapshot). The agent switches to the new key
+// immediately and uses it from the next request; the old key stays valid on the
+// control plane for a grace window, so a crash between receiving and persisting it
+// cannot lock the node out.
+func (a *Agent) SetSaveNodeKey(save func(string)) { a.saveNodeKey = save }
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
 // the master; stats (may be nil) reports this node's query counters each poll;
@@ -180,6 +200,23 @@ func (a *Agent) syncOnce(ctx context.Context) {
 	if err != nil {
 		slog.Warn("cluster sync failed", "err", err)
 		return
+	}
+	// Adopt+persist our node id if we don't have one yet (upgraded from a pre-UUID
+	// build). Learned transparently from the snapshot; no operator action.
+	if snap.NodeID != "" && a.nodeID == "" && a.saveNodeID != nil {
+		a.saveNodeID(snap.NodeID)
+		a.nodeID = snap.NodeID
+		slog.Info("cluster: learned node id from control plane", "id", snap.NodeID)
+	}
+	// Adopt a control-plane-rotated node key: switch to it now and persist it so the
+	// next request (and restarts) use it. Done before the version early-return so a
+	// rotation isn't skipped when the config is unchanged.
+	if snap.NewNodeKey != "" && snap.NewNodeKey != a.nodeKey {
+		a.nodeKey = snap.NewNodeKey
+		if a.saveNodeKey != nil {
+			a.saveNodeKey(snap.NewNodeKey)
+		}
+		slog.Info("cluster: adopted rotated node key from control plane")
 	}
 	// The block pause and this node's maintenance flag are applied every poll
 	// (they aren't part of the version hash).

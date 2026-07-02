@@ -9,6 +9,7 @@ import Settings from './components/Settings'
 import Account from './components/Account'
 import AccountMenu from './components/AccountMenu'
 import Login, { SKIP_AUTOLOGIN_KEY } from './components/Login'
+import Setup from './components/Setup'
 import Spinner from './components/Spinner'
 import { api, type SessionUser, type AuthInfo } from './api'
 
@@ -59,6 +60,12 @@ export default function App() {
   const refresh = async () => {
     const inf = await api.authInfo()
     setInfo(inf)
+    // In first-boot setup mode no admin exists yet — don't call the (gated) me().
+    if (inf.setup_required) {
+      setUser(null)
+      setLoading(false)
+      return
+    }
     setUser(inf.auth_enabled ? await api.me() : { id: 0, username: 'anonymous', role: 'admin' })
     setLoading(false)
   }
@@ -87,6 +94,10 @@ export default function App() {
         <Spinner size={22} label="Loading…" />
       </div>
     )
+  }
+
+  if (info?.setup_required) {
+    return <Setup onDone={() => refresh()} />
   }
 
   if (info?.auth_enabled && !user) {

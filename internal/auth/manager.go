@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -21,9 +22,12 @@ type SessionUser struct {
 	Role     string `json:"role"`
 }
 
-// Manager handles local login, server-side sessions, and optional OIDC.
+// Manager handles local login, server-side sessions, and optional OIDC. The OIDC
+// provider and session TTL can be swapped live (settings changed in the UI) — mu
+// guards those two fields.
 type Manager struct {
 	store *store.Store
+	mu    sync.RWMutex
 	oidc  *OIDCProvider // nil if OIDC is not configured
 	ttl   time.Duration
 }
@@ -36,11 +40,43 @@ func NewManager(st *store.Store, oidc *OIDCProvider, ttl time.Duration) *Manager
 	return &Manager{store: st, oidc: oidc, ttl: ttl}
 }
 
+// SetOIDC swaps the OIDC provider at runtime (nil disables SSO). Used when SSO
+// settings change in the UI, so no restart is needed.
+func (m *Manager) SetOIDC(p *OIDCProvider) {
+	m.mu.Lock()
+	m.oidc = p
+	m.mu.Unlock()
+}
+
+// SetSessionTTL updates the session lifetime for newly-issued sessions/cookies.
+func (m *Manager) SetSessionTTL(ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	m.mu.Lock()
+	m.ttl = ttl
+	m.mu.Unlock()
+}
+
+func (m *Manager) sessionTTL() time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.ttl
+}
+
 // OIDCEnabled reports whether OIDC login is available.
-func (m *Manager) OIDCEnabled() bool { return m.oidc != nil }
+func (m *Manager) OIDCEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.oidc != nil
+}
 
 // OIDC returns the OIDC provider (may be nil).
-func (m *Manager) OIDC() *OIDCProvider { return m.oidc }
+func (m *Manager) OIDC() *OIDCProvider {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.oidc
+}
 
 // Login verifies a local user and starts a session, returning the token + user.
 func (m *Manager) Login(username, password string) (string, *SessionUser, error) {
@@ -61,7 +97,7 @@ func (m *Manager) StartSession(id int64, username, role string) (string, *Sessio
 	if err != nil {
 		return "", nil, err
 	}
-	exp := time.Now().Add(m.ttl).Unix()
+	exp := time.Now().Add(m.sessionTTL()).Unix()
 	if err := m.store.CreateSession(token, id, username, role, exp); err != nil {
 		return "", nil, err
 	}
@@ -96,7 +132,7 @@ func (m *Manager) SetCookie(w http.ResponseWriter, token string) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(m.ttl.Seconds()),
+		MaxAge:   int(m.sessionTTL().Seconds()),
 	})
 }
 

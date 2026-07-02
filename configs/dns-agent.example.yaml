@@ -82,9 +82,13 @@ api:
 cluster:                       # agent side of config replication
   enabled: true                # auto-enabled anyway once cp_url + join_token/node_key are set
   cp_url: ""                   # control-plane base URL, e.g. https://dns.example.com (or MAZEDNS_CP_URL)
-  join_token: ""               # shared secret to self-enroll; the control plane issues a per-node key (or MAZEDNS_JOIN_TOKEN)
+  join_token: ""               # enrollment key to self-enroll (create one in the control-plane UI: Cluster → Enrollment keys).
+                               # The control plane issues a per-node key it then rotates automatically. (or MAZEDNS_JOIN_TOKEN)
   master_ip: ""                # pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still verifies the URL host
-  node_name: ""                # name to enroll under (or MAZEDNS_NODE_NAME; defaults to the hostname)
+  node_name: ""                # INITIAL display label (or MAZEDNS_NODE_NAME; defaults to the hostname).
+                               # Identity is a UUID the control plane assigns at first enrollment and the
+                               # agent stores locally — NOT this name. You can rename the node later in the
+                               # UI; changing node_name after enrollment does not create a new node.
   node_key: ""                 # per-node API key — leave empty when using join_token (or MAZEDNS_NODE_KEY)
   interval: "30s"              # snapshot poll interval
 

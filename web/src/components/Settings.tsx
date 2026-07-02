@@ -8,6 +8,7 @@ import {
   type NetbirdSettings,
   type VMExportSettings,
   type VLExportSettings,
+  type CPSettings,
 } from '../api'
 import Spinner from './Spinner'
 
@@ -122,9 +123,31 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [vl, setVl] = useState<VLExportSettings | null>(null)
   const [vlHasPassword, setVlHasPassword] = useState(false)
 
+  // Control-plane runtime settings (SSO / session / cluster policy). Own endpoint.
+  const [cp, setCp] = useState<CPSettings | null>(null)
+  const [oidcHasSecret, setOidcHasSecret] = useState(false)
+  const [cpSaving, setCpSaving] = useState(false)
+  const [cpMsg, setCpMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
   // Which settings view is shown. The page is split into tabs so each concern
   // has its own focused page; one Save button below still persists them all.
-  const [view, setView] = useState<'resolver' | 'classification' | 'integrations' | 'backup'>('resolver')
+  const [view, setView] = useState<'resolver' | 'access' | 'classification' | 'integrations' | 'backup'>('resolver')
+
+  const saveCP = async () => {
+    if (!cp) return
+    setCpSaving(true)
+    setCpMsg(null)
+    try {
+      const r = await api.saveCPSettings(cp)
+      setCp(r.settings)
+      setOidcHasSecret(r.oidc_has_client_secret)
+      setCpMsg({ ok: true, text: 'Access settings saved and applied.' })
+    } catch (e: any) {
+      setCpMsg({ ok: false, text: e.message })
+    } finally {
+      setCpSaving(false)
+    }
+  }
 
   const load = async () => {
     try {
@@ -151,6 +174,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setNbInfo({ has_token: r.has_token, peer_count: r.peer_count })
       })
       .catch(() => setNb(null))
+    api
+      .cpSettings()
+      .then((r) => {
+        setCp(r.settings)
+        setOidcHasSecret(r.oidc_has_client_secret)
+      })
+      .catch(() => setCp(null))
     api
       .metricsExport()
       .then((r) => {
@@ -327,14 +357,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     <div className="settings">
       <h2>Settings</h2>
       <p className="muted">
-        Operational settings are stored in the database and applied live — no restart needed.
-        Bootstrap options (listen addresses, TLS, admin credentials, SSO) stay in the config file / env.
+        Settings are stored in the database and applied live — no restart needed. Only bootstrap options (database,
+        API listen address/port, log level) stay in the config file / env.
       </p>
       {err && <div className="error">{err}</div>}
 
       <div className="settings-subnav" role="tablist">
         {([
           { id: 'resolver', label: 'Resolver' },
+          { id: 'access', label: 'Access & SSO' },
           ...(cls ? [{ id: 'classification', label: 'Classification' }] : []),
           { id: 'integrations', label: 'Integrations' },
           { id: 'backup', label: 'Backup & restore' },
@@ -356,6 +387,127 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           Connect MazeDNS to external services: NetBird for client identity, and VictoriaMetrics / VictoriaLogs for
           long-term metrics and query-log retention.
         </p>
+      )}
+
+      {view === 'access' && cp && (
+        <>
+          {cpMsg && <div className={cpMsg.ok ? 'ok-msg' : 'error'}>{cpMsg.text}</div>}
+          <details className="settings-card" open>
+            <summary>Single sign-on (OIDC / SSO)</summary>
+            <label className="setup-check">
+              <input
+                type="checkbox"
+                checked={cp.oidc.enabled}
+                onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, enabled: e.target.checked } })}
+              />
+              Enable SSO login via an OpenID Connect provider
+            </label>
+            {cp.oidc.enabled && (
+              <div className="form-grid">
+                <label>
+                  Issuer URL
+                  <input value={cp.oidc.issuer} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, issuer: e.target.value } })} />
+                </label>
+                <label>
+                  Client ID
+                  <input value={cp.oidc.client_id} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, client_id: e.target.value } })} />
+                </label>
+                <label>
+                  Client secret
+                  <input
+                    type="password"
+                    placeholder={oidcHasSecret ? '•••••••• (unchanged)' : ''}
+                    value={cp.oidc.client_secret}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, client_secret: e.target.value } })}
+                  />
+                </label>
+                <label>
+                  Redirect URL
+                  <input value={cp.oidc.redirect_url} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, redirect_url: e.target.value } })} />
+                </label>
+                <label>
+                  Groups claim
+                  <input value={cp.oidc.groups_claim} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, groups_claim: e.target.value } })} />
+                </label>
+                <label>
+                  Admin group
+                  <input value={cp.oidc.admin_group} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, admin_group: e.target.value } })} />
+                </label>
+                <label className="setup-check">
+                  <input
+                    type="checkbox"
+                    checked={cp.oidc.disable_password_login}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, disable_password_login: e.target.checked } })}
+                  />
+                  Disable local password login (SSO only)
+                </label>
+                <label className="setup-check">
+                  <input
+                    type="checkbox"
+                    checked={cp.oidc.auto_login}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, auto_login: e.target.checked } })}
+                  />
+                  Redirect straight to the SSO provider
+                </label>
+              </div>
+            )}
+          </details>
+
+          <details className="settings-card" open>
+            <summary>Sessions</summary>
+            <label>
+              Session lifetime (hours)
+              <input
+                type="number"
+                min={1}
+                value={Math.round(cp.session_ttl_sec / 3600)}
+                onChange={(e) => setCp({ ...cp, session_ttl_sec: Math.max(1, Number(e.target.value)) * 3600 })}
+              />
+            </label>
+          </details>
+
+          <details className="settings-card" open>
+            <summary>Cluster policy</summary>
+            <label className="setup-check">
+              <input
+                type="checkbox"
+                checked={cp.require_approval}
+                onChange={(e) => setCp({ ...cp, require_approval: e.target.checked })}
+              />
+              Require admin approval before a new agent serves DNS
+            </label>
+            <div className="form-grid">
+              <label>
+                Node key max age (days, 0 = 30d default)
+                <input
+                  type="number"
+                  min={0}
+                  value={Math.round(cp.key_max_age_sec / 86400)}
+                  onChange={(e) => setCp({ ...cp, key_max_age_sec: Math.max(0, Number(e.target.value)) * 86400 })}
+                />
+              </label>
+              <label>
+                Key rotation grace (minutes)
+                <input
+                  type="number"
+                  min={0}
+                  value={Math.round(cp.key_grace_sec / 60)}
+                  onChange={(e) => setCp({ ...cp, key_grace_sec: Math.max(0, Number(e.target.value)) * 60 })}
+                />
+              </label>
+              <label>
+                Advertise address (optional)
+                <input value={cp.advertise_addr} onChange={(e) => setCp({ ...cp, advertise_addr: e.target.value })} />
+              </label>
+            </div>
+          </details>
+
+          <div className="settings-actions">
+            <button className="btn primary" onClick={saveCP} disabled={cpSaving}>
+              {cpSaving ? 'Saving…' : 'Save access settings'}
+            </button>
+          </div>
+        </>
       )}
 
       {view === 'resolver' && (
@@ -1016,15 +1168,17 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       )}
 
       {/* One global save for every section above. */}
-      <div className="settings-savebar">
-        {ok && <span className="ok-inline">Saved &amp; applied.</span>}
-        <button className="btn ghost-danger" onClick={load} disabled={saving}>
-          Reset
-        </button>
-        <button className="btn primary" onClick={saveAll} disabled={saving}>
-          {saving ? 'Saving…' : 'Save changes'}
-        </button>
-      </div>
+      {view !== 'access' && view !== 'backup' && (
+        <div className="settings-savebar">
+          {ok && <span className="ok-inline">Saved &amp; applied.</span>}
+          <button className="btn ghost-danger" onClick={load} disabled={saving}>
+            Reset
+          </button>
+          <button className="btn primary" onClick={saveAll} disabled={saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

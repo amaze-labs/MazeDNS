@@ -1,15 +1,18 @@
 # Production compose: pulls the published images and runs a control-plane
-# (dashboard/API, no DNS) plus a DNS agent that self-enrolls with a shared join
-# token and serves DNS. In a real multi-site deployment each agent runs on a
-# separate host/site (reaching the control plane over your private overlay); here
-# both are shown on one host for illustration.
+# (dashboard/API, no DNS) plus a DNS agent that self-enrolls with an enrollment key
+# and serves DNS. In a real multi-site deployment each agent runs on a separate
+# host/site (reaching the control plane over your private overlay); here both are
+# shown on one host for illustration.
 #
-#   MAZEDNS_ADMIN_PASSWORD=... MAZEDNS_JOIN_TOKEN=... \
-#     docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml up -d
 #
-# Agents appear in the control-plane UI (Cluster tab) automatically once they
-# present the join token — no key to copy. Set MAZEDNS_REQUIRE_APPROVAL=true on
-# the control plane if you want to approve each agent before it serves.
+# On first boot the control plane prints a one-time SETUP TOKEN to its log
+# (`docker logs mazedns-control-plane`). Open http://<host>:8080, paste the token,
+# and complete the setup wizard: create your admin, set DNS defaults, and create the
+# first enrollment key. Everything else (SSO, metrics, cluster policy) is configured
+# in the UI under Settings — no env vars, no YAML, no restart. The agent below uses
+# MAZEDNS_JOIN_TOKEN as its enrollment key; paste the key from the wizard into your
+# environment (or into the agent service) so it can join.
 
 name: mazedns
 
@@ -18,22 +21,13 @@ services:
     image: ghcr.io/ipmaze/mazedns-control-plane:latest
     container_name: mazedns-control-plane
     restart: unless-stopped
+    # The control plane is configured entirely through the web UI (first-boot wizard
+    # + Settings). Only bootstrap values live here: where to store data and how to
+    # bind the HTTP server. To reset a lost admin: `docker compose exec control-plane
+    # /control-plane reset-admin`.
     environment:
       MAZEDNS_API_ADDRESS: "0.0.0.0"
       MAZEDNS_DB_PATH: "/data/mazedns.db"
-      MAZEDNS_ADMIN_USERNAME: "admin"
-      MAZEDNS_ADMIN_PASSWORD: "${MAZEDNS_ADMIN_PASSWORD:?set a strong admin password}"
-      MAZEDNS_CLUSTER_ENABLED: "true"
-      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?set a shared cluster join token}"
-      # MAZEDNS_REQUIRE_APPROVAL: "true"   # hold new agents until you approve them
-      # --- SSO via OIDC (optional) — uncomment and fill in to enable a
-      #     "Sign in with SSO" button without editing the config file:
-      # MAZEDNS_OIDC_ISSUER: "https://id.example.com/application/o/mazedns/"
-      # MAZEDNS_OIDC_CLIENT_ID: "mazedns"
-      # MAZEDNS_OIDC_CLIENT_SECRET: "${MAZEDNS_OIDC_CLIENT_SECRET:-}"
-      # MAZEDNS_OIDC_REDIRECT_URL: "https://dns.example.com/api/auth/oidc/callback"
-      # MAZEDNS_OIDC_GROUPS_CLAIM: "groups"
-      # MAZEDNS_OIDC_ADMIN_GROUP: "mazedns-admins"
     ports:
       - "8080:8080"     # web UI + API (keep behind your VPN / firewall)
     volumes:
@@ -54,7 +48,8 @@ services:
       # verifies the URL host. Left empty here (compose DNS resolves the service
       # name). Alternatively add extra_hosts below.
       MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:-}"
-      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?set a shared cluster join token}"
+      # Enrollment key created in the setup wizard / Cluster → Enrollment keys.
+      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?paste the enrollment key from the setup wizard}"
       MAZEDNS_NODE_NAME: "agent-1"
     # extra_hosts:                       # pure-Docker alternative to MAZEDNS_CP_IP
     #   - "cp.example.com:10.0.0.5"      #   (Go's resolver honors /etc/hosts)

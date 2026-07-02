@@ -876,6 +876,130 @@ button.del:hover {
   text-decoration: none;
 }
 
+/* First-boot setup wizard */
+.setup-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.setup-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px;
+  width: 460px;
+  max-width: 100%;
+}
+.setup-head {
+  text-align: center;
+  margin-bottom: 20px;
+}
+.setup-head h1 {
+  font-size: 22px;
+  margin: 8px 0 4px;
+}
+.setup-steps {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  padding: 0;
+  margin: 0 0 20px;
+  font-size: 12px;
+}
+.setup-steps li {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  border-top: 2px solid var(--line);
+  padding-top: 8px;
+}
+.setup-steps li.active {
+  color: var(--text);
+  border-top-color: var(--accent);
+}
+.setup-steps li.done {
+  color: var(--text);
+  border-top-color: var(--accent);
+}
+.setup-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--line);
+  font-size: 11px;
+}
+.setup-steps li.active .setup-step-num,
+.setup-steps li.done .setup-step-num {
+  background: var(--accent);
+  color: #fff;
+}
+.setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.setup-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.setup-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.pw-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.pw-meter > span {
+  height: 6px;
+  border-radius: 3px;
+  flex: 1;
+  background: var(--line);
+}
+.pw-meter.weak > span {
+  background: linear-gradient(to right, #e5534b 33%, var(--line) 33%);
+}
+.pw-meter.ok > span {
+  background: linear-gradient(to right, #d9a441 66%, var(--line) 66%);
+}
+.pw-meter.strong > span {
+  background: #3fb950;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.form-grid label.setup-check {
+  flex-direction: row;
+  align-items: center;
+  grid-column: 1 / -1;
+}
+
 textarea.import {
   width: 100%;
   background: var(--bg);

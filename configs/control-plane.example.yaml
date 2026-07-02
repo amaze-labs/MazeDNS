@@ -8,21 +8,27 @@
 # filter sections. Any resolver setting omitted here falls back to a harmless
 # built-in default (the control plane just doesn't use it).
 #
-# Most fields can also be set via MAZEDNS_* environment variables (noted inline),
-# which is the preferred way to configure containers.
+# The control plane is configured through its WEB UI. On a fresh install it prints a
+# one-time setup token to the log and runs a first-boot wizard (create admin, DNS
+# defaults, first enrollment key). Everything below is OPTIONAL: the `auth`, `oidc`,
+# `cluster` policy, `classifier`, and `metrics` sections only SEED the database on
+# first boot — afterwards they are ignored and you edit them under Settings. Only
+# `api` (bind), `database`, and `log.level` are read on every start.
+#
+# Reset a lost admin:  ./control-plane reset-admin --username admin
 
 api:
   enabled: true
   address: "127.0.0.1"         # UI + API + /metrics + /healthz; keep it off the public internet (or MAZEDNS_API_ADDRESS)
   port: 8080                   # put a TLS reverse proxy in front for remote access
 
+# --- Everything below is SEED-ONLY (first boot); edit live under Settings later ---
+
 auth:
   enabled: true                # require login for the API + UI
-  session_ttl: "24h"
-  admin:                       # first-run bootstrap admin (created only if no users exist)
-    username: "admin"          # or MAZEDNS_ADMIN_USERNAME
-    password: ""               # or MAZEDNS_ADMIN_PASSWORD; empty -> random, logged once at first start
-  oidc:                        # optional SSO (Authentik or any OIDC provider); all fields also via MAZEDNS_OIDC_*
+  session_ttl: "24h"           # seed; edit under Settings → Access
+  # The first admin is created by the setup wizard, not here.
+  oidc:                        # seed for SSO; edit under Settings → Access & SSO
     enabled: false
     issuer: ""                 # e.g. https://authentik.example.com/application/o/mazedns/
     client_id: ""
@@ -35,9 +41,15 @@ auth:
     auto_login: false              # true = redirect straight to the SSO provider
 
 cluster:                       # control-plane side of config replication
-  enabled: true
-  join_token: ""               # shared secret agents present to self-enroll (or MAZEDNS_JOIN_TOKEN); '' disables auto-join
-  require_approval: false      # hold self-enrolled agents until an admin approves them (or MAZEDNS_REQUIRE_APPROVAL)
+  enabled: true                # (bootstrap) serve the cluster endpoints
+  # Enrollment keys are managed in the UI (Cluster → Enrollment keys): create,
+  # list, and revoke keys with an optional expiry and max-uses. Agents present a
+  # key as MAZEDNS_JOIN_TOKEN to join. The policy fields below are seed-only —
+  # edit them under Settings → Access → Cluster policy.
+  join_token: ""               # DEPRECATED: if set, auto-imported once as a never-expiring enrollment key on boot (prefer the UI).
+  require_approval: false      # hold self-enrolled agents until an admin approves them
+  key_max_age: 720h            # rotate a node's key once older than this (default 720h/30d)
+  key_grace: 15m               # how long the previous key stays valid after a rotation
 
 classifier:                    # optional domain classification (static signals + optional LLM). Control plane only.
   # These values SEED the database on first run; afterwards edit them live in the

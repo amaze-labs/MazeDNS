@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/IPMaze/MazeDNS/internal/api"
 	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/boot"
@@ -37,6 +39,13 @@ import (
 var version = "dev"
 
 func main() {
+	// Break-glass admin recovery: `control-plane reset-admin` operates directly on
+	// the DB (not read on every boot), replacing the old MAZEDNS_ADMIN_PASSWORD path.
+	if len(os.Args) > 1 && os.Args[1] == "reset-admin" {
+		resetAdminCmd(os.Args[2:])
+		return
+	}
+
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
 	flag.Parse()
 
@@ -58,37 +67,29 @@ func main() {
 	defer st.Close()
 	slog.Info("store ready", "backend", boot.StoreBackend(cfg), "path", cfg.Database.Path)
 
-	// Record the control plane's own reachable address (cluster.advertise_addr /
-	// MAZEDNS_ADVERTISE_ADDR). It is handed to each agent at enrollment and pinned
-	// locally, so a node keeps reaching the control plane by its fixed IP even if
-	// DNS/hostname resolution later breaks.
-	if cfg.Cluster.AdvertiseAddr != "" {
-		_ = st.SetMasterAdvertiseAddr(cfg.Cluster.AdvertiseAddr)
-		slog.Info("control-plane advertise address set", "addr", cfg.Cluster.AdvertiseAddr)
+	// Runtime settings are DB-backed and UI-editable. On first boot only, seed them
+	// from env/YAML so an existing deployment upgrades transparently; afterwards the
+	// database is the single source of truth and env/YAML runtime values are ignored.
+	seeded, _ := st.EnsureCPSettings(seedCPSettings(cfg))
+	if seeded {
+		slog.Info("seeded control-plane runtime settings from config; the database is now the source of truth (env/YAML runtime values are ignored)")
+	} else {
+		slog.Info("control-plane runtime settings loaded from the database (env/YAML runtime values are ignored)")
 	}
+	cpset := st.LoadCPSettings(store.CPSettings{SessionTTLSec: 24 * 3600})
 
-	// Auth: bootstrap admin + optional OIDC.
-	authMgr := auth.NewManager(st, nil, cfg.Auth.SessionTTL.Std())
+	// Auth: DB-backed session TTL + optional OIDC (built from DB settings).
+	authMgr := auth.NewManager(st, nil, time.Duration(cpset.SessionTTLSec)*time.Second)
 	if cfg.Auth.Enabled {
-		if err := bootstrapAdmin(st, cfg.Auth.Admin); err != nil {
-			slog.Error("bootstrap admin", "err", err)
-			os.Exit(1)
-		}
-		var oidcProvider *auth.OIDCProvider
-		if cfg.Auth.OIDC.Enabled {
-			p, oerr := auth.NewOIDC(context.Background(), cfg.Auth.OIDC)
-			if oerr != nil {
+		if cpset.OIDC.Enabled {
+			if p, oerr := buildOIDC(context.Background(), cpset.OIDC); oerr != nil {
 				slog.Error("oidc init failed; continuing without SSO", "err", oerr)
 			} else {
-				oidcProvider = p
-				slog.Info("oidc enabled", "issuer", cfg.Auth.OIDC.Issuer, "redirect_uri", cfg.Auth.OIDC.RedirectURL)
-				if cfg.Auth.OIDC.RedirectURL == "" {
-					slog.Warn("oidc redirect_url is empty — set auth.oidc.redirect_url or MAZEDNS_OIDC_REDIRECT_URL")
-				}
+				authMgr.SetOIDC(p)
+				slog.Info("oidc enabled", "issuer", cpset.OIDC.Issuer, "redirect_uri", cpset.OIDC.RedirectURL)
 			}
 		}
-		authMgr = auth.NewManager(st, oidcProvider, cfg.Auth.SessionTTL.Std())
-		slog.Info("auth enabled", "oidc", oidcProvider != nil)
+		slog.Info("auth enabled", "oidc", authMgr.OIDCEnabled())
 	}
 
 	mx := metrics.New()
@@ -176,13 +177,51 @@ func main() {
 	// endpoints (including token self-enrollment) are always available.
 	apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
 	apiSrv := api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled, false, true)
-	apiSrv.SetClusterEnrollment(cfg.Cluster.JoinToken, cfg.Cluster.RequireApproval)
+	// Per-node key rotation policy (DB-backed): default to 30d if unset.
+	keyMaxAge := time.Duration(cpset.KeyMaxAgeSec) * time.Second
+	if keyMaxAge == 0 {
+		keyMaxAge = 30 * 24 * time.Hour
+	}
+	apiSrv.SetClusterEnrollment(cpset.RequireApproval, keyMaxAge, time.Duration(cpset.KeyGraceSec)*time.Second)
 	apiSrv.SetClassifierStatus(clsWorker)
 	apiSrv.SetClassifierEnqueue(clsWorker.Enqueue)
 	apiSrv.SetEnricher(enricher)
-	if cfg.Cluster.JoinToken != "" {
-		slog.Info("cluster self-enrollment enabled", "require_approval", cfg.Cluster.RequireApproval)
+	// SSO settings change live: rebuild and swap the OIDC provider without a restart.
+	apiSrv.SetRebuildOIDC(func(o store.OIDCSettings) error {
+		if !o.Enabled {
+			authMgr.SetOIDC(nil)
+			slog.Info("oidc disabled via settings")
+			return nil
+		}
+		p, err := buildOIDC(context.Background(), o)
+		if err != nil {
+			return err
+		}
+		authMgr.SetOIDC(p)
+		slog.Info("oidc reconfigured via settings", "issuer", o.Issuer)
+		return nil
+	})
+	// Enrollment secrets are UI-managed keys in the DB. A configured join_token is
+	// deprecated: import it once as a never-expiring enrollment key so existing
+	// agents keep working, then warn the operator to manage keys in the UI.
+	importDeprecatedJoinToken(st, cfg.Cluster.JoinToken)
+
+	// First-boot setup wizard: on a fresh, admin-less control plane, guard the API
+	// behind a one-time setup token printed here (see setup.go). Existing
+	// deployments (an admin already exists) skip setup entirely.
+	if cfg.Auth.Enabled && !st.SetupCompleted() {
+		if n, _ := st.CountUsers(); n == 0 {
+			token, terr := auth.NewToken()
+			if terr != nil {
+				slog.Error("setup token", "err", terr)
+				os.Exit(1)
+			}
+			apiSrv.EnableSetupMode(token)
+			logSetupBanner(token)
+		}
 	}
+	slog.Info("cluster self-enrollment ready (manage enrollment keys in the UI)",
+		"require_approval", cpset.RequireApproval, "key_max_age", keyMaxAge)
 	go func() {
 		slog.Info("MazeDNS control-plane HTTP starting", "addr", apiAddr)
 		if serveErr := apiSrv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
@@ -272,42 +311,121 @@ func startLogsExport(st *store.Store, cfg config.Config) {
 	go victorialogs.NewExporter(getVL, st).Run(context.Background())
 }
 
-// bootstrapAdmin creates the first admin if no users exist. Username/password come
-// from config or MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD; a missing
-// password is generated and logged once.
-func bootstrapAdmin(st *store.Store, a config.AdminBootstrap) error {
-	n, err := st.CountUsers()
+// seedCPSettings maps the file/env config to the DB-backed control-plane runtime
+// settings, used ONLY to seed the database on first boot.
+func seedCPSettings(cfg config.Config) store.CPSettings {
+	o := cfg.Auth.OIDC
+	return store.CPSettings{
+		SessionTTLSec: int(cfg.Auth.SessionTTL.Std().Seconds()),
+		OIDC: store.OIDCSettings{
+			Enabled:              o.Enabled,
+			Issuer:               o.Issuer,
+			ClientID:             o.ClientID,
+			ClientSecret:         o.ClientSecret,
+			RedirectURL:          o.RedirectURL,
+			Scopes:               o.Scopes,
+			GroupsClaim:          o.GroupsClaim,
+			AdminGroup:           o.AdminGroup,
+			DisablePasswordLogin: o.DisablePasswordLogin,
+			AutoLogin:            o.AutoLogin,
+		},
+		RequireApproval: cfg.Cluster.RequireApproval,
+		KeyMaxAgeSec:    int64(cfg.Cluster.KeyMaxAge.Std().Seconds()),
+		KeyGraceSec:     int64(cfg.Cluster.KeyGrace.Std().Seconds()),
+		AdvertiseAddr:   cfg.Cluster.AdvertiseAddr,
+		QueryLog:        cfg.Log.QueryLog,
+	}
+}
+
+// buildOIDC constructs an OIDC provider from the DB-backed SSO settings.
+func buildOIDC(ctx context.Context, o store.OIDCSettings) (*auth.OIDCProvider, error) {
+	return auth.NewOIDC(ctx, config.OIDC{
+		Enabled:              o.Enabled,
+		Issuer:               o.Issuer,
+		ClientID:             o.ClientID,
+		ClientSecret:         o.ClientSecret,
+		RedirectURL:          o.RedirectURL,
+		Scopes:               o.Scopes,
+		GroupsClaim:          o.GroupsClaim,
+		AdminGroup:           o.AdminGroup,
+		DisablePasswordLogin: o.DisablePasswordLogin,
+		AutoLogin:            o.AutoLogin,
+	})
+}
+
+// logSetupBanner prints the one-time first-boot setup token prominently.
+func logSetupBanner(token string) {
+	slog.Warn("┌──────────────────────────────────────────────────────────────────────────┐")
+	slog.Warn("│ FIRST-BOOT SETUP REQUIRED — open the web UI and paste this one-time token:  │")
+	slog.Warn("│   " + token)
+	slog.Warn("│ The token is required to create the first admin. It is shown only once.     │")
+	slog.Warn("└──────────────────────────────────────────────────────────────────────────┘")
+}
+
+// resetAdminCmd is the break-glass admin recovery subcommand:
+//
+//	control-plane reset-admin [--config path] [--username name] [--password pw]
+//
+// It creates the admin if none exists, or resets an existing user to admin with a
+// new password. A missing password is generated and printed once.
+func resetAdminCmd(args []string) {
+	fs := flag.NewFlagSet("reset-admin", flag.ExitOnError)
+	cfgPath := fs.String("config", "configs/mazedns.yaml", "path to the YAML config file")
+	username := fs.String("username", "admin", "admin username to create or reset")
+	password := fs.String("password", "", "new password (generated if empty)")
+	_ = fs.Parse(args)
+
+	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		return err
+		slog.Error("config", "err", err)
+		os.Exit(1)
 	}
-	if n > 0 {
-		return nil
+	slog.SetDefault(boot.NewLogger(cfg.Log.Level))
+	st, err := boot.OpenStore(cfg)
+	if err != nil {
+		slog.Error("open store", "err", err)
+		os.Exit(1)
 	}
-	username := boot.FirstNonEmpty(a.Username, os.Getenv("MAZEDNS_ADMIN_USERNAME"), "admin")
-	password := boot.FirstNonEmpty(a.Password, os.Getenv("MAZEDNS_ADMIN_PASSWORD"))
+	defer st.Close()
+
+	pw := strings.TrimSpace(*password)
 	generated := false
-	if password == "" {
+	if pw == "" {
 		tok, terr := auth.NewToken()
 		if terr != nil {
-			return terr
+			slog.Error("token", "err", terr)
+			os.Exit(1)
 		}
-		password = tok[:16]
+		pw = tok[:16]
 		generated = true
 	}
-	hash, err := auth.HashPassword(password)
+	hash, err := auth.HashPassword(pw)
 	if err != nil {
-		return err
+		slog.Error("hash", "err", err)
+		os.Exit(1)
 	}
-	if _, err := st.CreateLocalUser(username, hash, "admin"); err != nil {
-		return err
+	existing, _ := st.GetUserByUsername(*username)
+	if existing != nil {
+		if err := st.UpdateUserPassword(existing.ID, hash); err != nil {
+			slog.Error("reset password", "err", err)
+			os.Exit(1)
+		}
+		if existing.Role != "admin" {
+			_ = st.UpdateUserRole(existing.ID, "admin")
+		}
+		slog.Info("admin password reset", "username", *username)
+	} else {
+		if _, err := st.CreateLocalUser(*username, hash, "admin"); err != nil {
+			slog.Error("create admin", "err", err)
+			os.Exit(1)
+		}
+		// Mark setup complete so the wizard doesn't reopen after a manual admin create.
+		_ = st.SetMeta("setup_completed", "1")
+		slog.Info("admin created", "username", *username)
 	}
 	if generated {
-		slog.Warn("bootstrap admin created with a GENERATED password — log in and change it",
-			"username", username, "password", password)
-	} else {
-		slog.Info("bootstrap admin created", "username", username)
+		slog.Warn("generated password (shown once) — log in and change it", "username", *username, "password", pw)
 	}
-	return nil
 }
 
 // bootstrapNodes pre-provisions cluster nodes from a "name=key,name=key" spec so
@@ -336,4 +454,26 @@ func bootstrapNodes(st *store.Store, spec string) {
 		}
 		slog.Info("cluster node provisioned", "name", name)
 	}
+}
+
+// importDeprecatedJoinToken migrates a configured cluster.join_token to a DB
+// enrollment key. It is idempotent (keyed by hash) so restarts don't duplicate it,
+// and it lets already-deployed agents keep enrolling with their existing
+// MAZEDNS_JOIN_TOKEN value while the operator moves to UI-managed keys.
+func importDeprecatedJoinToken(st *store.Store, token string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	sum := sha256.Sum256([]byte(token))
+	prefix := token
+	if len(prefix) > 8 {
+		prefix = prefix[:8]
+	}
+	if err := st.EnsureEnrollKey(uuid.NewString(), "imported-join-token (deprecated config)", hex.EncodeToString(sum[:]), prefix); err != nil {
+		slog.Warn("could not import deprecated join_token as an enrollment key", "err", err)
+		return
+	}
+	slog.Warn("cluster.join_token / MAZEDNS_JOIN_TOKEN is deprecated: imported as a never-expiring enrollment key " +
+		"(manage and revoke it under Cluster → Enrollment keys in the UI)")
 }

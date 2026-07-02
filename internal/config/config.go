@@ -135,16 +135,21 @@ type API struct {
 	Port    int    `yaml:"port"`
 }
 
-// Auth configures authentication for the control plane and UI.
+// Auth configures authentication for the control plane and UI. Enabled is
+// bootstrap; SessionTTL and OIDC are seed-only (they populate the DB on first boot
+// and are edited in the UI thereafter). The first admin is created by the setup
+// wizard, not from config — Admin is retained only so an older file that still has
+// an `auth.admin:` block parses without error.
 type Auth struct {
 	Enabled    bool           `yaml:"enabled"`
 	SessionTTL Duration       `yaml:"session_ttl"`
-	Admin      AdminBootstrap `yaml:"admin"`
+	Admin      AdminBootstrap `yaml:"admin"` // deprecated/ignored: use the setup wizard or `reset-admin`
 	OIDC       OIDC           `yaml:"oidc"`
 }
 
-// AdminBootstrap seeds the first local admin (env overrides:
-// MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD).
+// AdminBootstrap is a deprecated, ignored field (kept so old config files parse).
+// The first admin is created by the first-boot setup wizard; recover with the
+// `control-plane reset-admin` subcommand.
 type AdminBootstrap struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
@@ -217,14 +222,16 @@ type Classifier struct {
 type Cluster struct {
 	Enabled bool `yaml:"enabled"`
 	// Control-plane side.
-	JoinToken       string `yaml:"join_token"`       // shared secret agents present to self-enroll ('' disables auto-join)
-	RequireApproval bool   `yaml:"require_approval"` // hold self-enrolled agents until an admin approves them
+	JoinToken       string   `yaml:"join_token"`       // DEPRECATED: enrollment keys are now UI-managed. If set, it is auto-imported once as a never-expiring DB enrollment key on boot (log warns). Prefer creating keys in the UI.
+	RequireApproval bool     `yaml:"require_approval"` // hold self-enrolled agents until an admin approves them
+	KeyMaxAge       Duration `yaml:"key_max_age"`      // control-plane: rotate a node's key once older than this (default 720h/30d; unset = default)
+	KeyGrace        Duration `yaml:"key_grace"`        // control-plane: overlap window a rotated-out node key stays valid (default 15m)
 
 	// Agent side.
 	CPURL     string   `yaml:"cp_url"`     // agent: control-plane base URL, e.g. http://control-plane:8080
 	MasterURL string   `yaml:"master_url"` // deprecated alias of cp_url
 	MasterIP  string   `yaml:"master_ip"`  // agent: pin the control-plane IP (skip DNS); TLS still uses the URL host
-	NodeName  string   `yaml:"node_name"`  // agent: name to enroll under (defaults to the hostname)
+	NodeName  string   `yaml:"node_name"`  // agent: INITIAL display label to enroll under (defaults to the hostname). Identity is a server-assigned UUID; this label is editable later in the UI and changing node_name afterwards does not change the node's identity.
 	NodeKey   string   `yaml:"node_key"`   // agent: per-node API key (auto-issued when using join_token)
 	Interval  Duration `yaml:"interval"`   // agent: snapshot poll interval
 	// AdvertiseAddr is the address other hosts use to reach this node's DNS (the
@@ -389,13 +396,26 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_NODE_NAME"); v != "" {
 		cfg.Cluster.NodeName = v
 	}
-	// Agent: shared join token for self-enrollment.
+	// Agent: enrollment key for self-enrollment. MAZEDNS_JOIN_TOKEN keeps its name
+	// for compatibility; on the control plane its value is now a UI-created
+	// enrollment key (auto-imported if set via config — see cmd/control-plane).
 	if v := os.Getenv("MAZEDNS_JOIN_TOKEN"); v != "" {
 		cfg.Cluster.JoinToken = v
 		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_REQUIRE_APPROVAL"); v == "true" || v == "1" {
 		cfg.Cluster.RequireApproval = true
+	}
+	// Control-plane: per-node key rotation policy.
+	if v := os.Getenv("MAZEDNS_KEY_MAX_AGE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Cluster.KeyMaxAge = Duration(d)
+		}
+	}
+	if v := os.Getenv("MAZEDNS_KEY_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Cluster.KeyGrace = Duration(d)
+		}
 	}
 	if v := firstEnv("MAZEDNS_MASTER_IP", "MAZEDNS_CP_IP"); v != "" {
 		cfg.Cluster.MasterIP = v

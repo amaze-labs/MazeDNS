@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type Node, type Site } from '../api'
+import { api, type EnrollKey, type Node, type Site } from '../api'
 import { pollWhileVisible } from '../poll'
 import Modal from './Modal'
 
@@ -61,17 +61,20 @@ const nodeIP = (n: Node) => (n.address || '').replace(/:\d+$/, '')
 export default function Cluster() {
   const [nodes, setNodes] = useState<Node[]>([])
   const [sites, setSites] = useState<Site[]>([])
+  const [enrollKeys, setEnrollKeys] = useState<EnrollKey[]>([])
   const [name, setName] = useState('')
   const [siteName, setSiteName] = useState('')
   const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
-  const [selected, setSelected] = useState<string | null>(null) // agent name whose detail modal is open
+  const [newEnrollKey, setNewEnrollKey] = useState<{ name: string; key: string } | null>(null)
+  const [selected, setSelected] = useState<string | null>(null) // agent id whose detail modal is open
   const [err, setErr] = useState('')
 
   const load = () =>
-    Promise.all([api.clusterNodes(), api.clusterSites()])
-      .then(([n, s]) => {
+    Promise.all([api.clusterNodes(), api.clusterSites(), api.enrollKeys()])
+      .then(([n, s, k]) => {
         setNodes(n)
         setSites(s)
+        setEnrollKeys(k)
         setErr('')
       })
       .catch((e) => setErr(e.message))
@@ -95,23 +98,37 @@ export default function Cluster() {
     }
   }
 
-  const del = async (n: string) => {
-    if (!window.confirm(`Remove agent “${n}”? Its key is revoked and it disappears from the cluster.`)) return
+  const del = async (n: Node) => {
+    if (!window.confirm(`Remove agent “${n.name}”? Its key is revoked and it disappears from the cluster.`)) return
     try {
-      await api.deleteNode(n)
-      if (newKey?.name === n) setNewKey(null)
-      if (selected === n) setSelected(null)
+      await api.deleteNode(n.id)
+      if (newKey?.name === n.name) setNewKey(null)
+      if (selected === n.id) setSelected(null)
       load()
     } catch (e: any) {
       setErr(e.message)
     }
   }
 
-  const renew = async (n: string) => {
-    if (!window.confirm(`Rotate the key for “${n}”? The old key stops working immediately.`)) return
+  const renew = async (n: Node) => {
+    if (!window.confirm(`Rotate the key for “${n.name}”? The old key stops working immediately.`)) return
     try {
-      const r = await api.renewNodeKey(n)
-      setNewKey(r)
+      const r = await api.renewNodeKey(n.id)
+      setNewKey({ name: n.name, key: r.key })
+      setErr('')
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  const rename = async (n: Node) => {
+    const next = window.prompt(`Rename agent “${n.name}” (display label only — its identity and history are unchanged):`, n.name)
+    if (next == null) return
+    const name = next.trim()
+    if (!name || name === n.name) return
+    try {
+      await api.renameNode(n.id, name)
       setErr('')
       load()
     } catch (e: any) {
@@ -121,7 +138,7 @@ export default function Cluster() {
 
   const approve = async (n: Node) => {
     try {
-      await api.approveNode(n.name, !n.approved)
+      await api.approveNode(n.id, !n.approved)
       setErr('')
       load()
     } catch (e: any) {
@@ -133,7 +150,7 @@ export default function Cluster() {
     const on = !n.maintenance
     if (on && !window.confirm(`Put “${n.name}” into maintenance? It stops serving DNS (SERVFAIL) so clients fail over to another agent.`)) return
     try {
-      await api.setNodeMaintenance(n.name, on)
+      await api.setNodeMaintenance(n.id, on)
       setErr('')
       load()
     } catch (e: any) {
@@ -143,7 +160,7 @@ export default function Cluster() {
 
   const assignSite = async (n: Node, site: string, role: string) => {
     try {
-      await api.setNodeSite(n.name, site, role)
+      await api.setNodeSite(n.id, site, role)
       setErr('')
       load()
     } catch (e: any) {
@@ -173,6 +190,26 @@ export default function Cluster() {
     }
   }
 
+  const createEnrollKey = async (name: string, ttlHours: number, maxUses: number) => {
+    try {
+      const r = await api.createEnrollKey(name, ttlHours, maxUses)
+      setNewEnrollKey({ name: r.name || r.key_prefix, key: r.key })
+      setErr('')
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+  const revokeEnrollKey = async (k: EnrollKey) => {
+    if (!window.confirm(`Revoke enrollment key “${k.name || k.key_prefix}”? Agents can no longer join with it.`)) return
+    try {
+      await api.revokeEnrollKey(k.id)
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   // ---- derived ----
   const online = nodes.filter(ONLINE).length
   const serving = nodes.filter(SERVING).length
@@ -182,15 +219,17 @@ export default function Cluster() {
   const sitesInUse = Array.from(new Set([...sites.map((s) => s.name), ...nodes.map((n) => n.site).filter(Boolean)])).sort()
   const membersOf = (site: string) =>
     nodes.filter((n) => n.site === site).sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name))
-  const selectedNode = selected ? nodes.find((n) => n.name === selected) || null : null
+  const selectedNode = selected ? nodes.find((n) => n.id === selected) || null : null
 
   const cpHost = window.location.hostname || '<control-plane-host>'
   const cpURL = `${window.location.protocol}//${cpHost}${window.location.port ? ':' + window.location.port : ''}`
 
+  // Prefer showing a freshly-created enrollment key inline; otherwise a placeholder.
+  const enrollSecret = newEnrollKey?.key || '<enrollment-key>'
   const joinRun = `docker run -d --name mazedns-agent --restart unless-stopped \\
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
   -e MAZEDNS_CP_URL=${cpURL} \\
-  -e MAZEDNS_JOIN_TOKEN=<your-cluster-join-token> \\
+  -e MAZEDNS_JOIN_TOKEN=${enrollSecret} \\
   -e MAZEDNS_NODE_NAME=site-a-1 \\
   -p 53:5300/udp -p 53:5300/tcp \\
   ${IMAGE}`
@@ -201,7 +240,7 @@ export default function Cluster() {
     environment:
       MAZEDNS_API_ADDRESS: "0.0.0.0"
       MAZEDNS_CP_URL: "${cpURL}"
-      MAZEDNS_JOIN_TOKEN: "\${MAZEDNS_JOIN_TOKEN:?set the cluster join token}"
+      MAZEDNS_JOIN_TOKEN: "${enrollSecret}"
       MAZEDNS_NODE_NAME: "site-a-1"
     ports:
       - "53:5300/udp"
@@ -272,7 +311,7 @@ export default function Cluster() {
                   {members.map((n) => {
                     const st = statusOf(n)
                     return (
-                      <li key={n.name} className="site-member" onClick={() => setSelected(n.name)} title="Open agent details">
+                      <li key={n.id} className="site-member" onClick={() => setSelected(n.id)} title="Open agent details">
                         <span className={`node-dot ${st.dot}`} title={st.label} />
                         <span className={`badge ${n.role === 'primary' ? 'allow' : ''}`}>{roleLabel(n.role)}</span>
                         <strong>{n.name}</strong>
@@ -312,7 +351,7 @@ export default function Cluster() {
             {nodes.map((n) => {
               const st = statusOf(n)
               return (
-                <tr key={n.name} className="agent-row" onClick={() => setSelected(n.name)}>
+                <tr key={n.id} className="agent-row" onClick={() => setSelected(n.id)}>
                   <td>
                     <span className="node-status">
                       <span className={`node-dot ${st.dot}`} title={st.label} />
@@ -369,19 +408,29 @@ export default function Cluster() {
         </table>
       </div>
 
+      {/* ── Enrollment keys ───────────────────────────────────────────────── */}
+      <EnrollKeys
+        keys={enrollKeys}
+        created={newEnrollKey}
+        onCreate={createEnrollKey}
+        onRevoke={revokeEnrollKey}
+        onDismiss={() => setNewEnrollKey(null)}
+      />
+
       {/* ── Deployment docs (collapsed: this is reference, not the main view) ─ */}
       <details className="settings-card deploy-docs">
         <summary>Deploy a DNS agent</summary>
         <p className="muted" style={{ textAlign: 'left' }}>
-          Agents self-enroll with the shared <strong>join token</strong> you set on the control plane
-          (<code>MAZEDNS_JOIN_TOKEN</code>). Run the agent image below and it appears in the table above automatically —
-          no key to copy. Set <code>MAZEDNS_REQUIRE_APPROVAL=true</code> to hold new agents until you approve them.
+          Agents self-enroll with an <strong>enrollment key</strong> you create above and pass as{' '}
+          <code>MAZEDNS_JOIN_TOKEN</code>. Run the agent image below and it appears in the table above automatically —
+          no per-node key to copy. Set <code>MAZEDNS_REQUIRE_APPROVAL=true</code> to hold new agents until you approve
+          them. After joining, each node authenticates with a per-node key the control plane rotates automatically.
         </p>
         <CodeBlock label="Zero-touch join — docker run" text={joinRun} />
         <CodeBlock label="Zero-touch join — docker compose" text={joinCompose} />
 
         <details style={{ marginTop: 12 }}>
-          <summary>No join token? Issue a per-agent key manually</summary>
+          <summary>Prefer a fixed per-agent key? Issue one manually</summary>
           <form className="row" onSubmit={add} style={{ marginTop: 12 }}>
             <input placeholder="new agent name (e.g. site-b)" value={name} onChange={(e) => setName(e.target.value)} />
             <button type="submit" className="btn primary">
@@ -408,8 +457,9 @@ export default function Cluster() {
           onClose={() => setSelected(null)}
           onApprove={() => approve(selectedNode)}
           onMaintenance={() => toggleMaintenance(selectedNode)}
-          onRenew={() => renew(selectedNode.name)}
-          onDelete={() => del(selectedNode.name)}
+          onRenew={() => renew(selectedNode)}
+          onRename={() => rename(selectedNode)}
+          onDelete={() => del(selectedNode)}
           onAssign={(site, role) => assignSite(selectedNode, site, role)}
         />
       )}
@@ -425,6 +475,7 @@ function AgentModal({
   onApprove,
   onMaintenance,
   onRenew,
+  onRename,
   onDelete,
   onAssign,
 }: {
@@ -435,6 +486,7 @@ function AgentModal({
   onApprove: () => void
   onMaintenance: () => void
   onRenew: () => void
+  onRename: () => void
   onDelete: () => void
   onAssign: (site: string, role: string) => void
 }) {
@@ -471,6 +523,8 @@ function AgentModal({
         <div><dt>Last seen</dt><dd>{ago(node.last_seen)}</dd></div>
         <div><dt>Enrolled</dt><dd>{dateStr(node.created_at)}</dd></div>
         <div><dt>Key prefix</dt><dd><code>{node.key_prefix || '—'}</code></dd></div>
+        <div><dt>Key rotated</dt><dd>{node.key_issued_at ? ago(node.key_issued_at) : '—'}</dd></div>
+        <div><dt>Node ID</dt><dd><code className="muted">{node.id}</code></dd></div>
       </dl>
 
       <div className="agent-assign">
@@ -527,10 +581,19 @@ function AgentModal({
           </span>
         </div>
         <div className="agent-action">
-          <button className="btn" onClick={onRenew}>
-            Renew key
+          <button className="btn" onClick={onRename}>
+            Rename
           </button>
-          <span className="muted">Rotate this agent’s API key. The old key stops working immediately.</span>
+          <span className="muted">Change the display label. The agent’s identity and history are unchanged.</span>
+        </div>
+        <div className="agent-action">
+          <button className="btn" onClick={onRenew}>
+            Rotate key
+          </button>
+          <span className="muted">
+            Issue a new per-node key. A running agent adopts it automatically on its next poll (the old key stays valid
+            for a short grace window — no downtime). The key shown is for the manual <code>MAZEDNS_NODE_KEY</code> path.
+          </span>
         </div>
         <div className="agent-action">
           <button className="del" onClick={onDelete}>
@@ -549,5 +612,139 @@ function Card({ label, value, accent }: { label: string; value: number; accent?:
       <div className="card-value">{value.toLocaleString()}</div>
       <div className="card-label">{label}</div>
     </div>
+  )
+}
+
+// TTL_OPTIONS maps a friendly label to a number of hours (0 = never expires).
+const TTL_OPTIONS: { label: string; hours: number }[] = [
+  { label: 'Never', hours: 0 },
+  { label: '1 hour', hours: 1 },
+  { label: '24 hours', hours: 24 },
+  { label: '7 days', hours: 24 * 7 },
+  { label: '30 days', hours: 24 * 30 },
+]
+
+function EnrollKeys({
+  keys,
+  created,
+  onCreate,
+  onRevoke,
+  onDismiss,
+}: {
+  keys: EnrollKey[]
+  created: { name: string; key: string } | null
+  onCreate: (name: string, ttlHours: number, maxUses: number) => void
+  onRevoke: (k: EnrollKey) => void
+  onDismiss: () => void
+}) {
+  const [name, setName] = useState('')
+  const [ttl, setTtl] = useState(0)
+  const [maxUses, setMaxUses] = useState(0)
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    onCreate(name.trim(), ttl, maxUses)
+    setName('')
+    setMaxUses(0)
+  }
+
+  return (
+    <>
+      <div className="section-head">
+        <h2>Enrollment keys</h2>
+        <form className="row" onSubmit={submit}>
+          <input placeholder="description (e.g. site-a rollout)" value={name} onChange={(e) => setName(e.target.value)} />
+          <select value={ttl} onChange={(e) => setTtl(Number(e.target.value))} title="Expiry">
+            {TTL_OPTIONS.map((o) => (
+              <option key={o.hours} value={o.hours}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            min={0}
+            placeholder="max uses (0 = ∞)"
+            value={maxUses || ''}
+            onChange={(e) => setMaxUses(Math.max(0, Number(e.target.value)))}
+            style={{ width: 130 }}
+            title="Max uses (0 = unlimited)"
+          />
+          <button type="submit" className="btn primary">
+            Create key
+          </button>
+        </form>
+      </div>
+      <p className="muted">
+        Agents join by presenting an enrollment key (as <code>MAZEDNS_JOIN_TOKEN</code>). Each key only works for
+        enrollment — never for serving DNS or shipping logs — and can be limited by expiry and a maximum number of uses.
+        The full secret is shown once, here, then stored hashed.
+      </p>
+
+      {created && (
+        <div className="enroll">
+          <div className="ok-msg">
+            <strong>Enrollment key “{created.name}” — shown once</strong> (stored hashed). Use it as{' '}
+            <code>MAZEDNS_JOIN_TOKEN</code> on new agents.{' '}
+            <button className="btn ghost" onClick={onDismiss}>
+              Dismiss
+            </button>
+          </div>
+          <pre className="keybox">{created.key}</pre>
+        </div>
+      )}
+
+      <div className="table-scroll">
+        <table className="agents-table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Expires</th>
+              <th className="num">Uses</th>
+              <th>Created</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((k) => (
+              <tr key={k.id}>
+                <td>
+                  <code>{k.key_prefix}…</code>
+                </td>
+                <td>{k.name || <span className="muted">—</span>}</td>
+                <td>
+                  <span className={`badge ${k.status === 'active' ? 'allow' : 'info'}`}>{k.status}</span>
+                </td>
+                <td>{k.expires_at ? dateStr(k.expires_at) : <span className="muted">never</span>}</td>
+                <td className="num">
+                  {k.use_count}
+                  {k.max_uses ? ` / ${k.max_uses}` : ''}
+                </td>
+                <td>
+                  {dateStr(k.created_at)}
+                  {k.created_by ? ` · ${k.created_by}` : ''}
+                </td>
+                <td>
+                  {!k.revoked && (
+                    <button className="del" onClick={() => onRevoke(k)} title="Revoke key">
+                      Revoke
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {keys.length === 0 && (
+              <tr>
+                <td colSpan={7} className="muted">
+                  No enrollment keys yet — create one above to let agents join.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
   )
 }

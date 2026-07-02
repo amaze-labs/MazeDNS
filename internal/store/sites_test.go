@@ -12,19 +12,22 @@ func TestSitesAssignment(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
+	id := map[string]string{}
 	for _, n := range []string{"node-a", "node-b", "node-c"} {
-		if err := s.CreateNode(n, "h", "p"); err != nil {
+		nid, err := s.CreateNode(n, "h"+n, "p")
+		if err != nil {
 			t.Fatal(err)
 		}
+		id[n] = nid
 	}
 	if err := s.CreateSite("office", "HQ"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.SetNodeSite("node-a", "office", "primary"); err != nil {
+	if err := s.SetNodeSite(id["node-a"], "office", "primary"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetNodeSite("node-b", "office", "backup"); err != nil {
+	if err := s.SetNodeSite(id["node-b"], "office", "backup"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,7 +46,7 @@ func TestSitesAssignment(t *testing.T) {
 	}
 
 	// Promoting node-b to primary must demote node-a (one primary per site).
-	if err := s.SetNodeSite("node-b", "office", "primary"); err != nil {
+	if err := s.SetNodeSite(id["node-b"], "office", "primary"); err != nil {
 		t.Fatal(err)
 	}
 	if _, r := roleOf("node-a"); r != "backup" {
@@ -57,7 +60,7 @@ func TestSitesAssignment(t *testing.T) {
 	if err := s.CreateSite("branch", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetNodeSite("node-c", "branch", "primary"); err != nil {
+	if err := s.SetNodeSite(id["node-c"], "branch", "primary"); err != nil {
 		t.Fatal(err)
 	}
 	if _, r := roleOf("node-b"); r != "primary" {
@@ -84,10 +87,11 @@ func TestMasterSiteSinglePrimary(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	if err := s.CreateNode("node-a", "h", "p"); err != nil {
+	idA, err := s.CreateNode("node-a", "h", "p")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetNodeSite("node-a", "office", "primary"); err != nil {
+	if err := s.SetNodeSite(idA, "office", "primary"); err != nil {
 		t.Fatal(err)
 	}
 	// Master taking primary in the same site demotes the worker primary.

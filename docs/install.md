@@ -28,13 +28,46 @@ For every setting referenced below, see **[configuration.md](configuration.md)**
 
 ---
 
+## First-boot setup wizard
+
+The control plane is configured through its **web UI**, not env vars or YAML. A
+fresh control plane starts in **setup mode**: the API is locked and it prints a
+**one-time setup token** to its log. Open the UI, paste the token, and the wizard
+walks you through creating your admin account, basic DNS defaults, and your first
+enrollment key — no `MAZEDNS_ADMIN_PASSWORD`, no config file, no restart.
+
+```bash
+docker logs mazedns-control-plane   # copy the "FIRST-BOOT SETUP" token
+# open http://<host>:8080 and paste it
+```
+
+Only **bootstrap** options stay in the environment/YAML: the database
+(`MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN`), the API bind
+(`MAZEDNS_API_ADDRESS`, `api.port`), and `MAZEDNS_LOG_LEVEL`. Everything else —
+DNS defaults, SSO, metrics export, classifier, cluster policy — is edited live under
+**Settings** and stored in the database (the single source of truth). An existing
+deployment upgrades transparently: its current env/YAML values seed the database
+once on first boot of the new version, then are ignored.
+
+Lost the admin password? Reset it directly against the DB (break-glass, not an env
+var read on every boot):
+
+```bash
+docker compose exec control-plane /control-plane reset-admin --username admin
+# prints a generated password if --password is omitted
+```
+
 ## Enrollment in one paragraph
 
-The control plane holds a shared **join token** (`MAZEDNS_JOIN_TOKEN`). An agent
-starts with the control-plane URL + the token + a node name, self-registers, and
-receives a per-node key it stores locally — it then appears in the **Cluster** tab
-automatically, with no key to copy. Set `MAZEDNS_REQUIRE_APPROVAL=true` on the
-control plane to hold new agents until you approve them.
+You create **enrollment keys** in the UI (Cluster → Enrollment keys), each with an
+optional expiry and maximum number of uses. An agent starts with the control-plane
+URL + an enrollment key (passed as `MAZEDNS_JOIN_TOKEN`) + a node name,
+self-registers, and receives a per-node key it stores locally and the control plane
+rotates automatically — it then appears in the **Cluster** tab automatically, with
+no key to copy. (A `MAZEDNS_JOIN_TOKEN` set on the control plane's own config is
+deprecated but still honored: it's imported once as a never-expiring enrollment
+key.) Toggle **require approval** in the setup wizard or under Settings → Access to
+hold new agents until you approve them.
 
 ---
 
@@ -47,15 +80,17 @@ the published images and runs a control plane plus one DNS agent.
 
 ```bash
 curl -O https://raw.githubusercontent.com/IPMaze/MazeDNS/main/docker-compose.prod.yml
-
-MAZEDNS_ADMIN_PASSWORD='choose-a-strong-one' \
-MAZEDNS_JOIN_TOKEN="$(openssl rand -hex 16)" \
-  docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 That's it:
 
-- Dashboard → `http://localhost:8080` (log in as `admin` with the password above).
+- Open `http://localhost:8080`, grab the **setup token** from
+  `docker compose logs control-plane`, and complete the wizard (create your admin,
+  DNS defaults, and first enrollment key).
+- The wizard shows an agent snippet. Paste the enrollment key it gives you into the
+  agent's `MAZEDNS_JOIN_TOKEN` (or set it before `up -d` and re-run) so the bundled
+  agent joins. Create more enrollment keys anytime under Cluster → Enrollment keys.
 - DNS → the agent listens on the host's `:53` (UDP + TCP). Test it:
 
   ```bash
@@ -120,13 +155,12 @@ plane) and persists it across restarts.
 If you prefer plain `docker run`:
 
 ```bash
-# 1. Control plane — dashboard/API only, never serves DNS.
+# 1. Control plane — dashboard/API only, never serves DNS. Configure it in the
+#    browser: `docker logs mazedns-control-plane` prints a one-time setup token,
+#    then the wizard creates your admin and first enrollment key.
 docker run -d --name mazedns-control-plane \
   -p 8080:8080 -v cp-data:/data \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
-  -e MAZEDNS_ADMIN_PASSWORD=change-me \
-  -e MAZEDNS_CLUSTER_ENABLED=true \
-  -e MAZEDNS_JOIN_TOKEN=a-shared-secret \
   ghcr.io/ipmaze/mazedns-control-plane:latest
 
 # 2. DNS agent — self-enrolls with the join token, then serves DNS on :53.
@@ -137,6 +171,11 @@ docker run -d --name mazedns-agent \
   -e MAZEDNS_JOIN_TOKEN=a-shared-secret \
   -e MAZEDNS_NODE_NAME=agent-1 \
   ghcr.io/ipmaze/mazedns-dns-agent:latest
+  # MAZEDNS_NODE_NAME is only the initial display label. The control plane assigns
+  # the node an immutable UUID at first enrollment (stored on the -v agent-data
+  # volume); you can rename the node later in the UI without re-identifying it.
+  # Keep the volume: it holds the node's identity + key, so restarts/renames map
+  # back to the SAME node instead of enrolling a duplicate.
   # Agent can't resolve the control plane's hostname? Pin its IP (DNS bypassed,
   # TLS still verifies the URL host):  -e MAZEDNS_CP_IP=10.0.0.5
   # Real client IPs on Linux: use --network host instead of the -p mappings.
@@ -190,14 +229,13 @@ spec:
       containers:
         - name: control-plane
           image: ghcr.io/ipmaze/mazedns-control-plane:latest
+          # Configured via the first-boot web wizard (setup token in the pod log);
+          # only bootstrap values live here. Recover a lost admin with
+          # `kubectl exec deploy/mazedns-control-plane -- /control-plane reset-admin`.
           env:
             - { name: MAZEDNS_API_ADDRESS, value: "0.0.0.0" }
             - { name: MAZEDNS_DB_PATH, value: "/data/mazedns.db" }
             - { name: MAZEDNS_CLUSTER_ENABLED, value: "true" }
-            - name: MAZEDNS_ADMIN_PASSWORD
-              valueFrom: { secretKeyRef: { name: mazedns-secrets, key: admin-password } }
-            - name: MAZEDNS_JOIN_TOKEN
-              valueFrom: { secretKeyRef: { name: mazedns-secrets, key: join-token } }
           ports: [{ containerPort: 8080 }]
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 5 }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
@@ -219,8 +257,11 @@ spec:
 
 Agents connect back to `control-plane:8080` inside the cluster and serve DNS to
 clients. A **DaemonSet** (one agent per node) is a common fit; a Deployment behind a
-`LoadBalancer` Service also works. Each pod keeps a small local database — an agent
-that loses it simply re-enrolls with the join token, so `emptyDir` is fine.
+`LoadBalancer` Service also works. Each pod keeps a small local database holding the
+node's identity + key — an agent that loses it re-enrolls with its enrollment key
+and comes back as a *new* node (its old row is orphaned). `emptyDir` is fine if the
+enrollment key is unlimited-use; to keep a stable identity across restarts, mount a
+`PersistentVolumeClaim` for the agent's data directory instead.
 
 ```yaml
 apiVersion: apps/v1

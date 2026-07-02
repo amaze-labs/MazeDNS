@@ -35,6 +35,13 @@ var version = "dev"
 // key issued by the control plane at enrollment.
 const nodeKeyMeta = "node_key"
 
+// nodeIDMeta is the app_meta key under which the agent persists its immutable node
+// id (a server-generated UUID). It is returned at enrollment and, for agents
+// upgraded from a pre-UUID build, learned from the next config snapshot. The agent
+// presents it on re-enrollment so a hostname change or key rejection re-attaches to
+// the SAME node. It is never user-configurable — see docs/configuration.md.
+const nodeIDMeta = "node_id"
+
 // cpIPMeta is the app_meta key under which the agent persists the control plane's
 // advertised address, learned at enrollment. Once known it pins the CP's fixed IP
 // so the node keeps reaching the control plane even if DNS/hostname later breaks.
@@ -226,11 +233,20 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 	// the control plane advertises its own address and no explicit master_ip was
 	// configured, it is persisted so the node keeps a fixed CP IP across restarts.
 	reenroll := func(ctx context.Context) (string, error) {
-		r, err := cluster.Enroll(ctx, client, cpURL, name, cfg.Cluster.JoinToken)
+		// Present our current identity so the control plane re-attaches to the SAME
+		// node: it rotates the existing node's key only when the presented key proves
+		// ownership of the persisted id. Both are empty on the very first enrollment,
+		// which creates a new node.
+		curID, _ := st.GetMeta(nodeIDMeta)
+		curKey, _ := st.GetMeta(nodeKeyMeta)
+		r, err := cluster.Enroll(ctx, client, cpURL, name, cfg.Cluster.JoinToken, curID, curKey)
 		if err != nil {
 			return "", err
 		}
 		_ = st.SetMeta(nodeKeyMeta, r.Key)
+		if r.ID != "" {
+			_ = st.SetMeta(nodeIDMeta, r.ID)
+		}
 		if r.CPAddress != "" && cfg.Cluster.MasterIP == "" {
 			_ = st.SetMeta(cpIPMeta, r.CPAddress)
 			slog.Info("learned control-plane address at enrollment", "cp_address", r.CPAddress)
@@ -267,6 +283,14 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 	if cfg.Cluster.JoinToken != "" {
 		ag.SetReenroll(reenroll)
 	}
+	// Learn+persist our node id from the config snapshot when we don't have one yet
+	// (upgraded from a pre-UUID build with only a key). Transparent — no operator
+	// action; it lets a later re-enroll prove ownership of this node.
+	curID, _ := st.GetMeta(nodeIDMeta)
+	ag.SetNodeID(curID, func(id string) { _ = st.SetMeta(nodeIDMeta, id) })
+	// Persist a control-plane-rotated node key so it survives restarts (the CP keeps
+	// the old key valid for a grace window, so this is safe even if we crash here).
+	ag.SetSaveNodeKey(func(k string) { _ = st.SetMeta(nodeKeyMeta, k) })
 	go ag.Run(ctx)
 }
 

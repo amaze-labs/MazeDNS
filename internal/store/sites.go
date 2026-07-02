@@ -87,9 +87,10 @@ func (s *Store) DeleteSite(name string) error {
 	return nil
 }
 
-// SetNodeSite assigns a worker node to a site with a role. Setting a node primary
-// demotes any existing primary in that site to backup (one primary per site).
-func (s *Store) SetNodeSite(name, site, role string) error {
+// SetNodeSite assigns a worker node (by immutable id) to a site with a role.
+// Setting a node primary demotes any existing primary in that site to backup (one
+// primary per site).
+func (s *Store) SetNodeSite(id, site, role string) error {
 	site = strings.TrimSpace(site)
 	role = normalizeRole(role)
 	if site == "" {
@@ -100,17 +101,17 @@ func (s *Store) SetNodeSite(name, site, role string) error {
 		return err
 	}
 	if site != "" && role == RolePrimary {
-		if _, err := tx.Exec(`UPDATE nodes SET role=? WHERE site=? AND role=? AND name<>?`,
-			RoleBackup, site, RolePrimary, name); err != nil {
+		if _, err := tx.Exec(`UPDATE nodes SET role=? WHERE site=? AND role=? AND id<>?`,
+			RoleBackup, site, RolePrimary, id); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 		// If the master currently holds primary in this site, demote it too.
-		if s.MasterSite() == site && s.MasterRole() == RolePrimary && name != "master" {
+		if s.MasterSite() == site && s.MasterRole() == RolePrimary {
 			_ = s.SetMasterRoleRaw(RoleBackup)
 		}
 	}
-	res, err := tx.Exec(`UPDATE nodes SET site=?, role=? WHERE name=?`, site, role, name)
+	res, err := tx.Exec(`UPDATE nodes SET site=?, role=? WHERE id=?`, site, role, id)
 	if err != nil {
 		_ = tx.Rollback()
 		return err

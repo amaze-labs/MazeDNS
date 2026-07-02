@@ -104,7 +104,9 @@ classifier:                    # optional LLM domain classification (master only
   abuseipdb_api_key: ""
 
 cluster:                       # control-plane <-> dns-agent config replication
-  enabled: false               # agent: start the sync agent (auto-enabled when cp_url + join_token/node_key are set)
+  # Clustering is automatic — there is no enable flag. The control plane always
+  # serves cluster endpoints; an agent joins whenever cp_url + a credential
+  # (join_token/node_key) are set, otherwise it runs standalone.
   # --- control-plane side ---
   # Enrollment keys are UI-managed (Cluster → Enrollment keys), with optional
   # expiry and max-uses. Agents present a key as MAZEDNS_JOIN_TOKEN.

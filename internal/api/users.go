@@ -10,8 +10,6 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
-const minPasswordLen = 8
-
 // listUsers returns all accounts (admin only). Password hashes are never serialized.
 func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	users, err := s.store.ListUsers()
@@ -41,8 +39,8 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username required")
 		return
 	}
-	if len(in.Password) < minPasswordLen {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if msg := passwordStrengthError(in.Password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	role := in.Role
@@ -119,8 +117,8 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if len(in.Password) < minPasswordLen {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if msg := passwordStrengthError(in.Password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	target, err := s.store.GetUserByID(id)
@@ -209,8 +207,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "current password is incorrect")
 		return
 	}
-	if len(in.NewPassword) < minPasswordLen {
-		writeError(w, http.StatusBadRequest, "new password must be at least 8 characters")
+	if msg := passwordStrengthError(in.NewPassword); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	hash, err := auth.HashPassword(in.NewPassword)

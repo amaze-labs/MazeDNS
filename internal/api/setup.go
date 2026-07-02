@@ -42,26 +42,37 @@ func (s *Server) EnableSetupMode() {
 func (s *Server) setupActive() bool { return !s.setupDone.Load() }
 
 // setupGate wraps the mux so that, while setup is pending, only the wizard,
-// static assets, and health/metrics are reachable; every other API route returns
-// 403 {"setup_required":true} so the SPA redirects to the wizard.
+// static assets, and health are reachable; every other route (including /metrics,
+// which could otherwise leak internal state before an admin exists) returns
+// 403 {"setup_required":true} so the SPA redirects to the wizard. /healthz stays
+// public always.
 func (s *Server) setupGate(next http.Handler) http.Handler {
+	block := func(w http.ResponseWriter) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error":          "setup required",
+			"setup_required": true,
+		})
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.setupActive() {
 			next.ServeHTTP(w, r)
 			return
 		}
 		p := r.URL.Path
+		// /metrics is not exempt during setup: block it explicitly (it would
+		// otherwise slip through the static-asset catch-all below).
+		if p == "/metrics" {
+			block(w)
+			return
+		}
 		switch {
-		case p == "/healthz" || p == "/metrics",
+		case p == "/healthz",
 			strings.HasPrefix(p, "/api/setup"),
 			p == "/api/auth/info",          // public; carries setup_required so the SPA knows
 			!strings.HasPrefix(p, "/api/"): // static assets + SPA shell
 			next.ServeHTTP(w, r)
 		default:
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error":          "setup required",
-				"setup_required": true,
-			})
+			block(w)
 		}
 	})
 }
@@ -88,6 +99,40 @@ func (l *setupLimiter) allow(limit int, window time.Duration) bool {
 	}
 	l.count++
 	return l.count <= limit
+}
+
+// keyedLimiter is a fixed-window rate limiter keyed by an arbitrary string (e.g.
+// client IP or username), used to throttle login attempts independently per key.
+type keyedLimiter struct {
+	mu      sync.Mutex
+	windows map[string]*setupLimiter
+}
+
+func newKeyedLimiter() *keyedLimiter {
+	return &keyedLimiter{windows: make(map[string]*setupLimiter)}
+}
+
+// allow records an attempt for key and reports whether it is within limit for the
+// current window. A limit of 0 disables throttling. It opportunistically drops
+// windows that have fully elapsed so the map can't grow without bound.
+func (k *keyedLimiter) allow(key string, limit int, window time.Duration) bool {
+	if limit <= 0 {
+		return true
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	now := time.Now()
+	for kk, w := range k.windows {
+		if now.Sub(w.windowAt) > window {
+			delete(k.windows, kk)
+		}
+	}
+	w := k.windows[key]
+	if w == nil {
+		w = &setupLimiter{}
+		k.windows[key] = w
+	}
+	return w.allow(limit, window)
 }
 
 // setupComplete finishes first-boot setup, atomically closing it. The operator
@@ -214,7 +259,7 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 	if params.AdminUsername != "" {
 		if u, _ := s.store.GetUserByUsername(username); u != nil {
 			if token, _, serr := s.auth.StartSession(u.ID, u.Username, u.Role); serr == nil {
-				s.auth.SetCookie(w, token)
+				s.auth.SetCookie(w, r, token)
 				authenticated = true
 			}
 		}
@@ -234,23 +279,7 @@ func authMode(sso bool) string {
 	return "local"
 }
 
-// passwordStrengthError returns a validation message, or "" if the password is
-// acceptable (>= 10 chars with some variety).
-func passwordStrengthError(pw string) string {
-	if len(pw) < 10 {
-		return "password must be at least 10 characters"
-	}
-	var hasLetter, hasOther bool
-	for _, r := range pw {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
-			hasLetter = true
-		default:
-			hasOther = true
-		}
-	}
-	if !hasLetter || !hasOther {
-		return "password must mix letters with digits or symbols"
-	}
-	return ""
-}
+// passwordStrengthError is the single password policy, shared across every
+// password-setting path (setup, user management, account, reset-admin CLI). It
+// lives in the auth package so cmd/ can call it too.
+func passwordStrengthError(pw string) string { return auth.PasswordStrengthError(pw) }

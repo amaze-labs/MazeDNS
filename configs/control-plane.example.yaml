@@ -41,8 +41,8 @@ auth:
     auto_login: false              # true = redirect straight to the SSO provider
 
 cluster:                       # control-plane side of config replication
-  enabled: true                # (bootstrap) serve the cluster endpoints
-  # Enrollment keys are managed in the UI (Cluster → Enrollment keys): create,
+  # The control plane always serves cluster endpoints — clustering has no enable
+  # flag. Enrollment keys are managed in the UI (Cluster → Enrollment keys): create,
   # list, and revoke keys with an optional expiry and max-uses. Agents present a
   # key as MAZEDNS_JOIN_TOKEN to join. The policy fields below are seed-only —
   # edit them under Settings → Access → Cluster policy.

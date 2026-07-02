@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,6 +83,9 @@ func (m *Manager) OIDC() *OIDCProvider {
 func (m *Manager) Login(username, password string) (string, *SessionUser, error) {
 	u, err := m.store.GetUserByUsername(username)
 	if err != nil || u == nil || u.PasswordHash == "" {
+		// Verify against a static hash so a missing/passwordless account takes the
+		// same time as a real one (no username-enumeration timing oracle).
+		VerifyDummy(password)
 		return "", nil, ErrInvalidCredentials
 	}
 	ok, err := VerifyPassword(u.PasswordHash, password)
@@ -124,25 +128,41 @@ func (m *Manager) Logout(r *http.Request) {
 	}
 }
 
-// SetCookie writes the session cookie.
-func (m *Manager) SetCookie(w http.ResponseWriter, token string) {
+// RequestIsHTTPS reports whether the request arrived over TLS, either directly
+// (r.TLS) or via a terminating proxy (X-Forwarded-Proto: https). Used to set the
+// Secure flag on cookies only when the connection is actually encrypted, so dev
+// over plain http still works.
+func RequestIsHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// SetCookie writes the session cookie, marking it Secure when the request is HTTPS.
+func (m *Manager) SetCookie(w http.ResponseWriter, r *http.Request, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   RequestIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(m.sessionTTL().Seconds()),
 	})
 }
 
 // ClearCookie removes the session cookie.
-func (m *Manager) ClearCookie(w http.ResponseWriter) {
+func (m *Manager) ClearCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   RequestIsHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

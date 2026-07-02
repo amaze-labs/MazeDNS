@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -56,6 +57,12 @@ type Server struct {
 	requireApproval     bool          // hold self-enrolled agents until an admin approves
 	keyMaxAge           time.Duration // rotate a node's key once it exceeds this age (0 = disabled)
 	keyGrace            time.Duration // overlap window a rotated-out node key stays valid
+	// Login rate limiting (finding #2). loginRate keys fixed windows by IP and by
+	// username; the limits are live-applied from CPSettings via applyCPSettings.
+	loginRate     *keyedLimiter
+	loginLimitMu  sync.RWMutex
+	loginAttempts int
+	loginWindow   time.Duration
 	// First-boot setup mode (see setup.go). setupDone defaults true (no gating); main
 	// calls EnableSetupMode to open the wizard on a fresh, admin-less control plane.
 	setupDone atomic.Bool
@@ -109,9 +116,13 @@ func (s *Server) SetEnricher(e *netbird.Enricher) { s.enricher = e }
 func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, refresher *lists.Refresher, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
 	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker}
 	s.setupDone.Store(true) // no gating unless main calls EnableSetupMode
+	// Login rate limiting seeded to the default; live-updated via applyCPSettings.
+	s.loginRate = newKeyedLimiter()
+	s.loginAttempts = defaultLoginRateAttempts
+	s.loginWindow = defaultLoginRateWindow
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
-	mux.Handle("GET /metrics", m.Handler())
+	mux.Handle("GET /metrics", s.metricsAuth(m.Handler()))
 
 	if !worker {
 		// First-boot setup wizard (guarded; see setup.go).
@@ -184,6 +195,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/settings/cp", s.requireRole(roleAdmin, s.getCPSettings))
 		mux.HandleFunc("PUT /api/settings/cp", s.requireRole(roleAdmin, s.putCPSettings))
 		mux.HandleFunc("GET /api/settings/audit", s.requireRole(roleAdmin, s.getSettingsAudit))
+		mux.HandleFunc("POST /api/settings/metrics-token", s.requireRole(roleAdmin, s.generateMetricsToken))
+		mux.HandleFunc("DELETE /api/settings/metrics-token", s.requireRole(roleAdmin, s.clearMetricsToken))
 		mux.HandleFunc("GET /api/metrics/export", s.requireRole(roleReadonly, s.getMetricsExport))
 		mux.HandleFunc("PUT /api/metrics/export", s.requireRole(roleAdmin, s.putMetricsExport))
 		mux.HandleFunc("GET /api/logs/export", s.requireRole(roleReadonly, s.getLogsExport))
@@ -264,6 +277,24 @@ func (s *Server) requireRole(minRole string, h http.HandlerFunc) http.HandlerFun
 func hashKey(key string) string {
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
+}
+
+// validAdvertiseAddr reports whether s is a bare IP or a host:port whose host is an
+// IP. The advertised address is displayed and written into generated client config,
+// so a node may only report an IP-literal address — never an arbitrary hostname or
+// injected string.
+func validAdvertiseAddr(s string) bool {
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" {
+		return false
+	}
+	if _, perr := strconv.Atoi(port); perr != nil {
+		return false
+	}
+	return net.ParseIP(host) != nil
 }
 
 // clusterEnroll lets an agent self-register using a UI-managed enrollment key. On
@@ -566,8 +597,23 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	// Prefer the node's self-reported site-reachable address (MAZEDNS_ADVERTISE_ADDR):
 	// the TCP RemoteAddr is often a docker-internal IP that doesn't exist on the LAN.
+	// It is attacker-controllable (a node key holder sets it) and is displayed and
+	// fed into generated client config, so validate it as an IP (or host:port with an
+	// IP) and ignore anything malformed rather than trusting it verbatim.
 	if adv := strings.TrimSpace(r.Header.Get("X-MazeDNS-Advertise-Addr")); adv != "" {
-		addr = adv
+		if validAdvertiseAddr(adv) {
+			addr = adv
+		} else {
+			slog.Warn("ignoring invalid advertised address", "node", node.ID, "name", node.Name, "value", adv)
+		}
+	}
+	// Audit when a node's advertised (displayed) address changes value — it feeds the
+	// generated client config, so a change is security-relevant.
+	if node.Address != "" && addr != node.Address {
+		_ = s.store.AppendAudit(store.AuditEntry{
+			User: "node:" + node.Name, Action: "cluster.node.address",
+			Detail: fmt.Sprintf("node %s advertised address changed %s -> %s", node.Name, node.Address, addr),
+		})
 	}
 	var st store.NodeStats
 	if raw := r.Header.Get("X-MazeDNS-Stats"); raw != "" {
@@ -902,19 +948,31 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// Rate limit per source IP and per username (fixed window; limits from the GUI).
+	if attempts, window := s.loginLimits(); attempts > 0 {
+		ip := clientIP(r)
+		uname := strings.ToLower(strings.TrimSpace(in.Username))
+		if !s.loginRate.allow("ip:"+ip, attempts, window) || !s.loginRate.allow("user:"+uname, attempts, window) {
+			slog.Warn("login rate limited", "remote", ip, "user", in.Username)
+			w.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
+			writeError(w, http.StatusTooManyRequests, "too many login attempts; try again shortly")
+			return
+		}
+	}
 	token, user, err := s.auth.Login(in.Username, in.Password)
 	if err != nil {
+		slog.Warn("login failed", "remote", clientIP(r), "user", in.Username)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	s.auth.SetCookie(w, token)
+	s.auth.SetCookie(w, r, token)
 	writeJSON(w, http.StatusOK, user)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.authEnabled {
 		s.auth.Logout(r)
-		s.auth.ClearCookie(w)
+		s.auth.ClearCookie(w, r)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -953,7 +1011,7 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: oidcStateCookie, Value: state, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: 300,
+		Secure: auth.RequestIsHTTPS(r), SameSite: http.SameSiteLaxMode, MaxAge: 300,
 	})
 	// Log the exact redirect_uri sent — it must match the provider's registration
 	// character-for-character (quoting it in the env is a common cause of mismatch).
@@ -987,7 +1045,7 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session error")
 		return
 	}
-	s.auth.SetCookie(w, token)
+	s.auth.SetCookie(w, r, token)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 

@@ -199,7 +199,10 @@ docker run -d --name mazedns-agent \
 ```
 
 `MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/metrics` port reachable
-from outside the container (it defaults to loopback).
+from outside the container (it defaults to loopback). The control plane's `/metrics`
+can be locked behind a bearer token (**Settings → Integrations → Metrics scrape
+token**); see [configuration.md](configuration.md#scraping-metrics-prometheus) for
+the Prometheus scrape job.
 
 ---
 
@@ -250,10 +253,10 @@ spec:
           # keep it off the public internet until setup completes). Only bootstrap
           # values live here. Recover a lost admin with
           # `kubectl exec deploy/mazedns-control-plane -- /control-plane reset-admin`.
+          # The control plane always serves cluster endpoints — no enable flag.
           env:
             - { name: MAZEDNS_API_ADDRESS, value: "0.0.0.0" }
             - { name: MAZEDNS_DB_PATH, value: "/data/mazedns.db" }
-            - { name: MAZEDNS_CLUSTER_ENABLED, value: "true" }
           ports: [{ containerPort: 8080 }]
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 5 }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }

@@ -80,7 +80,8 @@ api:
   port: 8080
 
 cluster:                       # agent side of config replication
-  enabled: true                # auto-enabled anyway once cp_url + join_token/node_key are set
+  # No enable flag — the agent joins automatically once cp_url + a credential
+  # (join_token/node_key) are set; without cp_url it runs standalone.
   cp_url: ""                   # control-plane base URL, e.g. https://dns.example.com (or MAZEDNS_CP_URL)
   join_token: ""               # enrollment key to self-enroll (create one in the control-plane UI: Cluster → Enrollment keys).
                                # The control plane issues a per-node key it then rotates automatically. (or MAZEDNS_JOIN_TOKEN)

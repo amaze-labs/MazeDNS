@@ -46,6 +46,17 @@ type CPSettings struct {
 	KeyMaxAgeSec    int64  `json:"key_max_age_sec"` // 0 = default (server applies 30d)
 	KeyGraceSec     int64  `json:"key_grace_sec"`   // 0 = default (server applies 15m)
 	AdvertiseAddr   string `json:"advertise_addr"`  // mirrored to master_advertise_addr for enrollment
+	// Login rate limiting (fixed window, per-IP and per-username). 0 attempts
+	// disables it. Seeded to 10 attempts / 60s.
+	LoginRateAttempts  int `json:"login_rate_attempts"`
+	LoginRateWindowSec int `json:"login_rate_window_sec"`
+	// Metrics scrape token: when set, GET /metrics on the control plane requires
+	// "Authorization: Bearer <token>". Stored hashed (sha256) with a display prefix;
+	// the raw token is shown once at generation and never returned. Empty = /metrics
+	// is open (current behavior). Managed via the dedicated generate/clear endpoints,
+	// not the general settings PUT.
+	MetricsScrapeTokenHash   string `json:"metrics_scrape_token_hash"`
+	MetricsScrapeTokenPrefix string `json:"metrics_scrape_token_prefix"`
 	// Misc.
 	QueryLog bool `json:"query_log"` // query-log toggle (agent-facing; documented)
 }

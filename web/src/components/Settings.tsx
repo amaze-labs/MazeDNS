@@ -126,6 +126,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // Control-plane runtime settings (SSO / session / cluster policy). Own endpoint.
   const [cp, setCp] = useState<CPSettings | null>(null)
   const [oidcHasSecret, setOidcHasSecret] = useState(false)
+  const [hasMetricsToken, setHasMetricsToken] = useState(false)
+  const [newScrapeToken, setNewScrapeToken] = useState('')
   const [cpSaving, setCpSaving] = useState(false)
   const [cpMsg, setCpMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -141,11 +143,32 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       const r = await api.saveCPSettings(cp)
       setCp(r.settings)
       setOidcHasSecret(r.oidc_has_client_secret)
+      setHasMetricsToken(r.has_metrics_scrape_token)
       setCpMsg({ ok: true, text: 'Access settings saved and applied.' })
     } catch (e: any) {
       setCpMsg({ ok: false, text: e.message })
     } finally {
       setCpSaving(false)
+    }
+  }
+
+  const genMetricsToken = async () => {
+    try {
+      const r = await api.generateMetricsToken()
+      setNewScrapeToken(r.token)
+      setHasMetricsToken(true)
+    } catch (e: any) {
+      setCpMsg({ ok: false, text: e.message })
+    }
+  }
+
+  const clearMetricsToken = async () => {
+    try {
+      await api.clearMetricsToken()
+      setNewScrapeToken('')
+      setHasMetricsToken(false)
+    } catch (e: any) {
+      setCpMsg({ ok: false, text: e.message })
     }
   }
 
@@ -179,6 +202,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       .then((r) => {
         setCp(r.settings)
         setOidcHasSecret(r.oidc_has_client_secret)
+        setHasMetricsToken(r.has_metrics_scrape_token)
       })
       .catch(() => setCp(null))
     api
@@ -462,7 +486,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </details>
 
           <details className="settings-card" open>
-            <summary>Sessions</summary>
+            <summary>Sessions &amp; login</summary>
             <label>
               Session lifetime (hours)
               <input
@@ -472,6 +496,29 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                 onChange={(e) => setCp({ ...cp, session_ttl_sec: Math.max(1, Number(e.target.value)) * 3600 })}
               />
             </label>
+            <div className="form-grid">
+              <label>
+                Login attempts per window (0 = no limit)
+                <input
+                  type="number"
+                  min={0}
+                  value={cp.login_rate_attempts}
+                  onChange={(e) => setCp({ ...cp, login_rate_attempts: Math.max(0, Number(e.target.value)) })}
+                />
+              </label>
+              <label>
+                Login window (seconds)
+                <input
+                  type="number"
+                  min={1}
+                  value={cp.login_rate_window_sec}
+                  onChange={(e) => setCp({ ...cp, login_rate_window_sec: Math.max(1, Number(e.target.value)) })}
+                />
+              </label>
+            </div>
+            <p className="muted small">
+              Failed and successful login attempts are throttled per source IP and per username. Applied live.
+            </p>
           </details>
 
           <details className="settings-card" open>
@@ -1024,6 +1071,41 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </button>
           </div>
           {nbMsg && <div className={nbMsg.ok ? 'ok-msg' : 'error'}>{nbMsg.text}</div>}
+        </details>
+      )}
+
+      {cp && (
+        <details className="settings-card" open>
+          <summary>Metrics scrape token (/metrics)</summary>
+          <p className="muted">
+            When set, the control plane's <code>/metrics</code> endpoint requires{' '}
+            <code>Authorization: Bearer &lt;token&gt;</code>. When unset, <code>/metrics</code> is open. The token is shown
+            once on generation and stored hashed.
+          </p>
+          {newScrapeToken ? (
+            <div className="ok-msg">
+              <strong>New scrape token — copy it now, it won't be shown again:</strong>
+              <pre className="keybox">{newScrapeToken}</pre>
+              <p className="muted small">
+                Prometheus: <code>authorization: {'{'} type: Bearer, credentials: &lt;token&gt; {'}'}</code> under the
+                scrape job.
+              </p>
+            </div>
+          ) : (
+            <p className="muted small">
+              Status: {hasMetricsToken ? `set (prefix ${cp.metrics_scrape_token_prefix}…)` : 'not set — /metrics is open'}
+            </p>
+          )}
+          <div className="setup-actions">
+            <button className="btn" onClick={genMetricsToken}>
+              {hasMetricsToken ? 'Regenerate token' : 'Generate token'}
+            </button>
+            {hasMetricsToken && (
+              <button className="btn ghost" onClick={clearMetricsToken}>
+                Clear (reopen /metrics)
+              </button>
+            )}
+          </div>
         </details>
       )}
 

@@ -133,6 +133,12 @@ export interface CPSettings {
   key_max_age_sec: number
   key_grace_sec: number
   advertise_addr: string
+  login_rate_attempts: number
+  login_rate_window_sec: number
+  // Metrics scrape token: hash is never returned (write-only via generate/clear
+  // endpoints); prefix is display-safe.
+  metrics_scrape_token_hash: string
+  metrics_scrape_token_prefix: string
   query_log: boolean
 }
 export interface AuditEntry {
@@ -439,11 +445,22 @@ export const api = {
       body: JSON.stringify(body),
     }).then(j<{ username: string; role: string; authenticated: boolean }>),
   // control-plane runtime settings
-  cpSettings: () => fetch('/api/settings/cp').then(j<{ settings: CPSettings; oidc_has_client_secret: boolean }>),
+  cpSettings: () =>
+    fetch('/api/settings/cp').then(
+      j<{ settings: CPSettings; oidc_has_client_secret: boolean; has_metrics_scrape_token: boolean }>,
+    ),
   saveCPSettings: (s: CPSettings) =>
     fetch('/api/settings/cp', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(
-      j<{ settings: CPSettings; oidc_has_client_secret: boolean }>,
+      j<{ settings: CPSettings; oidc_has_client_secret: boolean; has_metrics_scrape_token: boolean }>,
     ),
+  generateMetricsToken: () =>
+    fetch('/api/settings/metrics-token', { method: 'POST', headers: jsonHeaders }).then(
+      j<{ token: string; prefix: string }>,
+    ),
+  clearMetricsToken: () =>
+    fetch('/api/settings/metrics-token', { method: 'DELETE' }).then((r) => {
+      if (!r.ok) throw new Error('failed to clear token')
+    }),
   settingsAudit: () => fetch('/api/settings/audit').then(j<AuditEntry[]>),
   // auth
   authInfo: () => fetch('/api/auth/info').then(j<AuthInfo>),

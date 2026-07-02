@@ -53,6 +53,11 @@ type Config struct {
 	Database   Database    `yaml:"database"`
 	Log        Log         `yaml:"log"`
 	Metrics    Metrics     `yaml:"metrics"`
+
+	// Deprecations holds one-line notices for removed/ignored config keys and env
+	// vars encountered during Load. It is not serialized; callers log it after the
+	// logger is configured (Load runs before that).
+	Deprecations []string `yaml:"-"`
 }
 
 // Listen is the DNS listener address.
@@ -218,12 +223,13 @@ type Classifier struct {
 	AbuseIPDBAPIKey  string `yaml:"abuseipdb_api_key"`
 }
 
-// Cluster configures control-plane<->agent configuration replication. The
-// control plane serves cluster endpoints when enabled; each agent authenticates
-// with a per-node API key. Agents obtain that key automatically by self-enrolling
-// with the shared JoinToken, or it can be supplied directly via NodeKey.
+// Cluster configures control-plane<->agent configuration replication.
+// Clustering is core to MazeDNS, not an opt-in: the control plane always serves
+// cluster endpoints, and an agent joins automatically whenever a control plane is
+// configured (cp_url plus a credential). Each agent authenticates with a per-node
+// API key, obtained automatically by self-enrolling with an enrollment key
+// (JoinToken), or supplied directly via NodeKey.
 type Cluster struct {
-	Enabled bool `yaml:"enabled"`
 	// Control-plane side.
 	JoinToken       string   `yaml:"join_token"`       // DEPRECATED: enrollment keys are now UI-managed. If set, it is auto-imported once as a never-expiring DB enrollment key on boot (log warns). Prefer creating keys in the UI.
 	RequireApproval bool     `yaml:"require_approval"` // hold self-enrolled agents until an admin approves them
@@ -344,6 +350,17 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config: %w", err)
 	}
+	// cluster.enabled was removed: clustering is now automatic. yaml.Unmarshal
+	// silently drops the unknown key, so probe for it separately to warn.
+	var probe struct {
+		Cluster struct {
+			Enabled *bool `yaml:"enabled"`
+		} `yaml:"cluster"`
+	}
+	if yaml.Unmarshal(data, &probe) == nil && probe.Cluster.Enabled != nil {
+		cfg.Deprecations = append(cfg.Deprecations,
+			"config: cluster.enabled was removed and is ignored — clustering is automatic (an agent joins when cp_url and a credential are set)")
+	}
 	dir := filepath.Dir(path)
 	for i, f := range cfg.Filter.BlocklistFiles {
 		if !filepath.IsAbs(f) {
@@ -390,11 +407,9 @@ func Load(path string) (Config, error) {
 	// Agent: control-plane URL (MAZEDNS_CP_URL, or the deprecated MAZEDNS_MASTER_URL).
 	if v := firstEnv("MAZEDNS_CP_URL", "MAZEDNS_MASTER_URL"); v != "" {
 		cfg.Cluster.CPURL = v
-		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_NODE_KEY"); v != "" {
 		cfg.Cluster.NodeKey = v
-		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_NODE_NAME"); v != "" {
 		cfg.Cluster.NodeName = v
@@ -404,7 +419,6 @@ func Load(path string) (Config, error) {
 	// enrollment key (auto-imported if set via config — see cmd/control-plane).
 	if v := os.Getenv("MAZEDNS_JOIN_TOKEN"); v != "" {
 		cfg.Cluster.JoinToken = v
-		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_REQUIRE_APPROVAL"); v == "true" || v == "1" {
 		cfg.Cluster.RequireApproval = true
@@ -426,8 +440,9 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_ADVERTISE_ADDR"); v != "" {
 		cfg.Cluster.AdvertiseAddr = v
 	}
-	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
-		cfg.Cluster.Enabled = true
+	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v != "" {
+		cfg.Deprecations = append(cfg.Deprecations,
+			"env: MAZEDNS_CLUSTER_ENABLED was removed and is ignored — clustering is automatic (an agent joins when MAZEDNS_CP_URL and a credential are set)")
 	}
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENABLED"); v == "true" || v == "1" {
 		cfg.Classifier.Enabled = true

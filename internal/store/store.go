@@ -358,9 +358,24 @@ func (s *Store) migrate() error {
 	// created before the id column existed, name is still the declared PRIMARY KEY —
 	// these indexes give id and name the same UNIQUE guarantees the canonical schema
 	// declares, so all id-keyed queries behave identically on old and new DBs.
+	// Collapse duplicate OIDC accounts sharing a subject — an artifact of the old
+	// username-keyed upsert (the same IdP identity could spawn multiple rows) — so
+	// the unique subject index below can be created. Keep the newest row per subject
+	// (MAX(id)); rows with an empty subject (pathological) are left untouched.
+	// Idempotent: with no duplicates it deletes nothing.
+	if _, err := s.db.Exec(
+		`DELETE FROM users WHERE source='oidc' AND subject <> '' AND id NOT IN (
+			SELECT MAX(id) FROM users WHERE source='oidc' AND subject <> '' GROUP BY subject)`); err != nil {
+		return fmt.Errorf("migrate dedupe oidc users: %w", err)
+	}
 	for _, idx := range []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_id ON nodes(id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name)`,
+		// SSO identities are keyed on the stable subject, not the mutable username.
+		// A partial unique index enforces one account per (non-empty) OIDC subject
+		// while leaving local users (source='local', subject='') unconstrained.
+		// Portable across SQLite and Postgres.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(subject) WHERE source='oidc' AND subject <> ''`,
 	} {
 		if _, err := s.db.Exec(idx); err != nil {
 			return fmt.Errorf("migrate node index: %w", err)

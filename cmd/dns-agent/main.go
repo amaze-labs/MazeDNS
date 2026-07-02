@@ -59,6 +59,9 @@ func main() {
 		os.Exit(1)
 	}
 	slog.SetDefault(boot.NewLogger(cfg.Log.Level))
+	for _, d := range cfg.Deprecations {
+		slog.Warn(d)
+	}
 	slog.Info("MazeDNS dns-agent starting", "version", version)
 
 	st, err := boot.OpenStore(cfg)
@@ -213,7 +216,7 @@ func main() {
 // no-ops (serving standalone DNS) when no control plane is configured.
 func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error) {
 	cpURL := cfg.Cluster.ControlPlaneURL()
-	if !cfg.Cluster.Enabled || cpURL == "" {
+	if cpURL == "" {
 		slog.Info("standalone mode: no control plane configured (set MAZEDNS_CP_URL)")
 		return
 	}

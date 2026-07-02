@@ -286,21 +286,6 @@ func (s *Store) SetNodeApproved(id string, approved bool) error {
 	return nil
 }
 
-// EnsureNode pre-provisions a node with a fixed key (dev/automation bootstrap). If
-// a node with that name already exists its key is updated in place (identity/stats
-// preserved); otherwise a new node with a fresh id is created. Idempotent across
-// restarts.
-func (s *Store) EnsureNode(name, keyHash, keyPrefix string) error {
-	existing, err := s.NodeByName(name)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return s.UpdateNodeKey(existing.ID, keyHash, keyPrefix)
-	}
-	return s.CreateNodeWithID(uuid.NewString(), name, keyHash, keyPrefix, true)
-}
-
 // RenameNode changes a node's display label without changing its identity. The new
 // name propagates to historical rows tagged by name (query_log + rollups) in the
 // same transaction so a rename never splits a node's history. name must be unique.

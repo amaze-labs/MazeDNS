@@ -6,10 +6,10 @@ the file. This page is the single source of truth for every variable; other docs
 link here rather than repeat the tables.
 
 The **control plane** is configured through its web UI: a fresh install runs a
-[first-boot setup wizard](install.md#first-boot-setup-wizard) (guarded by a one-time
-token printed to the log), and everything after is edited under **Settings**. The
-**DNS agent** keeps env-var configuration — that's the right fit for a stateless
-resolver.
+[first-boot setup wizard](install.md#first-boot-setup-wizard) (trust-on-first-use —
+complete it before exposing the port), and everything after is edited under
+**Settings**. The **DNS agent** keeps env-var configuration — that's the right fit
+for a stateless resolver.
 
 Two classes of settings behave differently:
 
@@ -29,6 +29,23 @@ use the break-glass CLI (not read on every boot):
 ```bash
 control-plane reset-admin --username admin [--password …]
 ```
+
+### Security & upgrade notes
+
+- **Sessions are stored hashed.** On upgrade, existing sessions no longer resolve —
+  everyone is logged out once and must sign in again. Expected, one-time.
+- **Login is rate-limited** per source IP and per username (default 10 attempts /
+  60s; `0` disables). Tune under **Settings → Access & SSO**; applied live.
+- **Password policy:** at least 10 characters mixing letters with digits or symbols,
+  enforced on every password path (setup, user create/reset, self-change,
+  `reset-admin`).
+- **Session cookies are `Secure`** when the request is HTTPS (`r.TLS` or
+  `X-Forwarded-Proto: https`) — put the control plane behind TLS in production.
+- **SSO accounts are keyed by the IdP `subject`**, not the username, so an OIDC user
+  whose `preferred_username` matches an existing (e.g. local admin) account gets a
+  separate, suffixed account instead of taking it over.
+- **`/metrics`** can require a bearer token — see
+  [Scraping /metrics](#scraping-metrics-prometheus).
 
 The variable that applies to a component depends on which image it is:
 
@@ -52,8 +69,20 @@ The variable that applies to a component depends on which image it is:
 | `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | HTTP bind address (set `0.0.0.0` in containers). |
 | `MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN` | No | sqlite `mazedns.db` | Datastore location (see [Shared](#shared-both-components)). |
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`/`info`/`warn`/`error`. |
-| `MAZEDNS_CLUSTER_ENABLED` | For clustering | `false` | Serve the cluster endpoints so agents can enroll and replicate. |
-| `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` | No | *(empty)* | Pre-provision node keys without a token, as `name1=key1,name2=key2` (automation/dev). |
+
+Clustering has no enable flag: the control plane **always** serves the cluster
+endpoints. To let agents join, create an **enrollment key** in the UI (Cluster →
+Enrollment keys) or via the admin API and pass it to each agent as
+`MAZEDNS_JOIN_TOKEN`. The removed `MAZEDNS_CLUSTER_ENABLED` and
+`MAZEDNS_CLUSTER_BOOTSTRAP_NODES` env vars are ignored (a startup warning is logged
+if still set) — pre-provisioning nodes with fixed keys is no longer supported
+because it put node secrets in the environment and bypassed enrollment keys, the
+approval flow, and the server-assigned-UUID identity model.
+
+To **pause replication** for a node (previously `cp_url` + `enabled: false`), either
+unset `MAZEDNS_CP_URL`/`cp_url` so the agent runs standalone, or — to keep it
+enrolled — put the node into **maintenance/drain** from the control-plane UI
+(Cluster → the node), which stops it serving without de-enrolling it.
 
 **Runtime** (seed-only — configured in the UI after first boot). The variables below
 still work, but **only to seed the database on first boot**; afterwards they are
@@ -78,10 +107,10 @@ never the secret values), viewable at `GET /api/settings/audit`.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `MAZEDNS_CP_URL` | For clustering | *(empty)* | Control-plane base URL, e.g. `https://cp.example.com:8080`. Setting it auto-enables cluster mode. (Deprecated alias: `MAZEDNS_MASTER_URL`.) With no URL the agent runs **standalone** — resolving and filtering from its own local config. |
+| `MAZEDNS_CP_URL` | For clustering | *(empty)* | Control-plane base URL, e.g. `https://cp.example.com:8080`. Setting it (with a credential) makes the agent join the cluster — there is no separate enable flag. (Deprecated alias: `MAZEDNS_MASTER_URL`.) With no URL the agent runs **standalone** — resolving and filtering from its own local config. |
 | `MAZEDNS_CP_IP` | Conditional | *(auto)* | Pin the control plane's IP so the agent reaches it without DNS (TLS still verifies the URL host). Needed when the agent can't resolve the CP's FQDN — e.g. it's its network's only DNS. Left empty, the agent auto-learns and persists the address the CP advertises at enrollment. (Deprecated alias: `MAZEDNS_MASTER_IP`.) |
 | `MAZEDNS_NODE_NAME` | No | *(hostname)* | **Initial** display label the agent enrolls under. A node's identity is an immutable UUID the control plane assigns at first enrollment and the agent stores locally (alongside its node key); this name is just an editable label. You can rename a node in the UI, and changing `MAZEDNS_NODE_NAME` after enrollment does **not** create a new node or change its identity. The UUID is never user-configurable. |
-| `MAZEDNS_NODE_KEY` | No | *(auto-issued)* | Per-node API key. Leave empty when using an enrollment key — one is issued, persisted, and rotated automatically. |
+| `MAZEDNS_NODE_KEY` | No | *(auto-issued)* | Per-node API key. Leave empty when using an enrollment key — one is issued, persisted, and rotated automatically. **Retained** (not part of the removed bootstrap-nodes flow) for automation/recovery: supply a key minted for a specific node via the admin API (`POST /api/cluster/nodes/{id}/key`) to attach an agent without the enrollment round-trip. |
 | `MAZEDNS_LISTEN_ADDRESS` | No | `0.0.0.0` | DNS bind address. |
 | `MAZEDNS_LISTEN_PORT` | No | `53` | DNS listen port. The image binds `53` as non-root via a `CAP_NET_BIND_SERVICE` file capability. |
 | `MAZEDNS_UDP_LISTENERS` | No | *(auto)* | Number of `SO_REUSEPORT` UDP sockets that share the port so the kernel spreads packets across cores. **Defaults to one per available CPU** (bounded at 8; scales with the container's CPU quota). Set to `1` to force a single socket, or to a specific number to pin it. Each socket reserves an 8 MiB read + 8 MiB write buffer, so more sockets means more memory. |
@@ -90,7 +119,7 @@ never the secret values), viewable at `GET /api/settings/audit`.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | Bind address of the HTTP server. Control plane: UI + API + `/metrics` + `/healthz`. Agent: `/healthz` + `/metrics` only (unauthenticated). Set to `0.0.0.0` so a mapped port is reachable; for an agent, prefer the node's private/overlay IP. |
+| `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | Bind address of the HTTP server. Control plane: UI + API + `/metrics` (optionally token-gated — see [Scraping /metrics](#scraping-metrics-prometheus)) + `/healthz`. Agent: `/healthz` + `/metrics` only (unauthenticated). Set to `0.0.0.0` so a mapped port is reachable; for an agent, prefer the node's private/overlay IP. |
 | `MAZEDNS_JOIN_TOKEN` | For clustering | *(empty)* | The **enrollment key** an agent presents to self-enroll and receive a per-node key. Create/list/revoke enrollment keys in the UI (Cluster → Enrollment keys) with optional expiry and max-uses. On the **control plane** this variable is *deprecated*: if set it is auto-imported once as a never-expiring enrollment key so existing agents keep working — prefer managing keys in the UI. Enrollment keys only work at `/api/cluster/enroll`, never for serving DNS or shipping logs. |
 | `MAZEDNS_KEY_MAX_AGE` | No | `720h` (30d) | Control plane: rotate a node's per-node key once it exceeds this age. The new key is handed to the agent on its next poll; the old key stays valid for `MAZEDNS_KEY_GRACE`. |
 | `MAZEDNS_KEY_GRACE` | No | `15m` | Control plane: how long a rotated-out node key stays valid — the zero-downtime overlap window. |
@@ -133,7 +162,7 @@ file at `/etc/mazedns/mazedns.yaml` only if you prefer file-based config.
 | `tls` | `cert_file`, `key_file` | Empty → a self-signed cert is generated on start. |
 | `database` | `driver` (`sqlite`), `path` (`mazedns.db`), `dsn` | See the shared table and the note above. |
 | `log` | `level` (`info`) | The `query_log` toggle is a runtime setting. |
-| `cluster` | `enabled` (bootstrap); agent-side `cp_url`, `cp_ip`/`master_ip`, `node_name`, `node_key`, `interval` (`30s`) | Cluster on/off + agent wiring. |
+| `cluster` | agent-side `cp_url`, `cp_ip`/`master_ip`, `node_name`, `node_key`, `interval` (`30s`) | Agent wiring. No enable flag — an agent joins when `cp_url` + a credential are set; the control plane always serves cluster endpoints. |
 
 ### Runtime sections — control plane (seeded once, then edited in the UI)
 
@@ -142,7 +171,8 @@ by the database and edited under **Settings** (secrets are write-only):
 
 | Section / setting | UI location |
 |---|---|
-| `auth.session_ttl`, `auth.oidc.*` | Settings → Access & SSO |
+| `auth.session_ttl`, login rate limit (attempts/window, default 10/60s), `auth.oidc.*` | Settings → Access & SSO |
+| Metrics scrape token for `/metrics` (generate/clear) | Settings → Integrations |
 | `cluster.require_approval`, `key_max_age` (`720h`), `key_grace` (`15m`), `advertise_addr`; `join_token` (deprecated → auto-imported as an enrollment key) | Settings → Access → Cluster policy |
 | `classifier.*` | Settings → AI classification |
 | `metrics.victoria_metrics.*`, `metrics.victoria_logs.*` | Settings → Integrations |
@@ -177,6 +207,28 @@ Each component **pushes** its own Prometheus metrics to a VictoriaMetrics instan
 without VM scraping every node. Fields: `enabled`, `url`, `interval` (`15s`), `job`
 (`mazedns`), `instance` (empty → hostname), `username`/`password`. Also editable
 live in the UI.
+
+### Scraping `/metrics` (Prometheus)
+
+`/metrics` is served by both components. On the **control plane** it is open by
+default; you can require a bearer token under **Settings → Integrations → Metrics
+scrape token**. Click *Generate* (the token is shown once and stored hashed), then
+point Prometheus at it:
+
+```yaml
+scrape_configs:
+  - job_name: mazedns-control-plane
+    static_configs:
+      - targets: ["control-plane:8080"]
+    authorization:
+      type: Bearer
+      credentials: "<the-generated-token>"
+```
+
+With no token set, requests without an `Authorization` header still succeed
+(unchanged behavior). *Clear* the token to reopen `/metrics`. While first-boot setup
+is pending, `/metrics` is blocked entirely (only `/healthz` is public). The agent's
+`/metrics` has no token and stays open — restrict it at the network layer.
 
 ### Logs — VictoriaLogs (`metrics.victoria_logs`)
 

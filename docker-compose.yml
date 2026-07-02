@@ -22,11 +22,11 @@ services:
     environment:
       MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind the UI/API inside the container
       MAZEDNS_DB_PATH: "/data/mazedns.db"
-      MAZEDNS_CLUSTER_ENABLED: "true"
-      # Dev seed: imported once as an enrollment key so the agents below can join.
-      # Complete the first-boot setup wizard first (the setup token is printed in the
-      # control-plane logs); until then the API — including agent enrollment — is
-      # locked. After the wizard the two agents auto-join and demo traffic flows.
+      # The control plane always serves cluster endpoints (clustering has no enable
+      # flag). Dev seed: imported once as an enrollment key so the agents below can
+      # join. Complete the first-boot setup wizard first (no token — open the UI;
+      # until then the API, including agent enrollment, is locked). After the wizard
+      # the two agents auto-join and demo traffic flows.
       MAZEDNS_JOIN_TOKEN: "dev-join-token"
       # Dev-only blocklist so the demo traffic shows blocked/category stats. The
       # production image ships no blocklist. (The control plane doesn't resolve,

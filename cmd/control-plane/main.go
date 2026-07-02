@@ -57,6 +57,9 @@ func main() {
 		os.Exit(1)
 	}
 	slog.SetDefault(boot.NewLogger(cfg.Log.Level))
+	for _, d := range cfg.Deprecations {
+		slog.Warn(d)
+	}
 	slog.Info("MazeDNS control plane starting", "version", version)
 
 	st, err := boot.OpenStore(cfg)
@@ -127,8 +130,7 @@ func main() {
 	go clsWorker.Run(context.Background())
 	slog.Info("classifier ready")
 
-	// Optionally pre-provision cluster nodes with fixed keys (dev/automation).
-	bootstrapNodes(st, os.Getenv("MAZEDNS_CLUSTER_BOOTSTRAP_NODES"))
+	warnRemovedBootstrapNodes(os.Getenv("MAZEDNS_CLUSTER_BOOTSTRAP_NODES"))
 
 	// NetBird/reverse-DNS client enricher (turns client IPs into peer/hostnames).
 	enricher := netbird.NewEnricher(
@@ -182,7 +184,9 @@ func main() {
 	if keyMaxAge == 0 {
 		keyMaxAge = 30 * 24 * time.Hour
 	}
-	apiSrv.SetClusterEnrollment(cpset.RequireApproval, keyMaxAge, time.Duration(cpset.KeyGraceSec)*time.Second)
+	// Live-apply all DB-backed CP settings at boot (cluster policy, session TTL,
+	// login rate limits) so runtime services match the store without a restart.
+	apiSrv.ApplyCPSettings(cpset)
 	apiSrv.SetClassifierStatus(clsWorker)
 	apiSrv.SetClassifierEnqueue(clsWorker.Enqueue)
 	apiSrv.SetEnricher(enricher)
@@ -390,6 +394,14 @@ func resetAdminCmd(args []string) {
 		pw = tok[:16]
 		generated = true
 	}
+	// Enforce the same password policy as the UI for an operator-supplied password
+	// (generated ones are strong by construction).
+	if !generated {
+		if msg := auth.PasswordStrengthError(pw); msg != "" {
+			slog.Error("weak password", "err", msg)
+			os.Exit(1)
+		}
+	}
 	hash, err := auth.HashPassword(pw)
 	if err != nil {
 		slog.Error("hash", "err", err)
@@ -419,32 +431,19 @@ func resetAdminCmd(args []string) {
 	}
 }
 
-// bootstrapNodes pre-provisions cluster nodes from a "name=key,name=key" spec so
-// agents can be wired up without token enrollment (e.g. in dev compose). Keys are
-// stored hashed, exactly like issued ones.
-func bootstrapNodes(st *store.Store, spec string) {
-	for _, pair := range strings.Split(spec, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		name, key, ok := strings.Cut(pair, "=")
-		name, key = strings.TrimSpace(name), strings.TrimSpace(key)
-		if !ok || name == "" || key == "" {
-			slog.Warn("ignoring malformed bootstrap node (want name=key)", "entry", pair)
-			continue
-		}
-		sum := sha256.Sum256([]byte(key))
-		prefix := key
-		if len(prefix) > 8 {
-			prefix = prefix[:8]
-		}
-		if err := st.EnsureNode(name, hex.EncodeToString(sum[:]), prefix); err != nil {
-			slog.Warn("bootstrap node failed", "name", name, "err", err)
-			continue
-		}
-		slog.Info("cluster node provisioned", "name", name)
+// warnRemovedBootstrapNodes logs a one-line notice when the removed
+// MAZEDNS_CLUSTER_BOOTSTRAP_NODES env var is still set, and otherwise does nothing.
+// Node pre-provisioning was removed because it put node secrets in the environment,
+// bypassed UI-managed enrollment keys and the approval flow, and created nodes
+// outside the server-assigned-UUID identity model. It never provisions anything;
+// automation should create an enrollment key (UI or admin API) and pass it to
+// agents as MAZEDNS_JOIN_TOKEN. Returns whether the notice fired (for tests).
+func warnRemovedBootstrapNodes(spec string) bool {
+	if strings.TrimSpace(spec) == "" {
+		return false
 	}
+	slog.Warn("MAZEDNS_CLUSTER_BOOTSTRAP_NODES was removed and is ignored — create an enrollment key in the UI (or via the admin API) and pass it to agents as MAZEDNS_JOIN_TOKEN")
+	return true
 }
 
 // importDeprecatedJoinToken migrates a configured cluster.join_token to a DB

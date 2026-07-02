@@ -33,6 +33,39 @@ func HashPassword(password string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(hash)), nil
 }
 
+// PasswordStrengthError returns a validation message, or "" if the password is
+// acceptable (>= 10 chars mixing letters with digits or symbols). This is the
+// single password policy shared by every password-setting path.
+func PasswordStrengthError(pw string) string {
+	if len(pw) < 10 {
+		return "password must be at least 10 characters"
+	}
+	var hasLetter, hasOther bool
+	for _, r := range pw {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			hasLetter = true
+		default:
+			hasOther = true
+		}
+	}
+	if !hasLetter || !hasOther {
+		return "password must mix letters with digits or symbols"
+	}
+	return ""
+}
+
+// dummyHash is a valid argon2id hash verified against when a login names a missing
+// user (or one with no password), so the response time doesn't reveal whether the
+// account exists — closing the username-enumeration timing oracle.
+var dummyHash, _ = HashPassword("mazedns-timing-equalizer-not-a-real-password")
+
+// VerifyDummy performs a throwaway password verification with the same cost as a
+// real one. Callers use it on the user-missing path to equalize timing.
+func VerifyDummy(password string) {
+	_, _ = VerifyPassword(dummyHash, password)
+}
+
 // VerifyPassword reports whether password matches the PHC-encoded hash.
 func VerifyPassword(encoded, password string) (bool, error) {
 	parts := strings.Split(encoded, "$")

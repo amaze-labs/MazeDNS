@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -108,18 +109,78 @@ func (s *Store) GetUserByUsername(username string) (*User, error) {
 	return u, nil
 }
 
-// UpsertOIDCUser creates or updates an OIDC user (keyed by username) and returns
-// it, refreshing the role and avatar from the provider on each login.
-func (s *Store) UpsertOIDCUser(subject, username, role, avatarURL string) (*User, error) {
-	now := time.Now().Unix()
-	if _, err := s.db.Exec(
-		`INSERT INTO users(username, role, source, avatar_url, subject, password_hash, updated_at)
-		 VALUES(?,?, 'oidc', ?, ?, '', ?)
-		 ON CONFLICT(username) DO UPDATE SET
-		   role=excluded.role, source='oidc', avatar_url=excluded.avatar_url,
-		   subject=excluded.subject, updated_at=excluded.updated_at`,
-		username, role, avatarURL, subject, now); err != nil {
+// GetOIDCUserBySubject returns the OIDC account with the given stable subject, or
+// (nil, nil) if none. Subject — not the mutable, IdP-controllable username — is the
+// identity key for SSO accounts.
+func (s *Store) GetOIDCUserBySubject(subject string) (*User, error) {
+	u := &User{}
+	err := s.read.QueryRow(
+		`SELECT id, username, role, source, avatar_url, subject, password_hash, updated_at
+		 FROM users WHERE source='oidc' AND subject=?`, subject).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	return s.GetUserByUsername(username)
+	return u, nil
+}
+
+// freeUsername returns base, or base with a numeric suffix, so it does not collide
+// with any existing account (mirrors uniqueNodeName). Used to give a first-time
+// SSO user a distinct display name rather than merging into a same-named account.
+func (s *Store) freeUsername(base string) (string, error) {
+	candidate := base
+	for i := 2; ; i++ {
+		u, err := s.GetUserByUsername(candidate)
+		if err != nil {
+			return "", err
+		}
+		if u == nil {
+			return candidate, nil
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+}
+
+// UpsertOIDCUser provisions or refreshes an OIDC account, keyed on the stable
+// subject (NOT the username). This prevents SSO account takeover: an IdP user
+// whose derived username matches an existing account can no longer merge into —
+// and log in as — that account (including a local break-glass admin).
+//
+//   - existing subject  -> update role/avatar on that row only (username stays put)
+//   - new subject       -> insert a NEW account; if the derived username collides
+//     with a DIFFERENT existing account, store a de-duplicated (suffixed) username
+//
+// It never updates a local account (matches only source='oidc' rows on update), so
+// a local user's source or password_hash can never be changed by an SSO login.
+func (s *Store) UpsertOIDCUser(subject, username, role, avatarURL string) (*User, error) {
+	now := time.Now().Unix()
+	if existing, err := s.GetOIDCUserBySubject(subject); err != nil {
+		return nil, err
+	} else if existing != nil {
+		// Known SSO identity: refresh role + avatar. Keep the stored (possibly
+		// de-duplicated) username stable so a preferred_username change at the IdP
+		// doesn't churn the display name or risk a fresh collision.
+		if _, err := s.db.Exec(
+			`UPDATE users SET role=?, avatar_url=?, updated_at=? WHERE id=? AND source='oidc'`,
+			role, avatarURL, now, existing.ID); err != nil {
+			return nil, err
+		}
+		return s.GetUserByID(existing.ID)
+	}
+	// First login for this subject: pick a display username that does not collide
+	// with any existing account, then create a separate row.
+	display, err := s.freeUsername(username)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO users(username, role, source, avatar_url, subject, password_hash, updated_at)
+		 VALUES(?,?, 'oidc', ?, ?, '', ?)`,
+		display, role, avatarURL, subject, now); err != nil {
+		return nil, err
+	}
+	return s.GetUserByUsername(display)
 }

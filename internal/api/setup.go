@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -14,11 +13,6 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
-// constantTimeEqual compares two strings without leaking length-independent timing.
-func constantTimeEqual(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
 // clientIP extracts the request's source IP for logging (best effort).
 func clientIP(r *http.Request) string {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
@@ -29,19 +23,18 @@ func clientIP(r *http.Request) string {
 
 // Setup mode solves the unauthenticated-first-boot problem: on a fresh control
 // plane (auth enabled, no users) the API refuses everything except the setup
-// wizard until an admin is created. The wizard is guarded by a one-time token
-// printed to the container log (Portainer-style) — the only robust defense when
-// the CP port is reachable before any admin exists. The setup endpoints:
+// wizard until setup completes. It uses trust-on-first-use (Grafana-style):
+// whoever reaches the fresh control plane first completes setup — the operator is
+// expected NOT to expose the CP publicly until that happens. The setup endpoints:
 //
 //   - work only while setup is incomplete,
-//   - require the setup token (constant-time compared), rate-limited and logged,
-//   - flip the completed flag ATOMICALLY with admin creation, and
+//   - are rate-limited and logged,
+//   - flip the completed flag ATOMICALLY with admin creation and SSO config, and
 //   - are permanently closed (410 Gone) afterwards.
 
-// EnableSetupMode puts the server into first-boot setup mode with the given
-// one-time token. Called only when auth is enabled and no admin exists yet.
-func (s *Server) EnableSetupMode(token string) {
-	s.setupToken = token
+// EnableSetupMode puts the server into first-boot setup mode. Called only when
+// auth is enabled and no admin exists yet.
+func (s *Server) EnableSetupMode() {
 	s.setupDone.Store(false)
 }
 
@@ -97,9 +90,21 @@ func (l *setupLimiter) allow(limit int, window time.Duration) bool {
 	return l.count <= limit
 }
 
-// setupComplete creates the first admin, atomically closing setup. Requires the
-// one-time setup token. On success it starts a session so the wizard can continue
-// authenticated into the optional steps.
+// setupComplete finishes first-boot setup, atomically closing it. The operator
+// chooses how the control plane authenticates:
+//
+//   - method "local": create a local admin (username+password).
+//   - method "sso":   configure an OIDC provider. A local break-glass admin is
+//     created alongside it by default (break_glass), so a misconfigured or
+//     unreachable IdP can never lock the operator out; opting out leaves the CLI
+//     `control-plane reset-admin` path as recovery. The OIDC issuer's discovery
+//     document is fetched and verified BEFORE completion — a bad issuer blocks
+//     setup with an inline error, so completion never persists a broken provider.
+//
+// The completed flag flips together with the admin mapping and the SSO config in a
+// single transaction (store.CompleteSetup). When a local admin exists (local mode,
+// or SSO+break-glass) a session is started so the wizard proceeds authenticated
+// into the optional steps.
 func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 	if !s.setupActive() {
 		writeError(w, http.StatusGone, "setup already completed")
@@ -111,57 +116,122 @@ func (s *Server) setupComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Token    string `json:"token"`
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Method     string             `json:"method"` // "local" | "sso"
+		Username   string             `json:"username"`
+		Password   string             `json:"password"`
+		OIDC       store.OIDCSettings `json:"oidc"`
+		BreakGlass bool               `json:"break_glass"` // SSO mode: also create a local admin
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if !constantTimeEqual(strings.TrimSpace(in.Token), s.setupToken) {
-		slog.Warn("setup: invalid token", "remote", clientIP(r))
-		writeError(w, http.StatusUnauthorized, "invalid setup token")
-		return
-	}
+
+	params := store.SetupParams{}
+	sso := strings.EqualFold(strings.TrimSpace(in.Method), "sso")
+	// A local admin is created in local mode always, and in SSO mode when the
+	// break-glass account is kept (the default).
+	needLocalAdmin := !sso || in.BreakGlass
 	username := strings.TrimSpace(in.Username)
-	if username == "" {
-		writeError(w, http.StatusBadRequest, "username required")
-		return
+
+	if needLocalAdmin {
+		if username == "" {
+			writeError(w, http.StatusBadRequest, "username required")
+			return
+		}
+		if msg := passwordStrengthError(in.Password); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		hash, err := auth.HashPassword(in.Password)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "hash failed")
+			return
+		}
+		params.AdminUsername = username
+		params.AdminPasswordHash = hash
 	}
-	if msg := passwordStrengthError(in.Password); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
+
+	if sso {
+		o := in.OIDC
+		o.Enabled = true
+		o.Issuer = strings.TrimSpace(o.Issuer)
+		o.ClientID = strings.TrimSpace(o.ClientID)
+		o.RedirectURL = strings.TrimSpace(o.RedirectURL)
+		o.AdminEmail = strings.TrimSpace(o.AdminEmail)
+		if o.Issuer == "" || o.ClientID == "" || o.RedirectURL == "" {
+			writeError(w, http.StatusBadRequest, "SSO requires issuer, client ID, and redirect URL")
+			return
+		}
+		if o.AdminEmail == "" {
+			writeError(w, http.StatusBadRequest, "SSO requires the admin email (who becomes admin on first login)")
+			return
+		}
+		// A break-glass account only helps if local login stays reachable, so keep
+		// password login on whenever it exists; otherwise go SSO-only.
+		o.DisablePasswordLogin = !in.BreakGlass
+		// Validate discovery BEFORE completing: build the provider (fetches
+		// /.well-known/openid-configuration). This also swaps the live provider, so
+		// on success SSO is immediately usable; on failure nothing is persisted.
+		if s.rebuildOIDC != nil {
+			if err := s.rebuildOIDC(o); err != nil {
+				slog.Warn("setup: OIDC validation failed", "issuer", o.Issuer, "err", err, "remote", clientIP(r))
+				writeError(w, http.StatusBadGateway, "SSO provider validation failed: "+err.Error())
+				return
+			}
+		}
+		params.OIDC = &o
 	}
-	hash, err := auth.HashPassword(in.Password)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "hash failed")
-		return
-	}
-	created, err := s.store.CreateFirstAdmin(username, hash)
+
+	completed, err := s.store.CompleteSetup(params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !created {
-		// A concurrent request already created the first admin.
+	if !completed {
+		// A concurrent request already completed setup.
 		s.setupDone.Store(true)
 		writeError(w, http.StatusGone, "setup already completed")
 		return
 	}
 	s.setupDone.Store(true)
-	s.setupToken = "" // burn the token
-	slog.Info("setup completed: first admin created", "username", username, "remote", clientIP(r))
-	_ = s.store.AppendAudit(store.AuditEntry{User: username, Action: "setup.complete", Detail: "created first admin " + username})
 
-	// Start a session so the wizard proceeds authenticated into the optional steps.
-	u, _ := s.store.GetUserByUsername(username)
-	if u != nil {
-		if token, _, serr := s.auth.StartSession(u.ID, u.Username, u.Role); serr == nil {
-			s.auth.SetCookie(w, token)
+	detail := "local admin " + username
+	if sso {
+		if in.BreakGlass {
+			detail = "SSO (" + params.OIDC.Issuer + ") + break-glass admin " + username
+		} else {
+			detail = "SSO only (" + params.OIDC.Issuer + ")"
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"username": username, "role": "admin"})
+	slog.Info("setup completed", "mode", authMode(sso), "detail", detail, "remote", clientIP(r))
+	_ = s.store.AppendAudit(store.AuditEntry{User: username, Action: "setup.complete", Detail: detail})
+
+	// Start a session when a local admin exists so the wizard continues
+	// authenticated. SSO-only setups have no local session; the wizard directs the
+	// operator to sign in with SSO instead.
+	authenticated := false
+	if params.AdminUsername != "" {
+		if u, _ := s.store.GetUserByUsername(username); u != nil {
+			if token, _, serr := s.auth.StartSession(u.ID, u.Username, u.Role); serr == nil {
+				s.auth.SetCookie(w, token)
+				authenticated = true
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"username":      username,
+		"role":          "admin",
+		"authenticated": authenticated,
+	})
+}
+
+// authMode labels the chosen auth method for logs.
+func authMode(sso bool) string {
+	if sso {
+		return "sso"
+	}
+	return "local"
 }
 
 // passwordStrengthError returns a validation message, or "" if the password is

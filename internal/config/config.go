@@ -170,6 +170,9 @@ type OIDC struct {
 	Scopes       []string `yaml:"scopes"`
 	GroupsClaim  string   `yaml:"groups_claim"`
 	AdminGroup   string   `yaml:"admin_group"`
+	// AdminEmail is the explicit bootstrap admin identity: the email (or subject)
+	// granted the admin role on every OIDC login, regardless of group membership.
+	AdminEmail string `yaml:"admin_email"`
 	// DisablePasswordLogin removes local username/password login when SSO is
 	// enabled (SSO becomes the only way in). Ignored if OIDC fails to initialize,
 	// so a broken provider can't lock everyone out.
@@ -474,6 +477,9 @@ func applyOIDCEnv(o *OIDC) {
 	}
 	if v := envClean("MAZEDNS_OIDC_ADMIN_GROUP"); v != "" {
 		o.AdminGroup = v
+	}
+	if v := envClean("MAZEDNS_OIDC_ADMIN_EMAIL"); v != "" {
+		o.AdminEmail = v
 	}
 	switch strings.ToLower(envClean("MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN")) {
 	case "true", "1":

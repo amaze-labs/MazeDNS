@@ -141,7 +141,8 @@ func oidcChanged(a, b store.OIDCSettings) bool {
 	return a.Enabled != b.Enabled || a.Issuer != b.Issuer || a.ClientID != b.ClientID ||
 		a.ClientSecret != b.ClientSecret || a.RedirectURL != b.RedirectURL ||
 		strings.Join(a.Scopes, ",") != strings.Join(b.Scopes, ",") ||
-		a.GroupsClaim != b.GroupsClaim || a.AdminGroup != b.AdminGroup
+		a.GroupsClaim != b.GroupsClaim || a.AdminGroup != b.AdminGroup ||
+		a.AdminEmail != b.AdminEmail
 }
 
 // cpSettingsDiff summarizes which setting groups changed (never secret values).

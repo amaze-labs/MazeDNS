@@ -962,6 +962,48 @@ button.del:hover {
   gap: 8px;
   margin-top: 4px;
 }
+.setup-method {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-method-opt {
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.setup-method-opt.sel {
+  border-color: var(--accent, #3b82f6);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 8%, transparent);
+}
+.setup-method-opt span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.setup-row {
+  flex-direction: row !important;
+  gap: 12px;
+}
+.setup-row > label {
+  flex: 1;
+}
+.copy-row {
+  display: flex;
+  gap: 8px;
+}
+.copy-row > input {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.muted.small {
+  font-size: 12px;
+}
 .pw-meter {
   display: flex;
   align-items: center;

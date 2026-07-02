@@ -20,16 +20,21 @@ const setupCompletedKey = "setup_completed"
 // secret is retrievable (needed to build the provider) but never returned by the
 // API — handlers mask it and treat an empty value on write as "unchanged".
 type OIDCSettings struct {
-	Enabled              bool     `json:"enabled"`
-	Issuer               string   `json:"issuer"`
-	ClientID             string   `json:"client_id"`
-	ClientSecret         string   `json:"client_secret"`
-	RedirectURL          string   `json:"redirect_url"`
-	Scopes               []string `json:"scopes"`
-	GroupsClaim          string   `json:"groups_claim"`
-	AdminGroup           string   `json:"admin_group"`
-	DisablePasswordLogin bool     `json:"disable_password_login"`
-	AutoLogin            bool     `json:"auto_login"`
+	Enabled      bool     `json:"enabled"`
+	Issuer       string   `json:"issuer"`
+	ClientID     string   `json:"client_id"`
+	ClientSecret string   `json:"client_secret"`
+	RedirectURL  string   `json:"redirect_url"`
+	Scopes       []string `json:"scopes"`
+	GroupsClaim  string   `json:"groups_claim"`
+	AdminGroup   string   `json:"admin_group"`
+	// AdminEmail is the explicit bootstrap admin: the email (or subject) that is
+	// granted the admin role on first — and every — OIDC login, regardless of
+	// group membership. This solves the SSO bootstrap-admin problem
+	// deterministically (vs. racy "first login wins" on a shared IdP).
+	AdminEmail           string `json:"admin_email"`
+	DisablePasswordLogin bool   `json:"disable_password_login"`
+	AutoLogin            bool   `json:"auto_login"`
 }
 
 // CPSettings is the control-plane's UI-editable runtime configuration.
@@ -87,40 +92,79 @@ func (s *Store) SetupCompleted() bool {
 	return v == "1"
 }
 
-// CreateFirstAdmin atomically creates the initial admin, but only if no users
-// exist yet, and marks setup complete in the same transaction. It returns
-// (created, error): created is false (with no error) when a user already exists,
-// so concurrent setup attempts resolve to exactly one admin. Portable across
-// SQLite and Postgres via INSERT … WHERE NOT EXISTS.
-func (s *Store) CreateFirstAdmin(username, passwordHash string) (bool, error) {
+// SetupParams describes what first-boot setup persists. It supports the two auth
+// modes chosen in the wizard, plus the SSO+break-glass combination:
+//   - AdminUsername/AdminPasswordHash: create a local admin (the sole admin in
+//     local mode, or the opt-in break-glass account in SSO mode). Empty username
+//     means no local admin is created (SSO-only, break-glass declined).
+//   - OIDC: persist SSO configuration atomically with completion (nil = local mode).
+type SetupParams struct {
+	AdminUsername     string
+	AdminPasswordHash string
+	OIDC              *OIDCSettings
+}
+
+// CompleteSetup atomically finishes first-boot setup: it marks setup complete,
+// optionally creates the first/break-glass admin, and optionally persists the SSO
+// config — all in one transaction, so the completed flag never flips apart from
+// the admin mapping and OIDC settings. The completion guard is the setup_completed
+// flag itself (INSERT … ON CONFLICT DO NOTHING): the first writer wins, so
+// concurrent attempts resolve to exactly one completion (and, in local mode,
+// exactly one admin). Returns (completed, error); completed is false with no error
+// when another request already finished setup. Portable across SQLite and Postgres.
+func (s *Store) CompleteSetup(p SetupParams) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, err
 	}
+	// Atomic completion guard: only the first writer inserts the flag.
 	res, err := tx.Exec(
-		`INSERT INTO users(username, role, source, subject, password_hash, updated_at)
-		 SELECT ?, 'admin', 'local', '', ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM users)`,
-		username, passwordHash, time.Now().Unix())
+		`INSERT INTO app_meta(key, value) VALUES(?, '1') ON CONFLICT(key) DO NOTHING`,
+		setupCompletedKey)
 	if err != nil {
 		_ = tx.Rollback()
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
+	if n, _ := res.RowsAffected(); n == 0 {
 		_ = tx.Rollback()
-		return false, nil // someone else already created the first admin
+		return false, nil // someone else already completed setup
 	}
-	if _, err := tx.Exec(
-		`INSERT INTO app_meta(key, value) VALUES(?, '1') ON CONFLICT(key) DO UPDATE SET value='1'`,
-		setupCompletedKey); err != nil {
-		_ = tx.Rollback()
-		return false, err
+	if p.AdminUsername != "" {
+		if _, err := tx.Exec(
+			`INSERT INTO users(username, role, source, subject, password_hash, updated_at)
+			 SELECT ?, 'admin', 'local', '', ?, ?
+			 WHERE NOT EXISTS (SELECT 1 FROM users)`,
+			p.AdminUsername, p.AdminPasswordHash, time.Now().Unix()); err != nil {
+			_ = tx.Rollback()
+			return false, err
+		}
+	}
+	if p.OIDC != nil {
+		cur := s.LoadCPSettings(CPSettings{SessionTTLSec: 24 * 3600})
+		cur.OIDC = *p.OIDC
+		b, err := json.Marshal(cur)
+		if err != nil {
+			_ = tx.Rollback()
+			return false, err
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO app_meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+			cpSettingsKey, string(b)); err != nil {
+			_ = tx.Rollback()
+			return false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// CreateFirstAdmin atomically creates the initial local admin and marks setup
+// complete. Thin wrapper over CompleteSetup for the local-accounts path; retained
+// for the concurrent-safe "exactly one admin" guarantee. Returns (created, error).
+func (s *Store) CreateFirstAdmin(username, passwordHash string) (bool, error) {
+	return s.CompleteSetup(SetupParams{AdminUsername: username, AdminPasswordHash: passwordHash})
 }
 
 // --- settings audit log ---

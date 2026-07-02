@@ -433,6 +433,14 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                   Admin group
                   <input value={cp.oidc.admin_group} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, admin_group: e.target.value } })} />
                 </label>
+                <label>
+                  Admin email
+                  <input
+                    value={cp.oidc.admin_email}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, admin_email: e.target.value } })}
+                    placeholder="you@example.com — always granted admin on login"
+                  />
+                </label>
                 <label className="setup-check">
                   <input
                     type="checkbox"

@@ -31,14 +31,30 @@ For every setting referenced below, see **[configuration.md](configuration.md)**
 ## First-boot setup wizard
 
 The control plane is configured through its **web UI**, not env vars or YAML. A
-fresh control plane starts in **setup mode**: the API is locked and it prints a
-**one-time setup token** to its log. Open the UI, paste the token, and the wizard
-walks you through creating your admin account, basic DNS defaults, and your first
-enrollment key — no `MAZEDNS_ADMIN_PASSWORD`, no config file, no restart.
+fresh control plane starts in **setup mode**: the API is locked to everything
+except the wizard until setup completes. There is **no setup token** — the wizard
+uses *trust-on-first-use* (like Grafana): whoever reaches the fresh control plane
+first completes setup. **Do not expose the control plane publicly until you have
+finished the wizard.** The log prints a plain reminder that setup mode is active.
+
+The wizard first asks **how operators sign in**:
+
+- **Local accounts** — create an admin username + password (no
+  `MAZEDNS_ADMIN_PASSWORD`, no config file, no restart).
+- **Single sign-on (OIDC)** — configure an external identity provider right there.
+  You paste the issuer URL, client ID/secret, and the **admin email** that is
+  granted the admin role on its first (and every) SSO login. The wizard shows the
+  **redirect URI** to register with your provider and verifies the issuer's
+  discovery document before finishing. A local **break-glass admin** is created
+  alongside SSO by default so a misconfigured or unreachable IdP can never lock you
+  out (you can opt out and rely on the `reset-admin` CLI below instead).
+
+It then walks you through basic DNS defaults and your first enrollment key. The
+auth choice isn't final — switch or repair it later under **Settings → Access**.
 
 ```bash
-docker logs mazedns-control-plane   # copy the "FIRST-BOOT SETUP" token
-# open http://<host>:8080 and paste it
+docker logs mazedns-control-plane   # confirms setup mode is active; no token needed
+# open http://<host>:8080 and complete the wizard
 ```
 
 Only **bootstrap** options stay in the environment/YAML: the database
@@ -85,8 +101,8 @@ docker compose -f docker-compose.prod.yml up -d
 
 That's it:
 
-- Open `http://localhost:8080`, grab the **setup token** from
-  `docker compose logs control-plane`, and complete the wizard (create your admin,
+- Open `http://localhost:8080` and complete the wizard (choose local or SSO auth,
+  create your admin,
   DNS defaults, and first enrollment key).
 - The wizard shows an agent snippet. Paste the enrollment key it gives you into the
   agent's `MAZEDNS_JOIN_TOKEN` (or set it before `up -d` and re-run) so the bundled
@@ -156,8 +172,9 @@ If you prefer plain `docker run`:
 
 ```bash
 # 1. Control plane — dashboard/API only, never serves DNS. Configure it in the
-#    browser: `docker logs mazedns-control-plane` prints a one-time setup token,
-#    then the wizard creates your admin and first enrollment key.
+#    browser: open the UI and complete the setup wizard (no token — trust-on-first-
+#    use; don't expose it publicly until setup is done). The wizard sets up auth
+#    (local or SSO), your admin, and first enrollment key.
 docker run -d --name mazedns-control-plane \
   -p 8080:8080 -v cp-data:/data \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
@@ -229,8 +246,9 @@ spec:
       containers:
         - name: control-plane
           image: ghcr.io/ipmaze/mazedns-control-plane:latest
-          # Configured via the first-boot web wizard (setup token in the pod log);
-          # only bootstrap values live here. Recover a lost admin with
+          # Configured via the first-boot web wizard (no token — trust-on-first-use;
+          # keep it off the public internet until setup completes). Only bootstrap
+          # values live here. Recover a lost admin with
           # `kubectl exec deploy/mazedns-control-plane -- /control-plane reset-admin`.
           env:
             - { name: MAZEDNS_API_ADDRESS, value: "0.0.0.0" }

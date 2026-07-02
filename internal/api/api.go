@@ -58,9 +58,8 @@ type Server struct {
 	keyGrace            time.Duration // overlap window a rotated-out node key stays valid
 	// First-boot setup mode (see setup.go). setupDone defaults true (no gating); main
 	// calls EnableSetupMode to open the wizard on a fresh, admin-less control plane.
-	setupToken string
-	setupDone  atomic.Bool
-	setupRate  setupLimiter
+	setupDone atomic.Bool
+	setupRate setupLimiter
 	// rebuildOIDC swaps the running OIDC provider when SSO settings change (nil =
 	// unsupported). Set by main, which owns the config→provider construction.
 	rebuildOIDC func(store.OIDCSettings) error

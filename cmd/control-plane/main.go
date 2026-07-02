@@ -207,17 +207,15 @@ func main() {
 	importDeprecatedJoinToken(st, cfg.Cluster.JoinToken)
 
 	// First-boot setup wizard: on a fresh, admin-less control plane, guard the API
-	// behind a one-time setup token printed here (see setup.go). Existing
-	// deployments (an admin already exists) skip setup entirely.
+	// behind the setup wizard (trust-on-first-use — whoever reaches the fresh CP
+	// first completes setup; see setup.go). Existing deployments (an admin already
+	// exists) skip setup entirely.
 	if cfg.Auth.Enabled && !st.SetupCompleted() {
 		if n, _ := st.CountUsers(); n == 0 {
-			token, terr := auth.NewToken()
-			if terr != nil {
-				slog.Error("setup token", "err", terr)
-				os.Exit(1)
-			}
-			apiSrv.EnableSetupMode(token)
-			logSetupBanner(token)
+			apiSrv.EnableSetupMode()
+			slog.Warn("first-boot setup mode active — open the web UI to create the first admin",
+				"api", apiAddr,
+				"note", "do NOT expose the control plane publicly until setup completes")
 		}
 	}
 	slog.Info("cluster self-enrollment ready (manage enrollment keys in the UI)",
@@ -326,6 +324,7 @@ func seedCPSettings(cfg config.Config) store.CPSettings {
 			Scopes:               o.Scopes,
 			GroupsClaim:          o.GroupsClaim,
 			AdminGroup:           o.AdminGroup,
+			AdminEmail:           o.AdminEmail,
 			DisablePasswordLogin: o.DisablePasswordLogin,
 			AutoLogin:            o.AutoLogin,
 		},
@@ -348,18 +347,10 @@ func buildOIDC(ctx context.Context, o store.OIDCSettings) (*auth.OIDCProvider, e
 		Scopes:               o.Scopes,
 		GroupsClaim:          o.GroupsClaim,
 		AdminGroup:           o.AdminGroup,
+		AdminEmail:           o.AdminEmail,
 		DisablePasswordLogin: o.DisablePasswordLogin,
 		AutoLogin:            o.AutoLogin,
 	})
-}
-
-// logSetupBanner prints the one-time first-boot setup token prominently.
-func logSetupBanner(token string) {
-	slog.Warn("┌──────────────────────────────────────────────────────────────────────────┐")
-	slog.Warn("│ FIRST-BOOT SETUP REQUIRED — open the web UI and paste this one-time token:  │")
-	slog.Warn("│   " + token)
-	slog.Warn("│ The token is required to create the first admin. It is shown only once.     │")
-	slog.Warn("└──────────────────────────────────────────────────────────────────────────┘")
 }
 
 // resetAdminCmd is the break-glass admin recovery subcommand:

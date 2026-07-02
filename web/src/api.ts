@@ -111,8 +111,20 @@ export interface OIDCSettings {
   scopes: string[]
   groups_claim: string
   admin_group: string
+  admin_email: string
   disable_password_login: boolean
   auto_login: boolean
+}
+
+// SetupCompleteRequest is the first-boot wizard payload. method "local" creates a
+// local admin (username+password). method "sso" configures OIDC; break_glass keeps
+// a local admin (username+password) alongside SSO as a recovery account.
+export interface SetupCompleteRequest {
+  method: 'local' | 'sso'
+  username?: string
+  password?: string
+  break_glass?: boolean
+  oidc?: OIDCSettings
 }
 export interface CPSettings {
   session_ttl_sec: number
@@ -420,12 +432,12 @@ const nodesParam = (nodes?: string[]) =>
 export const api = {
   // first-boot setup wizard
   setupStatus: () => fetch('/api/setup/status').then(j<{ setup_required: boolean }>),
-  setupComplete: (token: string, username: string, password: string) =>
+  setupComplete: (body: SetupCompleteRequest) =>
     fetch('/api/setup/complete', {
       method: 'POST',
       headers: jsonHeaders,
-      body: JSON.stringify({ token, username, password }),
-    }).then(j<{ username: string; role: string }>),
+      body: JSON.stringify(body),
+    }).then(j<{ username: string; role: string; authenticated: boolean }>),
   // control-plane runtime settings
   cpSettings: () => fetch('/api/settings/cp').then(j<{ settings: CPSettings; oidc_has_client_secret: boolean }>),
   saveCPSettings: (s: CPSettings) =>

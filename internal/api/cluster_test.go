@@ -478,3 +478,104 @@ func jsonField(body, field string) string {
 	}
 	return rest[:j]
 }
+
+// TestClusterEnrollRevokedNodeRejected reproduces the bug: deleting a node with
+// revocation must actually keep a still-running agent out. Its re-enroll attempts
+// are refused (403 revoked), create no node, and — crucially — consume no
+// enrollment-key uses no matter how many times it retries.
+func TestClusterEnrollRevokedNodeRejected(t *testing.T) {
+	s, st := newEnrollServer(t, "s3cr3t", false)
+
+	first := enroll(s, `{"name":"host-a","token":"s3cr3t"}`)
+	id := jsonField(first.Body.String(), "id")
+	key := jsonField(first.Body.String(), "key")
+	if id == "" || key == "" {
+		t.Fatalf("first enroll missing id/key: %s", first.Body.String())
+	}
+	useCount := func() int64 {
+		keys, _ := st.ListEnrollKeys()
+		if len(keys) != 1 {
+			t.Fatalf("want exactly 1 enrollment key, got %d", len(keys))
+		}
+		return keys[0].UseCount
+	}
+	if uc := useCount(); uc != 1 {
+		t.Fatalf("use_count after the one real join = %d, want 1", uc)
+	}
+
+	// Admin removes the node WITH revocation.
+	if err := st.DeleteNode(id, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The still-running agent re-enrolls presenting its id + key, many times.
+	body := `{"name":"host-a","token":"s3cr3t","node_id":"` + id + `","node_key":"` + key + `"}`
+	for i := 0; i < 5; i++ {
+		rr := enroll(s, body)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("revoked re-enroll #%d: status = %d, want 403 (%s)", i, rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), `"revoked":true`) {
+			t.Fatalf("revoked re-enroll missing machine-readable flag: %s", rr.Body.String())
+		}
+	}
+	if nodes, _ := st.ListNodes(); len(nodes) != 0 {
+		t.Fatalf("a revoked re-enroll must not create a node, got %d", len(nodes))
+	}
+	if uc := useCount(); uc != 1 {
+		t.Fatalf("revoked attempts must not consume key uses: use_count = %d, want 1", uc)
+	}
+}
+
+// TestClusterEnrollUnrevokeAllowsRejoin: after un-revoke, the same agent's next
+// attempt succeeds and re-attaches as a NEW node id (the old row is gone, so it
+// falls through to a fresh enrollment).
+func TestClusterEnrollUnrevokeAllowsRejoin(t *testing.T) {
+	s, st := newEnrollServer(t, "s3cr3t", false)
+	first := enroll(s, `{"name":"host-a","token":"s3cr3t"}`)
+	id := jsonField(first.Body.String(), "id")
+	key := jsonField(first.Body.String(), "key")
+	body := `{"name":"host-a","token":"s3cr3t","node_id":"` + id + `","node_key":"` + key + `"}`
+
+	if err := st.DeleteNode(id, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if rr := enroll(s, body); rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 while revoked, got %d", rr.Code)
+	}
+	if removed, err := st.UnrevokeNode(id); err != nil || !removed {
+		t.Fatalf("un-revoke should remove the tombstone: removed=%v err=%v", removed, err)
+	}
+	rr := enroll(s, body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("after un-revoke the agent should re-enroll as a new node: %d (%s)", rr.Code, rr.Body.String())
+	}
+	newID := jsonField(rr.Body.String(), "id")
+	if newID == "" || newID == id {
+		t.Fatalf("re-join should mint a NEW node id, got %q (old %q)", newID, id)
+	}
+}
+
+// TestClusterEnrollRemoveOnlySelfHeals: "remove only" (no tombstone) — the same
+// path a control-plane DB reset takes — lets the agent self-heal as a new node.
+func TestClusterEnrollRemoveOnlySelfHeals(t *testing.T) {
+	s, st := newEnrollServer(t, "s3cr3t", false)
+	first := enroll(s, `{"name":"host-a","token":"s3cr3t"}`)
+	id := jsonField(first.Body.String(), "id")
+	key := jsonField(first.Body.String(), "key")
+
+	if err := st.DeleteNode(id, false, ""); err != nil { // remove-only
+		t.Fatal(err)
+	}
+	if revoked, _ := st.IsNodeRevoked(id); revoked {
+		t.Fatal("remove-only must not write a tombstone")
+	}
+	body := `{"name":"host-a","token":"s3cr3t","node_id":"` + id + `","node_key":"` + key + `"}`
+	rr := enroll(s, body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("remove-only should re-enroll as a new node (self-heal): %d (%s)", rr.Code, rr.Body.String())
+	}
+	if newID := jsonField(rr.Body.String(), "id"); newID == "" || newID == id {
+		t.Fatalf("self-heal should mint a NEW node id, got %q (old %q)", newID, id)
+	}
+}

@@ -196,7 +196,9 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   }
 
   const agentSnippet = `-e MAZEDNS_CP_URL=${cpURL} \\
--e MAZEDNS_JOIN_TOKEN=${enrollKey || '<enrollment-key>'}`
+-e MAZEDNS_JOIN_TOKEN=${enrollKey || '<enrollment-key>'} \\
+-e MAZEDNS_DB_PATH=/data/mazedns.db \\
+-v mazedns-agent-data:/data`
 
   return (
     <div className="setup-wrap">
@@ -378,7 +380,9 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             ) : (
               <div className="enroll">
                 <div className="ok-msg">
-                  <strong>Enrollment key — shown once.</strong> Start an agent with:
+                  <strong>Enrollment key — shown once.</strong> Start an agent with these flags (the{' '}
+                  <code>/data</code> volume holds the node’s identity — keep it across image updates). The full
+                  copy-paste snippet is under Cluster → “Deploy a DNS agent”.
                 </div>
                 <pre className="keybox">{agentSnippet}</pre>
               </div>

@@ -12,6 +12,198 @@ func uuidLike(t *testing.T) string {
 	return uuid.NewString()
 }
 
+// rollupAll drains the rollup cursor so every query_log row is materialized.
+func rollupAll(t *testing.T, s *Store) {
+	t.Helper()
+	for {
+		more, err := s.RollupAdvance(1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !more {
+			return
+		}
+	}
+}
+
+// scanInt runs a single-int query for test assertions.
+func scanInt(t *testing.T, s *Store, q string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := s.read.QueryRow(q, args...).Scan(&n); err != nil {
+		t.Fatalf("query %q: %v", q, err)
+	}
+	return n
+}
+
+// TestRenameMergesOrphanedRollupHistory reproduces the real "replace an agent" flow:
+// delete a node (leaving its history), then rename the survivor to the deleted
+// node's name. The survivor's rollup rows share PK buckets with the orphaned rows,
+// so the old blind UPDATE hit a primary-key violation. The rename must instead MERGE
+// the counters. (Finding regression test #1.)
+func TestRenameMergesOrphanedRollupHistory(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Node A ("dns1"): 2 forwards + 1 blocked from client c1, all in bucket/hour 0.
+	idA, err := s.CreateNode("dns1", "hashA", "prefA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertNodeQueryLog("dns1", []QueryLogEntry{
+		{TS: 1000, Client: "c1", Name: "a.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+		{TS: 1000, Client: "c1", Name: "b.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+		{TS: 1000, Client: "c1", Name: "x.test", QType: "A", Action: "blocked", Rcode: "NXDOMAIN", ElapsedMS: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rollupAll(t, s)
+
+	// Replace A: delete it (remove-only; history stays, orphaned under "dns1").
+	if err := s.DeleteNode(idA, false, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Node B ("dns1-new"): 3 forwards + 1 blocked from c1 in the SAME buckets.
+	idB, err := s.CreateNode("dns1-new", "hashB", "prefB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertNodeQueryLog("dns1-new", []QueryLogEntry{
+		{TS: 1000, Client: "c1", Name: "a.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+		{TS: 1000, Client: "c1", Name: "b.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+		{TS: 1000, Client: "c1", Name: "c.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+		{TS: 1000, Client: "c1", Name: "x.test", QType: "A", Action: "blocked", Rcode: "NXDOMAIN", ElapsedMS: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rollupAll(t, s)
+
+	// The rename that used to fail with a PK constraint error.
+	if err := s.RenameNode(idB, "dns1"); err != nil {
+		t.Fatalf("rename onto a deleted node's name should merge history, got: %v", err)
+	}
+
+	// No history remains under B's old label.
+	for _, tbl := range []string{"query_log", "query_rollup", "client_rollup"} {
+		if n := scanInt(t, s, `SELECT COUNT(*) FROM `+tbl+` WHERE node='dns1-new'`); n != 0 {
+			t.Errorf("%s still has rows under the old name: %d", tbl, n)
+		}
+	}
+
+	// Rollup counters are the SUM of both nodes' rows, folded into one label.
+	if n := scanInt(t, s, `SELECT cnt FROM query_rollup WHERE node='dns1' AND action='forward'`); n != 5 {
+		t.Errorf("query_rollup forward cnt = %d, want 5 (2+3)", n)
+	}
+	if n := scanInt(t, s, `SELECT cnt FROM query_rollup WHERE node='dns1' AND action='blocked'`); n != 2 {
+		t.Errorf("query_rollup blocked cnt = %d, want 2 (1+1)", n)
+	}
+	cnt := scanInt(t, s, `SELECT cnt FROM client_rollup WHERE node='dns1' AND client='c1'`)
+	blocked := scanInt(t, s, `SELECT blocked FROM client_rollup WHERE node='dns1' AND client='c1'`)
+	if cnt != 7 || blocked != 2 {
+		t.Errorf("client_rollup c1 cnt/blocked = %d/%d, want 7/2", cnt, blocked)
+	}
+
+	// query_log rows all live under the new name (3 from A + 4 from B).
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_log WHERE node='dns1'`); n != 7 {
+		t.Errorf("query_log under 'dns1' = %d, want 7", n)
+	}
+
+	// The survivor keeps its identity.
+	if nb, _ := s.NodeByID(idB); nb == nil || nb.Name != "dns1" {
+		t.Errorf("renamed node should keep id %s with name dns1: %+v", idB, nb)
+	}
+}
+
+// TestRenameToLiveNodeNameRollsBack verifies renaming onto a LIVE node's name fails
+// cleanly ("name in use by another node") and migrates no history — the transaction
+// rolls back. (Finding regression test #2.)
+func TestRenameToLiveNodeNameRollsBack(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.CreateNode("dns1", "hashA", "prefA"); err != nil {
+		t.Fatal(err)
+	}
+	idB, err := s.CreateNode("dns2", "hashB", "prefB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertNodeQueryLog("dns2", []QueryLogEntry{
+		{TS: 1000, Client: "c1", Name: "a.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rollupAll(t, s)
+
+	err = s.RenameNode(idB, "dns1")
+	if err == nil {
+		t.Fatal("renaming onto a live node's name must fail")
+	}
+	if err.Error() != "name in use by another node" {
+		t.Errorf("want a friendly 'name in use' error, got: %v", err)
+	}
+
+	// Nothing migrated: B keeps its name and its history stays under 'dns2'.
+	nb, _ := s.NodeByID(idB)
+	if nb == nil || nb.Name != "dns2" {
+		t.Fatalf("failed rename must leave the node untouched: %+v", nb)
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_log WHERE node='dns2'`); n != 1 {
+		t.Errorf("history should stay under 'dns2', got %d", n)
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_log WHERE node='dns1'`); n != 0 {
+		t.Errorf("no history should have migrated to 'dns1', got %d", n)
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_rollup WHERE node='dns2'`); n == 0 {
+		t.Error("rollup history should remain under 'dns2' after a rolled-back rename")
+	}
+}
+
+// TestRenameFastPathNoOrphans confirms the common no-collision rename still moves
+// history cleanly when no orphaned rows exist. (Finding regression test #3.)
+func TestRenameFastPathNoOrphans(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	id, err := s.CreateNode("dns1", "hashA", "prefA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.InsertNodeQueryLog("dns1", []QueryLogEntry{
+		{TS: 1000, Client: "c1", Name: "a.test", QType: "A", Action: "forward", Rcode: "NOERROR", ElapsedMS: 1},
+		{TS: 1000, Client: "c1", Name: "x.test", QType: "A", Action: "blocked", Rcode: "NXDOMAIN", ElapsedMS: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rollupAll(t, s)
+
+	if err := s.RenameNode(id, "fresh-name"); err != nil {
+		t.Fatalf("fast-path rename should succeed: %v", err)
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_log WHERE node='dns1'`); n != 0 {
+		t.Errorf("old-name query_log should be empty, got %d", n)
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_log WHERE node='fresh-name'`); n != 2 {
+		t.Errorf("query_log should follow the rename, got %d", n)
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_rollup WHERE node='fresh-name'`); n == 0 {
+		t.Error("rollups should follow the rename")
+	}
+	if n := scanInt(t, s, `SELECT COUNT(*) FROM query_rollup WHERE node='dns1'`); n != 0 {
+		t.Errorf("no rollup rows should remain under the old name, got %d", n)
+	}
+}
+
 func TestUpsertOIDCUserAvatar(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -289,5 +481,61 @@ func TestBackfillNodeIDsIsIdempotent(t *testing.T) {
 	n2, _ := s.NodeByName("legacy")
 	if n2 == nil || n2.ID != first {
 		t.Fatalf("backfill should be idempotent: was %q now %q", first, n2.ID)
+	}
+}
+
+// TestDeleteNodeRevocationLifecycle covers the tombstone store methods: revoke on
+// delete, remove-only leaves no tombstone, list, and un-revoke.
+func TestDeleteNodeRevocationLifecycle(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	idA, err := s.CreateNode("a", "hA", "pA")
+	if err != nil {
+		t.Fatal(err)
+	}
+	idB, err := s.CreateNode("b", "hB", "pB")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Remove-and-revoke A.
+	if err := s.DeleteNode(idA, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if rev, _ := s.IsNodeRevoked(idA); !rev {
+		t.Error("A should be revoked")
+	}
+	rn, _ := s.RevokedNodeByID(idA)
+	if rn == nil || rn.Name != "a" || rn.RevokedBy != "admin" || rn.RevokedAt == 0 {
+		t.Errorf("tombstone not populated: %+v", rn)
+	}
+
+	// Remove-only B → no tombstone.
+	if err := s.DeleteNode(idB, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rev, _ := s.IsNodeRevoked(idB); rev {
+		t.Error("remove-only B must not be revoked")
+	}
+
+	list, _ := s.ListRevokedNodes()
+	if len(list) != 1 || list[0].ID != idA {
+		t.Errorf("ListRevokedNodes = %+v, want only A", list)
+	}
+
+	// Un-revoke A.
+	removed, err := s.UnrevokeNode(idA)
+	if err != nil || !removed {
+		t.Fatalf("un-revoke A: removed=%v err=%v", removed, err)
+	}
+	if rev, _ := s.IsNodeRevoked(idA); rev {
+		t.Error("A should not be revoked after un-revoke")
+	}
+	if removed, _ := s.UnrevokeNode(idA); removed {
+		t.Error("second un-revoke should report nothing removed")
 	}
 }

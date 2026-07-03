@@ -290,6 +290,15 @@ CREATE TABLE IF NOT EXISTS reputation_usage (
 	limit_total INTEGER NOT NULL DEFAULT -1,      -- last API-reported daily limit (-1 = unknown)
 	PRIMARY KEY (day, service)
 );
+-- Tombstones for revoked nodes: an admin "remove and revoke" writes the deleted
+-- node's id here so a still-running agent presenting that id at re-enrollment is
+-- refused (instead of self-healing into a brand-new node). Un-revoke deletes the row.
+CREATE TABLE IF NOT EXISTS revoked_nodes (
+	id TEXT PRIMARY KEY,                          -- the revoked node's immutable UUID
+	name TEXT NOT NULL DEFAULT '',                -- its display name at revocation (for the UI/log)
+	revoked_at INTEGER NOT NULL DEFAULT 0,
+	revoked_by TEXT NOT NULL DEFAULT ''           -- admin username that revoked it
+);
 `
 
 func (s *Store) migrate() error {

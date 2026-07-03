@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, type EnrollKey, type Node, type Site } from '../api'
+import { api, type EnrollKey, type Node, type RevokedNode, type Site } from '../api'
 import { pollWhileVisible } from '../poll'
 import Modal from './Modal'
 
@@ -62,6 +62,7 @@ export default function Cluster() {
   const [nodes, setNodes] = useState<Node[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [enrollKeys, setEnrollKeys] = useState<EnrollKey[]>([])
+  const [revoked, setRevoked] = useState<RevokedNode[]>([])
   const [name, setName] = useState('')
   const [siteName, setSiteName] = useState('')
   const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
@@ -70,11 +71,12 @@ export default function Cluster() {
   const [err, setErr] = useState('')
 
   const load = () =>
-    Promise.all([api.clusterNodes(), api.clusterSites(), api.enrollKeys()])
-      .then(([n, s, k]) => {
+    Promise.all([api.clusterNodes(), api.clusterSites(), api.enrollKeys(), api.listRevoked()])
+      .then(([n, s, k, rv]) => {
         setNodes(n)
         setSites(s)
         setEnrollKeys(k)
+        setRevoked(rv)
         setErr('')
       })
       .catch((e) => setErr(e.message))
@@ -98,12 +100,25 @@ export default function Cluster() {
     }
   }
 
-  const del = async (n: Node) => {
-    if (!window.confirm(`Remove agent “${n.name}”? Its key is revoked and it disappears from the cluster.`)) return
+  const del = async (n: Node, revoke: boolean) => {
+    const msg = revoke
+      ? `Remove and revoke agent “${n.name}”? Its identity is tombstoned so the running agent cannot rejoin the cluster — it keeps serving DNS standalone until you stop it or un-revoke.`
+      : `Remove agent “${n.name}” only? A still-running agent may re-enroll as a NEW node. Use this for intentional replacement.`
+    if (!window.confirm(msg)) return
     try {
-      await api.deleteNode(n.id)
+      await api.deleteNode(n.id, revoke)
       if (newKey?.name === n.name) setNewKey(null)
       if (selected === n.id) setSelected(null)
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  const unrevoke = async (r: RevokedNode) => {
+    if (!window.confirm(`Un-revoke “${r.name || r.id}”? Its agent can rejoin (as a new node) on its next attempt.`)) return
+    try {
+      await api.unrevokeNode(r.id)
       load()
     } catch (e: any) {
       setErr(e.message)
@@ -231,6 +246,8 @@ export default function Cluster() {
   -e MAZEDNS_CP_URL=${cpURL} \\
   -e MAZEDNS_JOIN_TOKEN=${enrollSecret} \\
   -e MAZEDNS_NODE_NAME=site-a-1 \\
+  -e MAZEDNS_DB_PATH=/data/mazedns.db \\
+  -v mazedns-agent-data:/data \\
   -p 53:53/udp -p 53:53/tcp \\
   ${IMAGE}`
   const joinCompose = `services:
@@ -242,15 +259,22 @@ export default function Cluster() {
       MAZEDNS_CP_URL: "${cpURL}"
       MAZEDNS_JOIN_TOKEN: "${enrollSecret}"
       MAZEDNS_NODE_NAME: "site-a-1"
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+    volumes:
+      - mazedns-agent-data:/data
     ports:
       - "53:53/udp"
-      - "53:53/tcp"`
+      - "53:53/tcp"
+volumes:
+  mazedns-agent-data:`
   const manualRun = newKey
     ? `docker run -d --name mazedns-${newKey.name} --restart unless-stopped \\
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
   -e MAZEDNS_CP_URL=${cpURL} \\
   -e MAZEDNS_NODE_KEY=${newKey.key} \\
   -e MAZEDNS_NODE_NAME=${newKey.name} \\
+  -e MAZEDNS_DB_PATH=/data/mazedns.db \\
+  -v mazedns-${newKey.name}-data:/data \\
   -p 53:53/udp -p 53:53/tcp \\
   ${IMAGE}`
     : ''
@@ -410,6 +434,49 @@ export default function Cluster() {
         </table>
       </div>
 
+      {/* ── Revoked agents ────────────────────────────────────────────────── */}
+      {revoked.length > 0 && (
+        <details className="settings-card">
+          <summary>
+            Revoked agents <span className="badge blocked">{revoked.length}</span>
+          </summary>
+          <p className="muted" style={{ textAlign: 'left' }}>
+            These node identities are tombstoned — their agents are refused at re-enrollment (no enrollment-key use is
+            spent). <strong>Un-revoke</strong> lets an agent rejoin as a new node on its next attempt.
+          </p>
+          <div className="table-scroll">
+            <table className="agents-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>ID</th>
+                  <th>Revoked</th>
+                  <th>By</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {revoked.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.name || <span className="muted">—</span>}</td>
+                    <td>
+                      <code>{r.id}</code>
+                    </td>
+                    <td>{r.revoked_at ? new Date(r.revoked_at * 1000).toLocaleString() : '—'}</td>
+                    <td>{r.revoked_by || <span className="muted">—</span>}</td>
+                    <td>
+                      <button className="btn ghost" onClick={() => unrevoke(r)}>
+                        Un-revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
       {/* ── Enrollment keys ───────────────────────────────────────────────── */}
       <EnrollKeys
         keys={enrollKeys}
@@ -427,6 +494,11 @@ export default function Cluster() {
           <code>MAZEDNS_JOIN_TOKEN</code>. Run the agent image below and it appears in the table above automatically —
           no per-node key to copy. Set <code>MAZEDNS_REQUIRE_APPROVAL=true</code> to hold new agents until you approve
           them. After joining, each node authenticates with a per-node key the control plane rotates automatically.
+        </p>
+        <p className="muted" style={{ textAlign: 'left' }}>
+          <strong>Keep the <code>/data</code> volume.</strong> It stores the node’s identity (its UUID + rotating key).
+          The snippets below mount it — without it, every image update makes the agent re-enroll as a{' '}
+          <em>duplicate</em> node (a new <code>-2</code>-suffixed entry).
         </p>
         <CodeBlock label="Zero-touch join — docker run" text={joinRun} />
         <CodeBlock label="Zero-touch join — docker compose" text={joinCompose} />
@@ -461,7 +533,7 @@ export default function Cluster() {
           onMaintenance={() => toggleMaintenance(selectedNode)}
           onRenew={() => renew(selectedNode)}
           onRename={() => rename(selectedNode)}
-          onDelete={() => del(selectedNode)}
+          onDelete={(revoke) => del(selectedNode, revoke)}
           onAssign={(site, role) => assignSite(selectedNode, site, role)}
         />
       )}
@@ -489,7 +561,7 @@ function AgentModal({
   onMaintenance: () => void
   onRenew: () => void
   onRename: () => void
-  onDelete: () => void
+  onDelete: (revoke: boolean) => void
   onAssign: (site: string, role: string) => void
 }) {
   const st = statusOf(node)
@@ -598,10 +670,23 @@ function AgentModal({
           </span>
         </div>
         <div className="agent-action">
-          <button className="del" onClick={onDelete}>
-            Remove
-          </button>
-          <span className="muted">Revoke the key and remove the agent from the cluster.</span>
+          <div className="agent-remove-btns">
+            <button className="del" onClick={() => onDelete(true)}>
+              Remove &amp; revoke
+            </button>
+            <button className="btn ghost" onClick={() => onDelete(false)}>
+              Remove only
+            </button>
+          </div>
+          <span className="muted">
+            <strong>Remove &amp; revoke</strong> tombstones this node’s identity so the running agent can’t rejoin — use
+            it for a decommissioned or compromised agent. <strong>Remove only</strong> deletes the row so the agent may
+            re-enroll as a new node (intentional replacement).
+            <br />
+            Note: an agent whose <code>/data</code> was wiped enrolls with no identity and can’t be matched to the
+            tombstone — to keep it out, also revoke the enrollment key it holds and/or turn on{' '}
+            <em>require approval</em>.
+          </span>
         </div>
       </div>
     </Modal>

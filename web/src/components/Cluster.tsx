@@ -231,7 +231,7 @@ export default function Cluster() {
   -e MAZEDNS_CP_URL=${cpURL} \\
   -e MAZEDNS_JOIN_TOKEN=${enrollSecret} \\
   -e MAZEDNS_NODE_NAME=site-a-1 \\
-  -p 53:5300/udp -p 53:5300/tcp \\
+  -p 53:53/udp -p 53:53/tcp \\
   ${IMAGE}`
   const joinCompose = `services:
   dns-agent:
@@ -243,15 +243,15 @@ export default function Cluster() {
       MAZEDNS_JOIN_TOKEN: "${enrollSecret}"
       MAZEDNS_NODE_NAME: "site-a-1"
     ports:
-      - "53:5300/udp"
-      - "53:5300/tcp"`
+      - "53:53/udp"
+      - "53:53/tcp"`
   const manualRun = newKey
     ? `docker run -d --name mazedns-${newKey.name} --restart unless-stopped \\
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
   -e MAZEDNS_CP_URL=${cpURL} \\
   -e MAZEDNS_NODE_KEY=${newKey.key} \\
   -e MAZEDNS_NODE_NAME=${newKey.name} \\
-  -p 53:5300/udp -p 53:5300/tcp \\
+  -p 53:53/udp -p 53:53/tcp \\
   ${IMAGE}`
     : ''
 
@@ -331,7 +331,9 @@ export default function Cluster() {
 
       {/* ── Agents ────────────────────────────────────────────────────────── */}
       <h2>Agents</h2>
-      <p className="muted">Click an agent to see its metrics and management actions.</p>
+      <p className="muted" style={{ textAlign: 'left', marginTop: 0 }}>
+        Click an agent to see its metrics and management actions.
+      </p>
       <div className="table-scroll">
         <table className="agents-table">
           <thead>
@@ -675,7 +677,7 @@ function EnrollKeys({
           </button>
         </form>
       </div>
-      <p className="muted">
+      <p className="muted" style={{ textAlign: 'left', marginTop: 0 }}>
         Agents join by presenting an enrollment key (as <code>MAZEDNS_JOIN_TOKEN</code>). Each key only works for
         enrollment — never for serving DNS or shipping logs — and can be limited by expiry and a maximum number of uses.
         The full secret is shown once, here, then stored hashed.

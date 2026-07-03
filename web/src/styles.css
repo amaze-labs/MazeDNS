@@ -1559,6 +1559,20 @@ details.settings-card[open] > :last-child {
   color: #001022;
 }
 
+/* Light theme: white label + a lighter top on the gradient so the primary button
+   reads bright rather than a heavy dark-text-on-blue block. */
+[data-theme='light'] .btn.primary,
+[data-theme='light'] form button {
+  background: linear-gradient(180deg, #4a92ea, #2f7fe0);
+  border-color: #2f7fe0;
+  color: #fff;
+}
+[data-theme='light'] .btn.primary:hover {
+  background: linear-gradient(180deg, #5b9cef, #3785e6);
+  border-color: #3785e6;
+  color: #fff;
+}
+
 .btn.ghost {
   background: transparent;
 }
@@ -1636,6 +1650,14 @@ details.settings-card[open] > :last-child {
 .toggle input:focus-visible + .track {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Light theme: a clean white knob (the default var(--fg) thumb is dark here, which
+   reads as heavy). White in both on/off states, lifted with a soft shadow. */
+[data-theme='light'] .toggle .thumb,
+[data-theme='light'] .toggle input:checked + .track .thumb {
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.25);
 }
 
 .toggle-label {
@@ -2585,10 +2607,18 @@ img.acct-avatar.lg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 12px 16px;
   flex-wrap: wrap;
+  /* Match the vertical rhythm of a standalone <h2> so sections that carry an
+     inline toolbar aren't cramped against the content above them. */
+  margin: 24px 0 12px;
 }
 .section-head h2 {
+  margin: 0;
+}
+/* The toolbar form in a section head shouldn't stretch full-width when it wraps
+   below the heading on narrow viewports. */
+.section-head .row {
   margin: 0;
 }
 

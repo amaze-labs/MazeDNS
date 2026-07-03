@@ -67,3 +67,45 @@ func TestAgentSync(t *testing.T) {
 		t.Fatal("expected an auth error with a wrong token")
 	}
 }
+
+// TestAgentStopsReenrollOnRevoked verifies the agent stops hammering the control
+// plane once it learns its node was revoked: the reenroll callback is invoked once,
+// then disabled — subsequent polls do not retry it. (The agent keeps serving DNS
+// standalone from its local config.)
+func TestAgentStopsReenrollOnRevoked(t *testing.T) {
+	// The snapshot endpoint always rejects the node key (revoked).
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ag := NewAgent(ts.URL, "", "tok", "", time.Second, st,
+		func() error { return nil }, func() store.NodeStats { return store.NodeStats{} }, nil, nil)
+
+	calls := 0
+	ag.SetReenroll(func(context.Context) (string, error) {
+		calls++
+		return "", ErrNodeRevoked
+	})
+
+	ag.syncOnce(context.Background())
+	if calls != 1 {
+		t.Fatalf("reenroll should be attempted once on the revoked 401, got %d", calls)
+	}
+	if ag.reenroll != nil {
+		t.Fatal("reenroll must be disabled after a revoked response")
+	}
+
+	// Subsequent polls must NOT re-enroll again.
+	ag.syncOnce(context.Background())
+	ag.syncOnce(context.Background())
+	if calls != 1 {
+		t.Fatalf("reenroll must not be retried after revocation, got %d total calls", calls)
+	}
+}

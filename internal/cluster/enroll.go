@@ -4,11 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrNodeRevoked is returned by Enroll when the control plane refuses the presented
+// node id because it was revoked (an admin removed it with revocation). The agent
+// treats this as terminal — it stops re-enrolling instead of retrying every poll.
+var ErrNodeRevoked = errors.New("node was revoked on the control plane")
 
 // NewEnrollClient returns an HTTP client suitable for enrollment and, if reused,
 // config polling. When cpIP is set the control plane is dialed at that fixed IP
@@ -59,7 +66,16 @@ func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken, no
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return res, statusError(resp)
+		// A revoked node is refused with 403 {"revoked":true}. Surface it as a distinct
+		// terminal error so the agent stops re-enrolling (vs. a transient rejection).
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if resp.StatusCode == http.StatusForbidden && bytes.Contains(body, []byte(`"revoked":true`)) {
+			return res, ErrNodeRevoked
+		}
+		if msg := strings.TrimSpace(string(body)); msg != "" {
+			return res, fmt.Errorf("master returned status %d: %s", resp.StatusCode, msg)
+		}
+		return res, fmt.Errorf("master returned status %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return res, err

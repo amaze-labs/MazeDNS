@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -263,9 +264,17 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized && a.reenroll != nil {
 		// Our key was rejected (revoked, or the control plane lost its DB). Re-join
-		// with the shared token to get a fresh one; the next cycle uses it.
+		// with the enrollment key to get a fresh one; the next cycle uses it.
 		if newKey, rerr := a.reenroll(ctx); rerr != nil {
-			slog.Warn("cluster re-enroll failed", "err", rerr)
+			if errors.Is(rerr, ErrNodeRevoked) {
+				// Terminal: an admin revoked this node. Don't hammer the CP every poll.
+				// Keep serving DNS from the local config; stop trying to re-enroll until
+				// the operator un-revokes and restarts the agent (or wipes /data).
+				slog.Error("this node was revoked on the control plane; wipe /data to enroll as a new node, or ask the admin to un-revoke. Serving DNS standalone; halting re-enroll attempts.")
+				a.reenroll = nil
+			} else {
+				slog.Warn("cluster re-enroll failed", "err", rerr)
+			}
 		} else {
 			a.nodeKey = newKey
 			slog.Info("cluster re-enrolled after key rejection")

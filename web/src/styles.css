@@ -2723,6 +2723,15 @@ img.acct-avatar.lg {
 .agent-action .muted {
   font-size: 13px;
 }
+/* Two-choice node removal (revoke vs remove-only): stack the buttons, top-aligned
+   next to the explanatory copy. */
+.agent-remove-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
 
 /* Deployment docs are reference material — collapsed, de-emphasised. */
 .deploy-docs {

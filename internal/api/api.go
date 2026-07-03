@@ -227,6 +227,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("POST /api/cluster/sites", s.requireRole(roleAdmin, s.createSite))
 			mux.HandleFunc("DELETE /api/cluster/sites/{name}", s.requireRole(roleAdmin, s.deleteSite))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{id}", s.requireRole(roleAdmin, s.deleteNode))
+			mux.HandleFunc("GET /api/cluster/revoked", s.requireRole(roleAdmin, s.listRevoked))
+			mux.HandleFunc("DELETE /api/cluster/revoked/{id}", s.requireRole(roleAdmin, s.unrevokeNode))
 			mux.HandleFunc("GET /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.listEnrollKeys))
 			mux.HandleFunc("POST /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.createEnrollKey))
 			mux.HandleFunc("DELETE /api/cluster/enroll-keys/{id}", s.requireRole(roleAdmin, s.revokeEnrollKey))
@@ -349,6 +351,18 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 	// be valid (but is NOT consumed — this is recovery of an already-authorized node,
 	// not a new join), and the agent must prove it owns the id with its current key.
 	if id := strings.TrimSpace(in.NodeID); id != "" {
+		// Revocation gate: a node removed with "revoke" leaves a tombstone. Refuse it
+		// BEFORE any enrollment-key use is consumed, so a decommissioned/compromised
+		// agent can't rejoin (as a new node) by burning key uses each poll. Checked for
+		// the presented id only; an unknown, non-tombstoned id still self-heals below.
+		if rn, rerr := s.store.RevokedNodeByID(id); rerr != nil {
+			writeError(w, http.StatusInternalServerError, rerr.Error())
+			return
+		} else if rn != nil {
+			slog.Warn("cluster enroll rejected: node revoked", "id", id, "name", rn.Name, "remote", clientIP(r))
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "node revoked", "revoked": true})
+			return
+		}
 		existing, err := s.store.NodeByID(id)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -867,11 +881,67 @@ func (s *Server) addNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "name": name, "key": key})
 }
 
+// deleteNode removes an agent. ?revoke=true (the default) additionally tombstones
+// the node id so a still-running agent can't rejoin under its current identity;
+// ?revoke=false is a plain removal for intentional agent replacement (the agent may
+// re-enroll as a brand-new node). Admin only, audit-logged.
 func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.DeleteNode(r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	revoke := r.URL.Query().Get("revoke") != "false" // default: revoke
+	node, _ := s.store.NodeByID(id)
+	name := id
+	if node != nil {
+		name = node.Name
+	}
+	if err := s.store.DeleteNode(id, revoke, auditUser(s, r)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	action := "removed"
+	if revoke {
+		action = "removed and revoked"
+	}
+	_ = s.store.AppendAudit(store.AuditEntry{
+		User: auditUser(s, r), Action: "cluster.node.delete",
+		Detail: fmt.Sprintf("%s node %s (%s)", action, name, id),
+	})
+	slog.Info("cluster node "+action, "id", id, "name", name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// listRevoked returns the revocation tombstones (admin only).
+func (s *Server) listRevoked(w http.ResponseWriter, _ *http.Request) {
+	revoked, err := s.store.ListRevokedNodes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, revoked)
+}
+
+// unrevokeNode deletes a node's tombstone so its agent can rejoin (as a new node)
+// on the next enrollment attempt. Admin only, audit-logged.
+func (s *Server) unrevokeNode(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rn, _ := s.store.RevokedNodeByID(id)
+	removed, err := s.store.UnrevokeNode(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !removed {
+		writeError(w, http.StatusNotFound, "no revocation for that node")
+		return
+	}
+	name := id
+	if rn != nil {
+		name = rn.Name
+	}
+	_ = s.store.AppendAudit(store.AuditEntry{
+		User: auditUser(s, r), Action: "cluster.node.unrevoke",
+		Detail: fmt.Sprintf("un-revoked node %s (%s)", name, id),
+	})
+	slog.Info("cluster node un-revoked", "id", id, "name", name)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -310,21 +310,58 @@ func (s *Store) RenameNode(id, newName string) error {
 		_ = tx.Rollback()
 		return nil
 	}
+	// The nodes.name UNIQUE constraint only collides with a *live* node (a deleted
+	// node's row is gone; only its history lingers). Reject that up front with a
+	// friendly message so the API surfaces a clean 400 instead of a raw constraint
+	// error from the UPDATE below.
+	var live int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM nodes WHERE name=? AND id<>?`, newName, id).Scan(&live); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if live > 0 {
+		_ = tx.Rollback()
+		return errors.New("name in use by another node")
+	}
 	if _, err := tx.Exec(`UPDATE nodes SET name=? WHERE id=?`, newName, id); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
-	// Cascade to history so charts/logs stay under one label. Names are unique among
-	// live nodes, so these updates don't collide with another live node's rows.
-	for _, q := range []string{
-		`UPDATE query_log SET node=? WHERE node=?`,
-		`UPDATE query_rollup SET node=? WHERE node=?`,
-		`UPDATE client_rollup SET node=? WHERE node=?`,
-	} {
-		if _, err := tx.Exec(q, newName, old); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
+	// Cascade to history so charts/logs stay under one label. query_log has no
+	// uniqueness on node, so a plain UPDATE is fine. The rollup tables are keyed by
+	// (bucket/hour, node, ...), and a DELETED node's orphaned history can already
+	// occupy the target buckets under newName — so a blind UPDATE would violate the
+	// PK. MERGE instead: fold the old-name rows into any existing newName rows
+	// (summing the counters), then drop the old-name rows. All in this tx.
+	if _, err := tx.Exec(`UPDATE query_log SET node=? WHERE node=?`, newName, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO query_rollup(bucket, node, action, cnt, lat_sum)
+		 SELECT bucket, ?, action, cnt, lat_sum FROM query_rollup WHERE node=?
+		 ON CONFLICT(bucket, node, action) DO UPDATE SET
+		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+		newName, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM query_rollup WHERE node=?`, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO client_rollup(hour, node, client, cnt, blocked)
+		 SELECT hour, ?, client, cnt, blocked FROM client_rollup WHERE node=?
+		 ON CONFLICT(hour, node, client) DO UPDATE SET
+		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+		newName, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM client_rollup WHERE node=?`, old); err != nil {
+		_ = tx.Rollback()
+		return err
 	}
 	return tx.Commit()
 }
@@ -455,9 +492,95 @@ func (s *Store) ListNodes() ([]Node, error) {
 	return out, rows.Err()
 }
 
-// DeleteNode revokes a node (removing its key), keyed by its immutable id. Its
-// historical rows (tagged by name) are left in place.
-func (s *Store) DeleteNode(id string) error {
-	_, err := s.db.Exec(`DELETE FROM nodes WHERE id=?`, id)
-	return err
+// RevokedNode is a tombstone for a node removed with revocation.
+type RevokedNode struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	RevokedAt int64  `json:"revoked_at"`
+	RevokedBy string `json:"revoked_by"`
+}
+
+// DeleteNode removes a node by its immutable id. Its historical rows (tagged by
+// name) are left in place. When revoke is true, a tombstone is written in the SAME
+// transaction as the row delete, so a still-running agent presenting this id at
+// re-enrollment is refused rather than self-healing into a new node (see
+// clusterEnroll). When revoke is false the node is only removed (agent replacement:
+// the agent may re-enroll as a brand-new node). revokedBy is the acting admin.
+func (s *Store) DeleteNode(id string, revoke bool, revokedBy string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	var name string
+	// Capture the current name for the tombstone (best effort; empty if already gone).
+	_ = tx.QueryRow(`SELECT name FROM nodes WHERE id=?`, id).Scan(&name)
+	if _, err := tx.Exec(`DELETE FROM nodes WHERE id=?`, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if revoke {
+		if _, err := tx.Exec(
+			`INSERT INTO revoked_nodes(id, name, revoked_at, revoked_by) VALUES(?,?,?,?)
+			 ON CONFLICT(id) DO UPDATE SET name=excluded.name, revoked_at=excluded.revoked_at, revoked_by=excluded.revoked_by`,
+			id, name, time.Now().Unix(), revokedBy); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// IsNodeRevoked reports whether the given node id has a revocation tombstone.
+func (s *Store) IsNodeRevoked(id string) (bool, error) {
+	if id == "" {
+		return false, nil
+	}
+	var n int
+	err := s.read.QueryRow(`SELECT COUNT(*) FROM revoked_nodes WHERE id=?`, id).Scan(&n)
+	return n > 0, err
+}
+
+// RevokedNodeByID returns a node's tombstone, or (nil, nil) if it isn't revoked.
+func (s *Store) RevokedNodeByID(id string) (*RevokedNode, error) {
+	rn := &RevokedNode{}
+	err := s.read.QueryRow(
+		`SELECT id, name, revoked_at, revoked_by FROM revoked_nodes WHERE id=?`, id).
+		Scan(&rn.ID, &rn.Name, &rn.RevokedAt, &rn.RevokedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return rn, nil
+}
+
+// ListRevokedNodes returns all revocation tombstones, newest first.
+func (s *Store) ListRevokedNodes() ([]RevokedNode, error) {
+	rows, err := s.read.Query(
+		`SELECT id, name, revoked_at, revoked_by FROM revoked_nodes ORDER BY revoked_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RevokedNode{}
+	for rows.Next() {
+		var rn RevokedNode
+		if err := rows.Scan(&rn.ID, &rn.Name, &rn.RevokedAt, &rn.RevokedBy); err != nil {
+			return nil, err
+		}
+		out = append(out, rn)
+	}
+	return out, rows.Err()
+}
+
+// UnrevokeNode deletes a node's tombstone, letting its agent rejoin (as a new node)
+// on the next enrollment attempt. Returns whether a tombstone was removed.
+func (s *Store) UnrevokeNode(id string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM revoked_nodes WHERE id=?`, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }

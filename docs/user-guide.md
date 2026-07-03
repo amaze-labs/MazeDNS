@@ -83,28 +83,30 @@ The control plane is the source of truth; each agent pulls rules + rewrites over
 authenticated snapshot and applies them live. The control plane never answers DNS,
 so its dashboard/classifier load can't affect resolver latency.
 
-- **Enrollment** — agents self-register with the shared **join token**
-  (`MAZEDNS_JOIN_TOKEN`) and appear in the **Cluster** tab automatically, no key to
-  copy. Set `MAZEDNS_REQUIRE_APPROVAL=true` on the control plane to hold new agents
-  until you approve them there.
-- **Per-node keys** — issued automatically via the join token. You can also issue
-  one manually in the Cluster tab when no join token is used. A revoked agent
-  re-enrolls automatically.
+- **Enrollment** — agents self-register with an **enrollment key** (created under
+  Cluster → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
+  **Cluster** tab automatically, no key to copy. Set `MAZEDNS_REQUIRE_APPROVAL=true`
+  on the control plane to hold new agents until you approve them there.
+- **Per-node keys** — issued automatically when an agent enrolls with a key. You can
+  also issue one manually in the Cluster tab (used via `MAZEDNS_NODE_KEY`). A revoked
+  agent re-enrolls automatically.
 - **Node health** — the Cluster tab shows each node's address, status, and counters.
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
 
-Use a strong join token in production (not a dev placeholder). Multisite networking
-(e.g. a WireGuard mesh so agents reach the control plane privately) is up to you;
-see [install.md](install.md#reaching-the-control-plane-from-an-agent) for pinning the
+Create enrollment keys with an expiry and a maximum number of uses; the full secret
+is shown once and then stored hashed. Multisite networking (e.g. a WireGuard mesh so
+agents reach the control plane privately) is up to you; see
+[install.md](install.md#reaching-the-control-plane-from-an-agent) for pinning the
 control plane's IP when an agent can't resolve its FQDN.
 
 ## Authentication and SSO
 
-The UI and API require login by default. On first run an admin is created from
-`MAZEDNS_ADMIN_USERNAME` / `MAZEDNS_ADMIN_PASSWORD` (a random password is generated
-and logged once if you don't set one). Passwords are argon2id-hashed and sessions
-are server-side and revocable. Roles: **admin** (full) and **readonly** (GET only).
+The UI and API require login by default. On first run the control plane opens a
+setup wizard where you create the first admin (or configure SSO) — there are no
+`MAZEDNS_ADMIN_*` env vars. Lost the password? Reset it with the
+`control-plane reset-admin` CLI. Passwords are argon2id-hashed and sessions are
+server-side and revocable. Roles: **admin** (full) and **readonly** (GET only).
 
 For single sign-on, set the `MAZEDNS_OIDC_*` variables (see
 [configuration.md](configuration.md#control-plane)) — setting `MAZEDNS_OIDC_ISSUER`

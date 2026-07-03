@@ -85,6 +85,25 @@ deprecated but still honored: it's imported once as a never-expiring enrollment
 key.) Toggle **require approval** in the setup wizard or under Settings → Access to
 hold new agents until you approve them.
 
+### Removing an agent: revoke vs. remove-only
+
+In the **Cluster** tab, deleting an agent offers two intents:
+
+- **Remove and revoke** (default) — tombstones the node's identity. A still-running
+  agent presenting that identity is refused at re-enrollment (it keeps serving DNS
+  standalone but cannot rejoin), and the attempt consumes **no** enrollment-key use.
+  Use this to decommission or lock out a compromised agent. Reverse it with
+  **Un-revoke** (the agent then rejoins as a *new* node on its next attempt).
+- **Remove only** — deletes the row without a tombstone, so the agent may re-enroll
+  as a brand-new node. Use it for intentional replacement, and it's also the path a
+  control-plane database reset takes (the CP self-heals every agent back in).
+
+**Residual limitation:** revocation is keyed on the node's stored identity (in its
+`/data`). An agent whose `/data` was **wiped** enrolls with *no* identity, so it
+can't be matched to a tombstone and would join as a new node. To keep such an agent
+out, **revoke the enrollment key it holds** (Cluster → Enrollment keys) and/or turn
+on **require approval** so new joins wait for an admin.
+
 ---
 
 ## 1. Docker / Compose
@@ -178,16 +197,21 @@ If you prefer plain `docker run`:
 docker run -d --name mazedns-control-plane \
   -p 8080:8080 -v cp-data:/data \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
+  -e MAZEDNS_DB_PATH=/data/mazedns.db \
   ghcr.io/ipmaze/mazedns-control-plane:latest
 
-# 2. DNS agent — self-enrolls with the join token, then serves DNS on :53.
+# 2. DNS agent — self-enrolls with an enrollment key, then serves DNS on :53.
 docker run -d --name mazedns-agent \
   -p 53:53/udp -p 53:53/tcp -v agent-data:/data \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
   -e MAZEDNS_CP_URL=http://<control-plane-host>:8080 \
-  -e MAZEDNS_JOIN_TOKEN=a-shared-secret \
+  -e MAZEDNS_JOIN_TOKEN=<enrollment-key> \
   -e MAZEDNS_NODE_NAME=agent-1 \
+  -e MAZEDNS_DB_PATH=/data/mazedns.db \
   ghcr.io/ipmaze/mazedns-dns-agent:latest
+  # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Cluster →
+  # Enrollment keys), not a shared password. It only lets an agent enroll; the
+  # control plane then issues a per-node key it rotates automatically.
   # MAZEDNS_NODE_NAME is only the initial display label. The control plane assigns
   # the node an immutable UUID at first enrollment (stored on the -v agent-data
   # volume); you can rename the node later in the UI without re-identifying it.
@@ -197,6 +221,11 @@ docker run -d --name mazedns-agent \
   # TLS still verifies the URL host):  -e MAZEDNS_CP_IP=10.0.0.5
   # Real client IPs on Linux: use --network host instead of the -p mappings.
 ```
+
+> **Keep the agent's `/data` volume across image updates.** It stores the node's
+> identity (its server-assigned UUID + rotating key). Recreate the agent without it
+> and the control plane sees a brand-new node — you get a duplicated, `-2`-suffixed
+> entry instead of the original.
 
 `MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/metrics` port reachable
 from outside the container (it defaults to loopback). The control plane's `/metrics`
@@ -222,8 +251,10 @@ kind: Secret
 metadata: { name: mazedns-secrets, namespace: mazedns }
 type: Opaque
 stringData:
-  admin-password: "change-me"
-  join-token: "a-shared-secret"
+  # An enrollment key created in the UI (Cluster → Enrollment keys). Agents present
+  # it to self-enroll; it is never used to serve DNS. (The first admin is created in
+  # the setup wizard, not via an env var — there is no admin-password secret.)
+  join-token: "<enrollment-key-from-the-wizard>"
 ```
 
 ### Control plane
@@ -311,6 +342,10 @@ spec:
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 } }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
           volumeMounts: [{ name: data, mountPath: /data }]
+      # emptyDir loses the node's identity when the pod is recreated, so the agent
+      # re-enrolls as a NEW node (a duplicate, -2-suffixed entry). Fine only with an
+      # unlimited-use enrollment key. For a stable identity across restarts, back the
+      # `data` volume with a PersistentVolumeClaim (or a per-node hostPath) instead.
       volumes: [{ name: data, emptyDir: {} }]
 ---
 apiVersion: v1

@@ -8,9 +8,11 @@
 # filter sections. Any resolver setting omitted here falls back to a harmless
 # built-in default (the control plane just doesn't use it).
 #
-# The control plane is configured through its WEB UI. On a fresh install it prints a
-# one-time setup token to the log and runs a first-boot wizard (create admin, DNS
-# defaults, first enrollment key). Everything below is OPTIONAL: the `auth`, `oidc`,
+# The control plane is configured through its WEB UI. On a fresh install it starts a
+# first-boot wizard (create admin or configure SSO, DNS defaults, first enrollment
+# key). There is NO setup token — setup uses trust-on-first-use, so don't expose the
+# API port publicly until the wizard is complete. Everything below is OPTIONAL: the
+# `auth`, `oidc`,
 # `cluster` policy, `classifier`, and `metrics` sections only SEED the database on
 # first boot — afterwards they are ignored and you edit them under Settings. Only
 # `api` (bind), `database`, and `log.level` are read on every start.

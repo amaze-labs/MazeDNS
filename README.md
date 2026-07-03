@@ -12,8 +12,8 @@ and any number of DNS agents replicate it and serve queries close to your client
 - **Web dashboard** — traffic / protection / performance KPIs with a selectable
   time window, per-client and per-type breakdowns, live query log, and all config.
 - **Auth** — local users, or single sign-on via any **OIDC** provider (Authentik).
-- **Clustering** — a control plane (no DNS) + DNS agents that self-enroll with a
-  shared join token and replicate config automatically. Multi-site HA on Docker/k8s.
+- **Clustering** — a control plane (no DNS) + DNS agents that self-enroll with an
+  enrollment key and replicate config automatically. Multi-site HA on Docker/k8s.
 - **Observability** — Prometheus `/metrics`, optional VictoriaMetrics/VictoriaLogs.
 
 <!-- Add a dashboard screenshot here, e.g.: ![MazeDNS dashboard](docs/images/dashboard.png) -->
@@ -35,12 +35,21 @@ resolver hot path.
 
 ```bash
 curl -O https://raw.githubusercontent.com/IPMaze/MazeDNS/main/docker-compose.prod.yml
-MAZEDNS_ADMIN_PASSWORD='choose-a-strong-one' MAZEDNS_JOIN_TOKEN="$(openssl rand -hex 16)" \
-  docker compose -f docker-compose.prod.yml up -d
+
+# 1. Bring up the control plane, then open http://localhost:8080 and complete the
+#    setup wizard (create your admin or configure SSO, then create an enrollment key).
+#    There is no admin password env var, and no setup token — don't expose 8080
+#    publicly until the wizard is done. (The placeholder just satisfies the agent
+#    service's required var while the control plane starts.)
+MAZEDNS_JOIN_TOKEN=placeholder docker compose -f docker-compose.prod.yml up -d control-plane
+
+# 2. Start the agent with the enrollment key the wizard gave you:
+MAZEDNS_JOIN_TOKEN='<enrollment-key>' docker compose -f docker-compose.prod.yml up -d
 ```
 
-This starts a control plane (dashboard on `http://localhost:8080`) and one DNS
-agent listening on `:53`. Log in as `admin`, then point a client at the agent:
+This runs a control plane (dashboard on `http://localhost:8080`) and one DNS agent
+listening on `:53`. Log in with the admin account you created, then point a client
+at the agent:
 
 ```bash
 dig @<agent-host> example.com        # resolves

@@ -81,6 +81,15 @@ export interface Site {
   created_at: number
 }
 
+// RevokedNode is a tombstone for a node removed with revocation — its agent is
+// refused at re-enrollment until un-revoked.
+export interface RevokedNode {
+  id: string
+  name: string
+  revoked_at: number
+  revoked_by: string
+}
+
 export interface SessionUser {
   id: number
   username: string
@@ -684,7 +693,10 @@ export const api = {
     fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ id: string; name: string; key: string }>),
   renewNodeKey: (id: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/key`, { method: 'POST' }).then(j<{ id: string; key: string }>),
-  deleteNode: (id: string) => fetch(`/api/cluster/nodes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteNode: (id: string, revoke = true) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }),
+  listRevoked: () => fetch('/api/cluster/revoked').then(j<RevokedNode[]>),
+  unrevokeNode: (id: string) => fetch(`/api/cluster/revoked/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   renameNode: (id: string, name: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/name`, {
       method: 'PUT',

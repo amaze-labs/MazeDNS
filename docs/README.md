@@ -22,11 +22,13 @@ is written for deploying and operating those containers — no source builds req
   never answers DNS. Run one.
 - **DNS agent** — serves DNS and replicates its filtering config from the control
   plane. Run one or more. Clients point here.
-- **Enrollment** — agents self-register with a shared **join token** and receive a
-  per-node key automatically; they then appear in the **Cluster** tab.
-- **Bootstrap vs. operational settings** — addresses/ports, TLS, database, auth,
-  and cluster wiring come from env/YAML on every start; upstreams, cache, rate
-  limits, and block behavior are seeded once and then edited live in the UI.
+- **Enrollment** — agents self-register with an **enrollment key** (created in the UI,
+  passed as `MAZEDNS_JOIN_TOKEN`) and receive a per-node key automatically; they then
+  appear in the **Cluster** tab.
+- **Bootstrap vs. operational settings** — the database, HTTP/DNS bind addresses &
+  ports, TLS, and log level are read from env/YAML on every start; everything else on
+  the control plane (auth/SSO, cluster policy, DNS defaults, cache, rate limits, block
+  behavior, classifier, metrics) is seeded once and then edited live in the UI.
 
 ## For developers
 

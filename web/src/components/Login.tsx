@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api } from '../api'
+import { Icon } from './icons'
 
 // Set just before logout so auto-login doesn't immediately bounce the user back
 // into SSO (letting them actually sign out / switch accounts).
@@ -44,7 +45,12 @@ export default function Login({
   return (
     <div className="login">
       <div className="login-card">
-        <h1>🧭 MazeDNS</h1>
+        <h1 className="login-brand">
+          <span className="brand-logo">
+            <Icon name="brand" size={24} />
+          </span>
+          MazeDNS
+        </h1>
         {err && <div className="error">{err}</div>}
         {!(oidc && passwordDisabled) && (
           <form onSubmit={submit}>

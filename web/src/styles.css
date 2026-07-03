@@ -1,4 +1,11 @@
-:root {
+/* ---- Theme tokens ----
+   Dark is the default; [data-theme='light'] on <html> swaps the palette. The
+   accent hue stays identical across themes so the many rgba(78,161,255,…) tint
+   literals scattered through this file read correctly in both. Surface overlays
+   (hover, hairline, tracks, chip rings) are tokenized so they invert per theme. */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
   --bg: #0f1216;
   --panel: #171c23;
   --line: #262d36;
@@ -8,6 +15,56 @@
   --danger: #ff5d6c;
   --ok: #3ecf8e;
   --rewrite: #c48aff;
+
+  /* Elevation & surfaces — a chosen cool-neutral ramp, biased toward the accent. */
+  --panel-2: #1c222b; /* raised surface (modals, dropdowns) */
+  --line-strong: #313a46; /* stronger hairline for emphasis */
+  --hair: rgba(255, 255, 255, 0.05); /* top-edge highlight for depth */
+  --hover: rgba(255, 255, 255, 0.045); /* subtle row / nav / header hover */
+  --hover-strong: rgba(255, 255, 255, 0.08);
+  --track: rgba(255, 255, 255, 0.08); /* progress / meter troughs */
+  --chip-ring: rgba(255, 255, 255, 0.06); /* badge definition ring */
+  --accent-2: #6ab2ff; /* accent hover */
+  --accent-soft: rgba(78, 161, 255, 0.14); /* tinted fills, selected states */
+  --ring: 0 0 0 3px rgba(78, 161, 255, 0.32); /* focus ring */
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 18px -6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 18px 48px -12px rgba(0, 0, 0, 0.62);
+
+  --ambient: radial-gradient(1200px 680px at 78% -8%, rgba(78, 161, 255, 0.06), transparent 60%),
+    radial-gradient(900px 600px at -6% 4%, rgba(196, 138, 255, 0.045), transparent 55%);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f6f9; /* soft cool white, faint blue bias */
+  --panel: #ffffff;
+  --line: #e4e8ee;
+  --fg: #18202c; /* near-black, cool */
+  --muted: #5c6675;
+  --accent: #2f7fe0; /* a touch deeper so it holds on white */
+  --danger: #d83a4a;
+  --ok: #1f9d63;
+  --rewrite: #8b52d6;
+
+  --panel-2: #ffffff;
+  --line-strong: #cfd6e0;
+  --hair: rgba(255, 255, 255, 0.7); /* glossy top highlight on white cards */
+  --hover: rgba(20, 30, 48, 0.045);
+  --hover-strong: rgba(20, 30, 48, 0.07);
+  --track: rgba(20, 30, 48, 0.08);
+  --chip-ring: rgba(20, 30, 48, 0.08);
+  --accent-2: #2f7fe0;
+  --accent-soft: rgba(47, 127, 224, 0.12);
+  --ring: 0 0 0 3px rgba(47, 127, 224, 0.28);
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 8px 20px -8px rgba(16, 24, 40, 0.14);
+  --shadow-lg: 0 20px 48px -14px rgba(16, 24, 40, 0.2);
+
+  --ambient: radial-gradient(1200px 680px at 82% -10%, rgba(47, 127, 224, 0.07), transparent 60%),
+    radial-gradient(900px 600px at -8% 2%, rgba(139, 82, 214, 0.05), transparent 55%);
 }
 
 * {
@@ -21,12 +78,68 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
   color: var(--fg);
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Ambient depth: two faint accent-tinted glows over the base, so the flat
+     background reads as a considered surface rather than a solid fill. */
+  background: var(--ambient), var(--bg);
+  background-attachment: fixed;
 }
 #root {
   min-height: 100vh;
+}
+
+/* Numerals line up in tables, stat tiles, and any tabular data. */
+table,
+.card-value,
+.kpi-value,
+td {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgba(78, 161, 255, 0.28);
+  color: #fff;
+}
+
+/* Thin, theme-matched scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3d4757;
+  background-clip: padding-box;
+}
+
+/* Consistent, visible keyboard focus across interactive elements. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .app {
@@ -73,7 +186,9 @@ body {
   white-space: nowrap;
 }
 .brand-logo {
-  font-size: 20px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
 }
 .brand-name {
   font-size: 16px;
@@ -87,6 +202,7 @@ body {
 }
 .side-nav button,
 .side-collapse {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -101,21 +217,47 @@ body {
   text-align: left;
   white-space: nowrap;
   font: inherit;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
 .side-nav button:hover,
 .side-collapse:hover {
   color: var(--fg);
+  background: var(--hover);
 }
 .side-nav button.active {
   color: var(--fg);
-  background: var(--panel);
-  border-color: var(--line);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+/* Accent rail marks the active section. */
+.side-nav button.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+.side-nav button.active .side-ic {
+  color: var(--accent);
+}
+.app.collapsed .side-nav button.active::before {
+  left: -1px;
 }
 .side-ic {
   flex: 0 0 20px;
   width: 20px;
-  text-align: center;
-  font-size: 16px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.side-nav button:hover .side-ic {
+  color: inherit;
 }
 .side-collapse {
   color: var(--muted);
@@ -190,15 +332,17 @@ body {
 }
 
 .card {
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--hair), transparent 40%), var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 16px;
+  box-shadow: var(--shadow-sm);
 }
 
 .card-value {
   font-size: 28px;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .card-label {
@@ -210,6 +354,13 @@ body {
 
 .card.danger .card-value {
   color: var(--danger);
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+  letter-spacing: -0.01em;
 }
 
 h2 {
@@ -224,12 +375,13 @@ table {
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 
 th,
 td {
   text-align: left;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -238,6 +390,15 @@ th {
   font-weight: 500;
   font-size: 12px;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--hover);
+}
+
+tbody tr {
+  transition: background 0.12s ease;
+}
+tbody tr:hover td {
+  background: var(--hover);
 }
 
 tr:last-child td {
@@ -250,9 +411,13 @@ tr:last-child td {
 }
 
 .badge {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
   border-radius: 999px;
   font-size: 12px;
+  font-weight: 500;
+  box-shadow: inset 0 0 0 1px var(--chip-ring);
 }
 
 .badge.blocked {
@@ -290,7 +455,7 @@ tr:last-child td {
   cursor: pointer;
 }
 .cls-row:hover td {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--hover);
 }
 /* Score breakdown rows in the domain detail modal */
 .signals {
@@ -433,7 +598,7 @@ tr:last-child td {
 .quota-bar {
   height: 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--track);
   overflow: hidden;
 }
 .quota-bar .fill {
@@ -545,7 +710,9 @@ tr:last-child td {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(6, 8, 11, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -553,12 +720,12 @@ tr:last-child td {
   overflow-y: auto;
 }
 .modal {
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--hair), transparent 6%), var(--panel-2);
+  border: 1px solid var(--line-strong);
   border-radius: 14px;
   width: 100%;
   max-width: 720px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 /* Wider variant for content-heavy dialogs (e.g. the client inspector). */
 .modal-wide {
@@ -729,7 +896,7 @@ button.cat-chip {
   font: inherit;
   cursor: pointer;
   border: 0;
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--hover-strong);
   color: var(--fg);
 }
 button.cat-chip:hover {
@@ -765,6 +932,21 @@ select {
   border-radius: 8px;
   padding: 7px 10px;
   font: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:hover:not(:focus),
+select:hover:not(:focus) {
+  border-color: var(--line-strong);
+}
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
 
 /* Style selects to the app theme (kill the native chrome, add our own caret). */
@@ -780,6 +962,7 @@ select {
 select:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: var(--ring);
 }
 /* Dark popup list where the browser honors it (Firefox / Chromium). */
 select option {
@@ -852,6 +1035,15 @@ button.del:hover {
   font-size: 22px;
   margin: 0 0 20px;
   text-align: center;
+}
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.login-brand .brand-logo {
+  color: var(--accent);
 }
 
 .login-card form {
@@ -965,32 +1157,126 @@ button.del:hover {
 .setup-method {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .setup-method-opt {
   flex-direction: row !important;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.setup-method-opt:hover {
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 45%, var(--line));
 }
 .setup-method-opt.sel {
   border-color: var(--accent, #3b82f6);
   background: color-mix(in srgb, var(--accent, #3b82f6) 8%, transparent);
 }
-.setup-method-opt span {
+/* Native radio is hidden; .opt-mark is the custom dot so it can't be stretched by
+   the global `input { flex:1 }` rule. */
+.setup-method-opt input[type='radio'] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  min-width: 0;
+  height: 0;
+}
+.opt-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  transition: border-color 0.15s ease;
+  position: relative;
+}
+.setup-method-opt.sel .opt-mark {
+  border-color: var(--accent, #3b82f6);
+}
+.setup-method-opt.sel .opt-mark::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--accent, #3b82f6);
+}
+.opt-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  text-align: left;
+  min-width: 0;
+}
+/* Grouping panel for the OIDC config + break-glass blocks. */
+.setup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.setup-panel.sel {
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 55%, var(--line));
+}
+.setup-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.setup-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Toggle row: text on the left grows, the switch sits at the right. (Override the
+   column direction that .setup-body label sets.) */
+.setup-toggle-row {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+}
+.setup-subfields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+.setup-warn {
+  margin: 0;
+  color: color-mix(in srgb, #e0a030 75%, var(--fg));
+}
+.setup-warn code,
+.setup-panel code {
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.9em;
 }
 .setup-row {
   flex-direction: row !important;
+  flex-wrap: wrap;
   gap: 12px;
 }
 .setup-row > label {
-  flex: 1;
+  flex: 1 1 150px;
+}
+/* Let paired inputs shrink below their global 180px min so they don't overflow the
+   narrow setup card. */
+.setup-row input {
+  min-width: 0;
 }
 .copy-row {
   display: flex;
@@ -1068,11 +1354,12 @@ textarea.import {
 }
 
 .settings-card {
-  background: var(--panel);
+  background: linear-gradient(180deg, var(--hair), transparent 40%), var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 18px 20px;
   margin: 16px 0;
+  box-shadow: var(--shadow-sm);
 }
 
 .settings-card h3 {
@@ -1235,12 +1522,17 @@ details.settings-card[open] > :last-child {
   font: inherit;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease, transform 0.05s ease;
 }
 
 .btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -1254,15 +1546,16 @@ details.settings-card[open] > :last-child {
 }
 
 .btn.primary {
-  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent-2), var(--accent));
   border-color: var(--accent);
   color: #001022;
   font-weight: 600;
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .btn.primary:hover {
-  background: #6ab2ff;
-  border-color: #6ab2ff;
+  background: linear-gradient(180deg, #85c0ff, var(--accent-2));
+  border-color: var(--accent-2);
   color: #001022;
 }
 
@@ -2226,11 +2519,11 @@ img.acct-avatar.lg {
   top: calc(100% + 8px);
   z-index: 21;
   min-width: 240px;
-  background: var(--panel);
-  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--hair), transparent 12%), var(--panel-2);
+  border: 1px solid var(--line-strong);
   border-radius: 12px;
   padding: 6px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
   animation: nf-pop 0.12s ease-out;
 }
 .acct-head {

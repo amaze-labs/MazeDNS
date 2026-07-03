@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api, type Settings, type OIDCSettings } from '../api'
+import { Icon } from './icons'
 
 // Setup is the first-boot wizard shown when the control plane has no admin yet.
 // Step 1 chooses how the control plane authenticates — local accounts or an
@@ -46,6 +47,40 @@ export default function Setup({ onDone }: { onDone: () => void }) {
 
   const pwScore = passwordScore(password)
   const localAdminNeeded = method === 'local' || breakGlass
+
+  // Username / password / confirm fields — shared by the local-admin flow and the
+  // optional SSO break-glass account.
+  const credentialFields = (
+    <>
+      <label>
+        Username
+        <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+      </label>
+      <label>
+        Password
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="new-password"
+        />
+      </label>
+      {password && (
+        <div className={`pw-meter ${pwScore.level}`}>
+          <span /> <small>{pwScore.hint}</small>
+        </div>
+      )}
+      <label>
+        Confirm password
+        <input
+          type="password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          autoComplete="new-password"
+        />
+      </label>
+    </>
+  )
 
   const complete = async (e: FormEvent) => {
     e.preventDefault()
@@ -167,7 +202,9 @@ export default function Setup({ onDone }: { onDone: () => void }) {
     <div className="setup-wrap">
       <div className="setup-card">
         <div className="setup-head">
-          <span className="brand-logo">🧭</span>
+          <span className="brand-logo">
+            <Icon name="brand" size={26} />
+          </span>
           <h1>Welcome to MazeDNS</h1>
           <p className="muted">Let’s set up your control plane. This takes about a minute.</p>
         </div>
@@ -188,97 +225,108 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             <div className="setup-method">
               <label className={`setup-method-opt ${method === 'local' ? 'sel' : ''}`}>
                 <input type="radio" name="method" checked={method === 'local'} onChange={() => setMethod('local')} />
-                <span>
+                <span className="opt-mark" aria-hidden />
+                <span className="opt-text">
                   <strong>Local accounts</strong>
                   <small className="muted">Username &amp; password managed in MazeDNS.</small>
                 </span>
               </label>
               <label className={`setup-method-opt ${method === 'sso' ? 'sel' : ''}`}>
                 <input type="radio" name="method" checked={method === 'sso'} onChange={() => setMethod('sso')} />
-                <span>
+                <span className="opt-mark" aria-hidden />
+                <span className="opt-text">
                   <strong>Single sign-on (OIDC)</strong>
                   <small className="muted">Sign in via an external identity provider.</small>
                 </span>
               </label>
             </div>
 
+            {method === 'local' && <div className="setup-fieldset">{credentialFields}</div>}
+
             {method === 'sso' && (
               <>
-                <p className="muted">
-                  Register MazeDNS as an OIDC application in your provider, then paste its details here. We’ll verify the
-                  issuer before finishing.
-                </p>
-                <label>
-                  Redirect URI — register this exact value with your provider
-                  <div className="copy-row">
-                    <input readOnly value={redirectURI} onFocus={(e) => e.target.select()} />
-                    <button type="button" className="btn ghost" onClick={copyRedirect}>
-                      {copied ? 'Copied' : 'Copy'}
-                    </button>
+                <div className="setup-panel">
+                  <div className="setup-panel-head">
+                    <strong>OIDC provider</strong>
+                    <small className="muted">
+                      Register MazeDNS as an application in your provider, then paste its details. We’ll verify the issuer
+                      before finishing.
+                    </small>
                   </div>
-                </label>
-                <label>
-                  Issuer URL
-                  <input value={issuer} onChange={(e) => setIssuer(e.target.value)} placeholder="https://idp.example.com/application/o/mazedns/" />
-                </label>
-                <label>
-                  Client ID
-                  <input value={clientId} onChange={(e) => setClientId(e.target.value)} />
-                </label>
-                <label>
-                  Client secret
-                  <input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
-                </label>
-                <label>
-                  Extra scopes (optional, comma-separated)
-                  <input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="openid, profile and email are always requested" />
-                </label>
-                <div className="setup-row">
                   <label>
-                    Groups claim
-                    <input value={groupsClaim} onChange={(e) => setGroupsClaim(e.target.value)} />
+                    Redirect URI — register this exact value with your provider
+                    <div className="copy-row">
+                      <input readOnly value={redirectURI} onFocus={(e) => e.target.select()} />
+                      <button type="button" className="btn ghost" onClick={copyRedirect}>
+                        {copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
                   </label>
                   <label>
-                    Admin group (optional)
-                    <input value={adminGroup} onChange={(e) => setAdminGroup(e.target.value)} placeholder="mazedns-admins" />
+                    Issuer URL
+                    <input
+                      value={issuer}
+                      onChange={(e) => setIssuer(e.target.value)}
+                      placeholder="https://idp.example.com/application/o/mazedns/"
+                    />
+                  </label>
+                  <div className="setup-row">
+                    <label>
+                      Client ID
+                      <input value={clientId} onChange={(e) => setClientId(e.target.value)} />
+                    </label>
+                    <label>
+                      Client secret
+                      <input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
+                    </label>
+                  </div>
+                  <label>
+                    Extra scopes (optional, comma-separated)
+                    <input
+                      value={scopes}
+                      onChange={(e) => setScopes(e.target.value)}
+                      placeholder="openid, profile and email are always requested"
+                    />
+                  </label>
+                  <div className="setup-row">
+                    <label>
+                      Groups claim
+                      <input value={groupsClaim} onChange={(e) => setGroupsClaim(e.target.value)} />
+                    </label>
+                    <label>
+                      Admin group (optional)
+                      <input value={adminGroup} onChange={(e) => setAdminGroup(e.target.value)} placeholder="mazedns-admins" />
+                    </label>
+                  </div>
+                  <label>
+                    Admin email — this identity becomes admin on first SSO login
+                    <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="you@example.com" />
                   </label>
                 </div>
-                <label>
-                  Admin email — this identity becomes admin on first SSO login
-                  <input value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="you@example.com" />
-                </label>
-                <label className="setup-check">
-                  <input type="checkbox" checked={breakGlass} onChange={(e) => setBreakGlass(e.target.checked)} />
-                  Also create a local <strong>break-glass admin</strong> (recommended)
-                </label>
-                <p className="muted small">
-                  {breakGlass
-                    ? 'A local password admin so a misconfigured or unreachable identity provider can’t lock you out.'
-                    : 'Without a break-glass account, a broken IdP locks everyone out — recover with the CLI: control-plane reset-admin.'}
-                </p>
-              </>
-            )}
 
-            {localAdminNeeded && (
-              <>
-                {method === 'sso' && <p className="muted">{'Break-glass admin credentials:'}</p>}
-                <label>
-                  Username
-                  <input value={username} onChange={(e) => setUsername(e.target.value)} />
-                </label>
-                <label>
-                  Password
-                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-                </label>
-                {password && (
-                  <div className={`pw-meter ${pwScore.level}`}>
-                    <span /> <small>{pwScore.hint}</small>
-                  </div>
-                )}
-                <label>
-                  Confirm password
-                  <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-                </label>
+                <div className={`setup-panel ${breakGlass ? 'sel' : ''}`}>
+                  <label className="toggle setup-toggle-row">
+                    <span className="opt-text">
+                      <strong>Break-glass local admin</strong>
+                      <small className="muted">
+                        A local password login kept alongside SSO, so a misconfigured or unreachable identity provider
+                        can’t lock you out. Recommended.
+                      </small>
+                    </span>
+                    <input type="checkbox" checked={breakGlass} onChange={(e) => setBreakGlass(e.target.checked)} />
+                    <span className="track">
+                      <span className="thumb" />
+                    </span>
+                  </label>
+                  {breakGlass ? (
+                    <div className="setup-subfields">{credentialFields}</div>
+                  ) : (
+                    <p className="setup-warn small">
+                      Without a break-glass account, a broken IdP locks everyone out — recover with the CLI:{' '}
+                      <code>control-plane reset-admin</code>.
+                    </p>
+                  )}
+                </div>
               </>
             )}
 

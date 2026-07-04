@@ -229,9 +229,12 @@ docker run -d --name mazedns-agent \
 ```
 
 > **Keep the agent's `/data` volume across image updates.** It stores the node's
-> identity (its server-assigned UUID + rotating key). Recreate the agent without it
-> and the control plane sees a brand-new node — you get a duplicated, `-2`-suffixed
-> entry instead of the original.
+> identity (its server-assigned UUID + rotating key), so a recreated container
+> rejoins instantly as the same node. If the volume is lost anyway, a stable and
+> unique `MAZEDNS_NODE_NAME` is the safety net: the new container waits for the
+> old one to be marked offline (~2 minutes) and then **reclaims** the same node —
+> history, site, and role included — instead of duplicating it. Only two *live*
+> agents claiming the same name still produce a de-duplicated `-2` entry.
 
 `MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/metrics` port reachable
 from outside the container (it defaults to loopback). The control plane's `/metrics`

@@ -241,9 +241,10 @@ func enroll(s *Server, body string) *httptest.ResponseRecorder {
 	return rr
 }
 
-// A join-token holder must NOT be able to steal an existing node's identity by
+// A join-token holder must NOT be able to steal a LIVE node's identity by
 // enrolling under its name, or by presenting its (public) id without the current
-// key. This is the core security fix.
+// key. (An OFFLINE node with the same name IS reclaimable by design — the
+// image-update duplication fix — see TestClusterEnrollNameReclaim.)
 func TestClusterEnrollCannotHijackExistingNode(t *testing.T) {
 	s, st := newEnrollServer(t, "s3cr3t", false)
 
@@ -257,19 +258,33 @@ func TestClusterEnrollCannotHijackExistingNode(t *testing.T) {
 		t.Fatal("victim not enrolled")
 	}
 	victimKeyHash := victim.KeyHash
+	// The victim is ALIVE (it polls). A live node's identity can never be taken
+	// over by a name collision — only an OFFLINE node is reclaimable (see
+	// TestClusterEnrollNameReclaim).
+	if err := st.TouchNode(victim.ID, "10.0.0.5", "v1", store.NodeStats{}); err != nil {
+		t.Fatal(err)
+	}
 
-	// (1) Enrolling under the SAME name with only the join token must create a NEW,
-	// separate node (de-duplicated name) — never rotate the victim's key.
+	// (1) Enrolling under the SAME name with only the join token is told to retry
+	// (409) — never rotates the victim's key — and with suffix_ok creates a NEW,
+	// separate node (de-duplicated name).
 	attack := enroll(s, `{"name":"victim","token":"s3cr3t"}`)
-	if attack.Code != http.StatusCreated {
-		t.Fatalf("name-collision enroll: %d (%s)", attack.Code, attack.Body.String())
+	if attack.Code != http.StatusConflict {
+		t.Fatalf("name-collision enroll: %d, want 409 (%s)", attack.Code, attack.Body.String())
 	}
 	if got := mustNode(t, st, "victim").KeyHash; got != victimKeyHash {
 		t.Fatal("victim's key was rotated by a name-collision enroll — hijack!")
 	}
+	suffixed := enroll(s, `{"name":"victim","token":"s3cr3t","suffix_ok":true}`)
+	if suffixed.Code != http.StatusCreated {
+		t.Fatalf("suffix_ok enroll: %d (%s)", suffixed.Code, suffixed.Body.String())
+	}
+	if got := mustNode(t, st, "victim").KeyHash; got != victimKeyHash {
+		t.Fatal("victim's key was rotated by a suffix_ok enroll — hijack!")
+	}
 	nodes, _ := st.ListNodes()
 	if len(nodes) != 2 {
-		t.Fatalf("name-collision enroll should create a distinct node: %d nodes", len(nodes))
+		t.Fatalf("suffix_ok enroll should create a distinct node: %d nodes", len(nodes))
 	}
 
 	// (2) Presenting the victim's (public) id but NO current key must be rejected.
@@ -577,5 +592,76 @@ func TestClusterEnrollRemoveOnlySelfHeals(t *testing.T) {
 	}
 	if newID := jsonField(rr.Body.String(), "id"); newID == "" || newID == id {
 		t.Fatalf("self-heal should mint a NEW node id, got %q (old %q)", newID, id)
+	}
+}
+
+// An agent that lost its /data (image update without the volume) re-enrolls with
+// the same NAME and no id. When the original node is offline, it must reclaim
+// that node's identity — same id, rotated key — instead of minting a "<name>-2"
+// duplicate; and the enrollment key use must NOT be consumed (recovery).
+func TestClusterEnrollNameReclaim(t *testing.T) {
+	s, st := newEnrollServer(t, "s3cr3t", false)
+
+	rr := enroll(s, `{"name":"dns03","token":"s3cr3t"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("initial enroll: status = %d (%s)", rr.Code, rr.Body.String())
+	}
+	orig := mustNode(t, st, "dns03")
+	origKeyHash := orig.KeyHash
+
+	// The node never polled again (last_seen stays 0/old) — it is offline, so a
+	// fresh same-name enrollment reclaims it.
+	old := nodeReclaimAfter
+	nodeReclaimAfter = 0
+	t.Cleanup(func() { nodeReclaimAfter = old })
+
+	rr = enroll(s, `{"name":"dns03","token":"s3cr3t"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("reclaim enroll: status = %d, want 200 (%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), orig.ID) {
+		t.Fatalf("reclaim must return the ORIGINAL node id %s: %s", orig.ID, rr.Body.String())
+	}
+	nodes, _ := st.ListNodes()
+	if len(nodes) != 1 {
+		t.Fatalf("reclaim created a duplicate: %d nodes", len(nodes))
+	}
+	if nodes[0].KeyHash == origKeyHash {
+		t.Fatal("reclaim must rotate the node key")
+	}
+	// Recovery, not a join: no enrollment-key use consumed by the reclaim.
+	keys, _ := st.ListEnrollKeys()
+	if len(keys) != 1 || keys[0].UseCount != 1 {
+		t.Fatalf("reclaim consumed an enrollment-key use: %+v", keys)
+	}
+}
+
+// While the name's current holder is still polling (alive), a same-name enrollment
+// is told to retry (409 name_in_use); only suffix_ok opts in to the "<name>-2"
+// de-duplication. An invalid key never reaches either path.
+func TestClusterEnrollNameInUse(t *testing.T) {
+	s, st := newEnrollServer(t, "s3cr3t", false)
+
+	if rr := enroll(s, `{"name":"dns03","token":"s3cr3t"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("initial enroll: status = %d", rr.Code)
+	}
+	orig := mustNode(t, st, "dns03")
+	// Simulate a live holder: fresh last_seen via a touch.
+	if err := st.TouchNode(orig.ID, "10.0.0.9", "v1", store.NodeStats{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if rr := enroll(s, `{"name":"dns03","token":"s3cr3t"}`); rr.Code != http.StatusConflict ||
+		!strings.Contains(rr.Body.String(), `"name_in_use":true`) {
+		t.Fatalf("live name: status = %d body=%s, want 409 name_in_use", rr.Code, rr.Body.String())
+	}
+	// A bad key gets 401, not a name probe.
+	if rr := enroll(s, `{"name":"dns03","token":"wrong"}`); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("bad key on held name: status = %d, want 401", rr.Code)
+	}
+	// suffix_ok falls back to the de-duplicated name (a genuine collision).
+	rr := enroll(s, `{"name":"dns03","token":"s3cr3t","suffix_ok":true}`)
+	if rr.Code != http.StatusCreated || !strings.Contains(rr.Body.String(), `"name":"dns03-2"`) {
+		t.Fatalf("suffix_ok: status = %d body=%s, want 201 dns03-2", rr.Code, rr.Body.String())
 	}
 }

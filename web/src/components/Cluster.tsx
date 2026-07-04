@@ -568,9 +568,10 @@ ${bridgeAlt}`
           them. After joining, each node authenticates with a per-node key the control plane rotates automatically.
         </p>
         <p className="muted" style={{ textAlign: 'left' }}>
-          <strong>Keep the <code>/data</code> volume.</strong> It stores the node’s identity (its UUID + rotating key).
-          The snippets below mount it — without it, every image update makes the agent re-enroll as a{' '}
-          <em>duplicate</em> node (a new <code>-2</code>-suffixed entry).
+          <strong>Keep the <code>/data</code> volume</strong> — it stores the node’s identity (its UUID + rotating key)
+          so a recreated container rejoins instantly as the same node. If the volume is lost anyway, a stable{' '}
+          <code>MAZEDNS_NODE_NAME</code> is the safety net: once the old container stops polling (~2 min) the new one{' '}
+          <em>reclaims</em> the same node — its history, site, and role — instead of appearing as a duplicate.
         </p>
         <CodeBlock label="Zero-touch join — docker run" text={joinRun} />
         <CodeBlock label="Zero-touch join — docker compose" text={joinCompose} />
@@ -748,8 +749,8 @@ function AgentModal({
             re-enroll as a new node (intentional replacement).
             <br />
             Note: an agent whose <code>/data</code> was wiped enrolls with no identity and can’t be matched to the
-            tombstone — to keep it out, also revoke the enrollment key it holds and/or turn on{' '}
-            <em>require approval</em>.
+            tombstone — but with the same name it can <em>reclaim</em> this node once it goes offline. To keep it out,
+            also revoke the enrollment key it holds and/or turn on <em>require approval</em>.
           </span>
         </div>
       </div>

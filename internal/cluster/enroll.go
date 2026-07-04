@@ -17,6 +17,13 @@ import (
 // treats this as terminal — it stops re-enrolling instead of retrying every poll.
 var ErrNodeRevoked = errors.New("node was revoked on the control plane")
 
+// ErrNameInUse is returned by Enroll when this agent's name belongs to a node the
+// control plane still considers alive. The agent waits and retries: during an
+// image update the old container stops polling within the control plane's reclaim
+// window, after which the same enrollment reclaims the existing identity instead
+// of creating a "<name>-2" duplicate.
+var ErrNameInUse = errors.New("node name is in use by a live node")
+
 // NewEnrollClient returns an HTTP client suitable for enrollment and, if reused,
 // config polling. When cpIP is set the control plane is dialed at that fixed IP
 // (DNS bypassed) while TLS still verifies the URL host — the same behavior the
@@ -44,12 +51,14 @@ type EnrollResult struct {
 // re-enrollment (after a hostname change or a rejected key) re-attaches to the
 // SAME node: the control plane rotates the existing node's key only when the
 // presented nodeKey proves ownership of nodeID. They are empty on first
-// enrollment, which creates a new node. See the control plane's clusterEnroll for
-// the full security model.
-func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken, nodeID, nodeKey string) (EnrollResult, error) {
+// enrollment, which creates a new node (or reclaims an offline node with the same
+// name). suffixOK opts in to the "<name>-2" de-duplication when the name is held
+// by a live node — pass it only after ErrNameInUse retries are exhausted. See the
+// control plane's clusterEnroll for the full security model.
+func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken, nodeID, nodeKey string, suffixOK bool) (EnrollResult, error) {
 	var res EnrollResult
-	body, err := json.Marshal(map[string]string{
-		"name": name, "token": joinToken, "node_id": nodeID, "node_key": nodeKey,
+	body, err := json.Marshal(map[string]any{
+		"name": name, "token": joinToken, "node_id": nodeID, "node_key": nodeKey, "suffix_ok": suffixOK,
 	})
 	if err != nil {
 		return res, err
@@ -71,6 +80,9 @@ func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken, no
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		if resp.StatusCode == http.StatusForbidden && bytes.Contains(body, []byte(`"revoked":true`)) {
 			return res, ErrNodeRevoked
+		}
+		if resp.StatusCode == http.StatusConflict && bytes.Contains(body, []byte(`"name_in_use":true`)) {
+			return res, ErrNameInUse
 		}
 		if msg := strings.TrimSpace(string(body)); msg != "" {
 			return res, fmt.Errorf("master returned status %d: %s", resp.StatusCode, msg)

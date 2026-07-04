@@ -299,21 +299,34 @@ func validAdvertiseAddr(s string) bool {
 	return net.ParseIP(host) != nil
 }
 
+// nodeReclaimAfter is how long a node must have been silent before an agent
+// presenting the same NAME (with a valid enrollment key but no id — its /data was
+// lost) may reclaim that node's identity instead of enrolling as a "<name>-2"
+// duplicate. Serving agents poll every few seconds, so two minutes of silence
+// means the old container is really gone. Var (not const) so tests can shrink it.
+var nodeReclaimAfter = 2 * time.Minute
+
 // clusterEnroll lets an agent self-register using a UI-managed enrollment key. On
 // success it issues a fresh per-node API key (returned once, in clear) which the
 // agent persists locally alongside the node's immutable id.
 //
 // Security model: a node's identity is its server-generated UUID, not its name or
-// the enrollment key. An enrollment key alone can only CREATE a new node — it can
-// never take over an existing one. To rotate the key of an existing node (recovery
+// the enrollment key. An enrollment key alone can only CREATE a new node — or
+// RECLAIM an OFFLINE node with the exact same name (see the reclaim block below;
+// this is what keeps an image update from minting "<name>-2" duplicates). It can
+// never displace a live node. To rotate the key of an existing node (recovery
 // after a hostname change or a rejected key) the agent must present BOTH that
 // node's id AND its current node key as proof of possession.
 //
-//   - no id                     -> new node; CONSUMES one use of a valid enrollment key
-//   - id + matching current key -> rotate key in place; enrollment key must be VALID
+//   - no id, name free           -> new node; CONSUMES one use of a valid enrollment key
+//   - no id, name of an OFFLINE node -> reclaim that node (rotate key in place;
+//     valid enrollment key required but not consumed)
+//   - no id, name of a LIVE node -> 409 name_in_use (agent retries), unless
+//     suffix_ok, which creates "<name>-2" (consumes a use)
+//   - id + matching current key  -> rotate key in place; enrollment key must be VALID
 //     but is not consumed (recovery of an authorized node)
-//   - id + missing/wrong key    -> 403 (ownership not proven)
-//   - id not found (CP reset)   -> new node (consumes a use)
+//   - id + missing/wrong key     -> 403 (ownership not proven)
+//   - id not found (CP reset)    -> new node (consumes a use)
 //
 // An expired, revoked, or exhausted enrollment key never creates or rotates any
 // node. Enrollment keys authenticate ONLY here — never snapshot/log — because they
@@ -324,6 +337,10 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 		Token   string `json:"token"`    // the enrollment-key secret
 		NodeID  string `json:"node_id"`  // '' on first enrollment; the agent's persisted id thereafter
 		NodeKey string `json:"node_key"` // the agent's current key — ownership proof for a re-enroll
+		// SuffixOK opts in to the "<name>-2" de-duplication when the name is held
+		// by a live node. Agents set it only after their name-reclaim retries are
+		// exhausted, so an image update no longer mints duplicate nodes.
+		SuffixOK bool `json:"suffix_ok"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -398,6 +415,62 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 		}
 		// id not found (control plane DB was reset, or a stale id): fall through and
 		// enroll as a brand-new node (which consumes a use).
+	}
+
+	// Name-based identity reclaim: the agent presented no usable id (its /data was
+	// lost — image updated without the volume, host rebuilt) but a node with this
+	// exact name already exists. Creating a fresh node would leave the operator
+	// with a duplicated "<name>-2" entry, so instead:
+	//
+	//   - existing node OFFLINE      -> reclaim: rotate its key in place and hand
+	//     its identity (id, site/role, approval, stats) to the new agent. The
+	//     enrollment key must be VALID but is NOT consumed (recovery, not a join).
+	//   - existing node looks ALIVE  -> 409 {"name_in_use":true}; the agent waits
+	//     and retries — during an image update the old container stops polling
+	//     within the reclaim window. Only when the caller opts in via suffix_ok
+	//     (its retries exhausted: two live hosts genuinely share the name) does
+	//     the old "<name>-2" de-duplication below apply.
+	//
+	// Deliberate trade-off: a valid enrollment key + a known node name can take
+	// over an OFFLINE node's identity. It can never displace a serving node (the
+	// freshness check), every reclaim is audited, and a displaced agent that comes
+	// back fails auth loudly (its key was rotated away) instead of silently
+	// splitting the identity.
+	if existing, nerr := s.store.NodeByName(name); nerr != nil {
+		writeError(w, http.StatusInternalServerError, nerr.Error())
+		return
+	} else if existing != nil {
+		valid, ekPrefix, verr := s.store.EnrollKeyValid(tokenHash, now)
+		if verr != nil {
+			writeError(w, http.StatusInternalServerError, verr.Error())
+			return
+		}
+		if !valid {
+			writeError(w, http.StatusUnauthorized, "invalid, expired, revoked, or exhausted enrollment key")
+			return
+		}
+		if now-existing.LastSeen >= int64(nodeReclaimAfter/time.Second) {
+			if err := s.store.RotateNodeKeyByID(existing.ID, hashKey(key), prefix); err != nil {
+				writeError(w, http.StatusInternalServerError, "key rotation failed: "+err.Error())
+				return
+			}
+			slog.Info("cluster node reclaimed by name (agent lost its identity — e.g. image update without /data)",
+				"id", existing.ID, "name", existing.Name, "enroll_key", ekPrefix, "remote", clientIP(r))
+			_ = s.store.AppendAudit(store.AuditEntry{User: "node:" + existing.Name, Action: "cluster.node.reclaim",
+				Detail: fmt.Sprintf("node %s (%s) identity reclaimed via enrollment key %s from %s", existing.Name, existing.ID, ekPrefix, clientIP(r))})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"id": existing.ID, "name": existing.Name, "key": key,
+				"approved": existing.Approved, "cp_address": s.store.MasterAdvertiseAddr(),
+			})
+			return
+		}
+		if !in.SuffixOK {
+			slog.Warn("cluster enroll: name held by a live node — told agent to retry", "name", name, "remote", clientIP(r))
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "node name in use by a live node", "name_in_use": true,
+			})
+			return
+		}
 	}
 
 	// New enrollment: atomically consume one use of a valid enrollment key. This

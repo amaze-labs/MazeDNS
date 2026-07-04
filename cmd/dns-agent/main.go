@@ -238,11 +238,35 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 	reenroll := func(ctx context.Context) (string, error) {
 		// Present our current identity so the control plane re-attaches to the SAME
 		// node: it rotates the existing node's key only when the presented key proves
-		// ownership of the persisted id. Both are empty on the very first enrollment,
-		// which creates a new node.
+		// ownership of the persisted id. Both are empty on the very first enrollment.
 		curID, _ := st.GetMeta(nodeIDMeta)
 		curKey, _ := st.GetMeta(nodeKeyMeta)
-		r, err := cluster.Enroll(ctx, client, cpURL, name, cfg.Cluster.JoinToken, curID, curKey)
+		var r cluster.EnrollResult
+		var err error
+		// A "name in use by a live node" answer means our name currently belongs to
+		// a node the control plane still sees polling — typically OUR predecessor
+		// container during an image update. Wait it out: once the control plane
+		// marks it offline (~2 min), the same enrollment RECLAIMS that node's
+		// identity, so no "<name>-2" duplicate is created. Only when the holder is
+		// genuinely alive after the full wait do we accept a de-duplicated name.
+		for attempt := 0; ; attempt++ {
+			r, err = cluster.Enroll(ctx, client, cpURL, name, cfg.Cluster.JoinToken, curID, curKey, false)
+			if !errors.Is(err, cluster.ErrNameInUse) {
+				break
+			}
+			if attempt >= 8 { // ~4 min, comfortably past the CP's 2-min reclaim window
+				slog.Warn("node name still held by a live node — enrolling with a de-duplicated name", "name", name)
+				r, err = cluster.Enroll(ctx, client, cpURL, name, cfg.Cluster.JoinToken, curID, curKey, true)
+				break
+			}
+			slog.Info("node name held by a live node — waiting to reclaim its identity (image update?)",
+				"name", name, "retry_in", "30s")
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(30 * time.Second):
+			}
+		}
 		if err != nil {
 			return "", err
 		}
@@ -260,64 +284,103 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		return r.Key, nil
 	}
 
-	nodeKey := resolveNodeKey(ctx, st, cfg, name, cpURL, pinnedIP, reenroll)
-	if nodeKey == "" {
+	// launch starts the replication agent once a node key is in hand.
+	launch := func(nodeKey string) {
+		// Enrollment may have just learned+persisted the CP's fixed address; use it
+		// to pin the replication agent's transport for all later polls.
+		ip := pinnedIP
+		if cfg.Cluster.MasterIP == "" {
+			if learned, _ := st.GetMeta(cpIPMeta); learned != "" {
+				ip = learned
+			}
+		}
+		statsFn := func() store.NodeStats {
+			t, b, ca, fwd, rw, e := res.StatsSnapshot()
+			return store.NodeStats{
+				Total: int64(t), Blocked: int64(b), Cached: int64(ca),
+				Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
+			}
+		}
+		ag := cluster.NewAgent(cpURL, ip, nodeKey, cfg.Cluster.AdvertiseAddr,
+			cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
+		if cfg.Cluster.JoinToken != "" {
+			ag.SetReenroll(reenroll)
+		}
+		// Learn+persist our node id from the config snapshot when we don't have one
+		// yet (upgraded from a pre-UUID build with only a key). Transparent — no
+		// operator action; it lets a later re-enroll prove ownership of this node.
+		curID, _ := st.GetMeta(nodeIDMeta)
+		ag.SetNodeID(curID, func(id string) { _ = st.SetMeta(nodeIDMeta, id) })
+		// Persist a control-plane-rotated node key so it survives restarts (the CP
+		// keeps the old key valid for a grace window, so this is safe even if we
+		// crash here).
+		ag.SetSaveNodeKey(func(k string) { _ = st.SetMeta(nodeKeyMeta, k) })
+		go ag.Run(ctx)
+	}
+
+	// Key resolution: a locally-resolvable key (persisted, or explicit with no
+	// join token) launches immediately; otherwise self-enroll with the join token
+	// IN THE BACKGROUND — DNS serving must never wait on (or be killed by)
+	// enrollment, which may legitimately take minutes while a predecessor node is
+	// being reclaimed. Enrollment retries until it succeeds (the old one-shot
+	// attempt left the agent standalone until restart).
+	if k := localNodeKey(st, cfg.Cluster.JoinToken, cfg.Cluster.NodeKey); k != "" {
+		slog.Info("using local node key", "name", name)
+		launch(k)
+		return
+	}
+	if cfg.Cluster.JoinToken == "" {
 		slog.Error("no node key: set MAZEDNS_JOIN_TOKEN (auto-enroll) or MAZEDNS_NODE_KEY; running standalone")
 		return
 	}
-
-	// Enrollment may have just learned+persisted the CP's fixed address; use it to
-	// pin the replication agent's transport for all later polls.
-	if cfg.Cluster.MasterIP == "" {
-		if learned, _ := st.GetMeta(cpIPMeta); learned != "" {
-			pinnedIP = learned
+	go func() {
+		slog.Info("self-enrolling with the control plane", "cp", cpURL, "name", name)
+		persist := func(k string) { _ = st.SetMeta(nodeKeyMeta, k) }
+		if k := enrollLoop(ctx, reenroll, cfg.Cluster.NodeKey, persist, pinnedIP); k != "" {
+			launch(k)
 		}
-	}
-
-	statsFn := func() store.NodeStats {
-		t, b, ca, fwd, rw, e := res.StatsSnapshot()
-		return store.NodeStats{
-			Total: int64(t), Blocked: int64(b), Cached: int64(ca),
-			Forwarded: int64(fwd), Rewritten: int64(rw), Errors: int64(e),
-		}
-	}
-	ag := cluster.NewAgent(cpURL, pinnedIP, nodeKey, cfg.Cluster.AdvertiseAddr,
-		cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
-	if cfg.Cluster.JoinToken != "" {
-		ag.SetReenroll(reenroll)
-	}
-	// Learn+persist our node id from the config snapshot when we don't have one yet
-	// (upgraded from a pre-UUID build with only a key). Transparent — no operator
-	// action; it lets a later re-enroll prove ownership of this node.
-	curID, _ := st.GetMeta(nodeIDMeta)
-	ag.SetNodeID(curID, func(id string) { _ = st.SetMeta(nodeIDMeta, id) })
-	// Persist a control-plane-rotated node key so it survives restarts (the CP keeps
-	// the old key valid for a grace window, so this is safe even if we crash here).
-	ag.SetSaveNodeKey(func(k string) { _ = st.SetMeta(nodeKeyMeta, k) })
-	go ag.Run(ctx)
+	}()
 }
 
-// resolveNodeKey returns the API key the agent authenticates with: a previously
-// persisted key, then a freshly self-enrolled one (when a join token is set), then
-// an explicitly-supplied MAZEDNS_NODE_KEY.
-func resolveNodeKey(ctx context.Context, st *store.Store, cfg config.Config, name, cpURL, pinnedIP string, reenroll func(context.Context) (string, error)) string {
+// localNodeKey returns the key resolvable without the network: a persisted key
+// first, then — only when no join token is configured — the explicit node_key
+// (persisted so restarts don't depend on the env staying set). Empty means the
+// agent must self-enroll or run standalone.
+func localNodeKey(st *store.Store, joinToken, nodeKey string) string {
 	if k, _ := st.GetMeta(nodeKeyMeta); k != "" {
-		slog.Info("using persisted node key", "name", name)
 		return k
 	}
-	if cfg.Cluster.JoinToken != "" {
-		slog.Info("self-enrolling with the control plane", "cp", cpURL, "name", name)
-		if k, err := reenroll(ctx); err == nil {
-			return k
-		} else {
-			slog.Warn("self-enrollment failed; will retry on the next sync cycle", "err", err)
-			hintUnresolvableCP(err, pinnedIP)
-		}
+	if joinToken == "" && nodeKey != "" {
+		_ = st.SetMeta(nodeKeyMeta, nodeKey)
+		return nodeKey
 	}
-	if cfg.Cluster.NodeKey != "" {
-		// Persist so restarts don't depend on the env staying set.
-		_ = st.SetMeta(nodeKeyMeta, cfg.Cluster.NodeKey)
-		return cfg.Cluster.NodeKey
+	return ""
+}
+
+// enrollLoop retries self-enrollment until it succeeds, returning the node key.
+// A revoked node is terminal (returns ""). When an explicit fallback key is
+// configured alongside the join token, the first failure falls back to it (and
+// persists it) — a working credential beats looping on a broken enrollment path.
+func enrollLoop(ctx context.Context, reenroll func(context.Context) (string, error), fallback string, persist func(string), pinnedIP string) string {
+	for ctx.Err() == nil {
+		k, err := reenroll(ctx)
+		if err == nil {
+			return k
+		}
+		if errors.Is(err, cluster.ErrNodeRevoked) {
+			slog.Error("this node was revoked on the control plane — not retrying (un-revoke it in the UI, or wipe /data to join as a new node)")
+			return ""
+		}
+		slog.Warn("self-enrollment failed; retrying", "err", err, "retry_in", "30s")
+		hintUnresolvableCP(err, pinnedIP)
+		if fallback != "" {
+			persist(fallback)
+			return fallback
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(30 * time.Second):
+		}
 	}
 	return ""
 }

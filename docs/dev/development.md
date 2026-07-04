@@ -112,4 +112,4 @@ go test -bench . -benchmem ./internal/resolver/ ./internal/cache/ ./internal/fil
 (`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/ipmaze/mazedns-control-plane`
 and `ghcr.io/ipmaze/mazedns-dns-agent` (`:latest`, plus the version tag on `v*`
 releases) on push to `main`, tags, or manual dispatch. The source version is baked
-into each binary via `-ldflags -X main.version`.
+into each binary via `-ldflags -X github.com/IPMaze/MazeDNS/internal/version.Version`.

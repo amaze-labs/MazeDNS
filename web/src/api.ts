@@ -44,7 +44,8 @@ export interface Node {
   name: string // mutable display label
   key_prefix: string
   address: string
-  version: string
+  version: string // replicated-CONFIG hash the node last applied (rules sync state)
+  app_version: string // running binary build version ('' = agent predates version reporting)
   last_seen: number
   created_at: number
   key_issued_at: number // when the current node key was issued (rotation display)
@@ -692,6 +693,9 @@ export const api = {
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
+  // Control plane's own build version (the up-to-date reference for agents) and
+  // the current replicated-config version (the rules hash agents should carry).
+  serverVersion: () => fetch('/api/version').then(j<{ version: string; config_version: string }>),
   addNode: (name: string) =>
     fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ id: string; name: string; key: string }>),
   renewNodeKey: (id: string) =>

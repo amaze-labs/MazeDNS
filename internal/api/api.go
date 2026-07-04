@@ -30,6 +30,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/ruleimport"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/version"
 	"github.com/IPMaze/MazeDNS/web"
 )
 
@@ -216,6 +217,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// Cluster control plane (master only).
 		if clusterEnabled {
+			mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
 			mux.HandleFunc("POST /api/cluster/nodes/{id}/key", s.requireRole(roleAdmin, s.renewNodeKey))
@@ -514,6 +516,21 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// sanitizeVersion bounds a self-reported version string for display: printable
+// ASCII only, max 64 chars, anything else dropped.
+func sanitizeVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) > 64 {
+		v = v[:64]
+	}
+	for i := 0; i < len(v); i++ {
+		if v[i] < 0x20 || v[i] > 0x7e {
+			return ""
+		}
+	}
+	return v
+}
+
 // keyPrefix returns the short display prefix (first 8 chars) of a generated key.
 func keyPrefix(key string) string {
 	if len(key) > 8 {
@@ -707,7 +724,10 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if raw := r.Header.Get("X-MazeDNS-Stats"); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &st)
 	}
-	_ = s.store.TouchNode(node.ID, addr, ver, st)
+	// The running binary's build version, self-reported and display-only; bound
+	// and sanitized so a rogue node can't inject junk into the UI.
+	appVer := sanitizeVersion(r.Header.Get("X-MazeDNS-App-Version"))
+	_ = s.store.TouchNode(node.ID, addr, ver, appVer, st)
 
 	// Workers receive the effective rule set (active rules + enforced AI verdicts
 	// as deny rules) so list enable/disable, refreshes, and AI auto-blocks all
@@ -837,6 +857,17 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ingested": len(entries)})
+}
+
+// serverVersion reports the control plane's own build version (the reference the
+// UI compares each agent's app_version against to flag out-of-date nodes) and the
+// current replicated-config version (the rules hash agents should have applied).
+func (s *Server) serverVersion(w http.ResponseWriter, _ *http.Request) {
+	cfgVer, _ := s.store.ConfigVersion()
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version":        version.Short(),
+		"config_version": cfgVer,
+	})
 }
 
 // clusterNodes lists the enrolled DNS agents. The control plane itself is not a

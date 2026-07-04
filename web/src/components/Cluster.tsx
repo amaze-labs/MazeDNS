@@ -82,8 +82,45 @@ const AGENT_COLS: SortAccessors<Node> = {
   role: (n) => roleRank(n.role),
   total: (n) => n.total,
   blocked: (n) => n.blocked,
-  version: (n) => n.version || '',
+  version: (n) => n.app_version || '',
   last_seen: (n) => n.last_seen || 0,
+}
+
+// versionKnown reports whether the control plane has a comparable build version
+// (local "dev" builds can't meaningfully flag anyone as outdated).
+const versionKnown = (cp?: string) => !!cp && cp !== 'dev'
+// outdated: the agent reports a build version different from the control plane's
+// (or none at all — an agent from before version reporting is by definition old).
+const outdated = (n: Node, cp?: string) => versionKnown(cp) && n.app_version !== cp
+
+// AppVersion renders an agent's build version with its up-to-date signal against
+// the control plane's version. This is the RUNNING BINARY's version — the rules
+// sync state (config hash) is shown separately in the agent modal.
+function AppVersion({ v, cp }: { v: string; cp?: string }) {
+  if (!v) {
+    return (
+      <span className="muted" title="This agent predates version reporting — update its image.">
+        unknown
+      </span>
+    )
+  }
+  const known = versionKnown(cp)
+  const stale = known && v !== cp
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      <code>{v}</code>
+      {known &&
+        (stale ? (
+          <span className="badge blocked" title={`Control plane runs ${cp} — update this agent's image.`}>
+            outdated
+          </span>
+        ) : (
+          <span className="badge allow" title="Matches the control-plane version.">
+            ✓
+          </span>
+        ))}
+    </span>
+  )
 }
 
 // RoleSelect / SiteSelect: the styled dropdowns used in the agents table and the
@@ -128,14 +165,18 @@ export default function Cluster() {
   const [newEnrollKey, setNewEnrollKey] = useState<{ name: string; key: string } | null>(null)
   const [selected, setSelected] = useState<string | null>(null) // agent id whose detail modal is open
   const [err, setErr] = useState('')
+  // The control plane's own build version (the up-to-date reference for agents)
+  // and the current replicated-config version (rules-sync reference).
+  const [cpVer, setCpVer] = useState<{ version: string; config_version: string } | null>(null)
 
   const load = () =>
-    Promise.all([api.clusterNodes(), api.clusterSites(), api.enrollKeys(), api.listRevoked()])
-      .then(([n, s, k, rv]) => {
+    Promise.all([api.clusterNodes(), api.clusterSites(), api.enrollKeys(), api.listRevoked(), api.serverVersion()])
+      .then(([n, s, k, rv, v]) => {
         setNodes(n)
         setSites(s)
         setEnrollKeys(k)
         setRevoked(rv)
+        setCpVer(v)
         setErr('')
       })
       .catch((e) => setErr(e.message))
@@ -370,6 +411,11 @@ ${bridgeAlt}`
         This is the <strong>control plane</strong> — it holds the config and dashboard and <strong>does not answer
         DNS</strong>. All resolving is done by the <strong>DNS agents</strong> below; point your clients at their
         addresses.
+        {cpVer && (
+          <>
+            {' '}Control plane version <code>{cpVer.version}</code>.
+          </>
+        )}
       </p>
 
       <div className="cards">
@@ -442,6 +488,17 @@ ${bridgeAlt}`
       <p className="muted" style={{ textAlign: 'left', marginTop: 0 }}>
         Click an agent to see its metrics and management actions.
       </p>
+      {(() => {
+        const stale = nodes.filter((n) => outdated(n, cpVer?.version))
+        if (stale.length === 0) return null
+        return (
+          <div className="error" style={{ marginBottom: 12 }}>
+            ⚠ {stale.length} agent{stale.length === 1 ? ' is' : 's are'} not running the control-plane version (
+            <code>{cpVer!.version}</code>) — update {stale.length === 1 ? 'its' : 'their'} container image
+            {stale.length === 1 ? '' : 's'}: {stale.map((n) => n.name).join(', ')}
+          </div>
+        )
+      })()}
       <div className="table-scroll">
         <table className="agents-table">
           <thead>
@@ -489,7 +546,9 @@ ${bridgeAlt}`
                   </td>
                   <td className="num">{n.total.toLocaleString()}</td>
                   <td className="num">{n.blocked.toLocaleString()}</td>
-                  <td>{n.version ? <code>{n.version}</code> : <span className="muted">pending</span>}</td>
+                  <td>
+                    <AppVersion v={n.app_version} cp={cpVer?.version} />
+                  </td>
                   <td>{ago(n.last_seen)}</td>
                 </tr>
               )
@@ -599,6 +658,7 @@ ${bridgeAlt}`
       {selectedNode && (
         <AgentModal
           node={selectedNode}
+          cpVer={cpVer}
           sites={sitesInUse}
           newKey={newKey?.name === selectedNode.name ? newKey : null}
           onClose={() => setSelected(null)}
@@ -616,6 +676,7 @@ ${bridgeAlt}`
 
 function AgentModal({
   node,
+  cpVer,
   sites,
   newKey,
   onClose,
@@ -627,6 +688,7 @@ function AgentModal({
   onAssign,
 }: {
   node: Node
+  cpVer: { version: string; config_version: string } | null
   sites: string[]
   newKey: { name: string; key: string } | null
   onClose: () => void
@@ -666,7 +728,20 @@ function AgentModal({
 
       <dl className="kv-grid">
         <div><dt>Address</dt><dd>{nodeIP(node) || '—'}</dd></div>
-        <div><dt>Version</dt><dd>{node.version ? <code>{node.version}</code> : '—'}</dd></div>
+        <div><dt>App version</dt><dd><AppVersion v={node.app_version} cp={cpVer?.version} /></dd></div>
+        <div>
+          <dt>Config sync</dt>
+          <dd title="Whether this agent has applied the control plane's current rules/rewrites (replicated-config hash — not the software version).">
+            {!node.version ? (
+              '—'
+            ) : cpVer && node.version === cpVer.config_version ? (
+              <span className="badge allow">in sync</span>
+            ) : (
+              <span className="badge info">syncing…</span>
+            )}{' '}
+            <code className="muted">{node.version.slice(0, 12)}</code>
+          </dd>
+        </div>
         <div><dt>Last seen</dt><dd>{ago(node.last_seen)}</dd></div>
         <div><dt>Enrolled</dt><dd>{dateStr(node.created_at)}</dd></div>
         <div><dt>Key prefix</dt><dd><code>{node.key_prefix || '—'}</code></dd></div>

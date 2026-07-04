@@ -26,10 +26,8 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/version"
 )
-
-// version is set at build time via -ldflags "-X main.version=...".
-var version = "dev"
 
 // nodeKeyMeta is the app_meta key under which the agent persists the per-node API
 // key issued by the control plane at enrollment.
@@ -62,7 +60,7 @@ func main() {
 	for _, d := range cfg.Deprecations {
 		slog.Warn(d)
 	}
-	slog.Info("MazeDNS dns-agent starting", "version", version)
+	slog.Info("MazeDNS dns-agent starting", "version", version.Short())
 
 	st, err := boot.OpenStore(cfg)
 	if err != nil {

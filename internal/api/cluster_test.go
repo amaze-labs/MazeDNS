@@ -261,7 +261,7 @@ func TestClusterEnrollCannotHijackExistingNode(t *testing.T) {
 	// The victim is ALIVE (it polls). A live node's identity can never be taken
 	// over by a name collision — only an OFFLINE node is reclaimable (see
 	// TestClusterEnrollNameReclaim).
-	if err := st.TouchNode(victim.ID, "10.0.0.5", "v1", store.NodeStats{}); err != nil {
+	if err := st.TouchNode(victim.ID, "10.0.0.5", "v1", "abc123def456", store.NodeStats{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -647,7 +647,7 @@ func TestClusterEnrollNameInUse(t *testing.T) {
 	}
 	orig := mustNode(t, st, "dns03")
 	// Simulate a live holder: fresh last_seen via a touch.
-	if err := st.TouchNode(orig.ID, "10.0.0.9", "v1", store.NodeStats{}); err != nil {
+	if err := st.TouchNode(orig.ID, "10.0.0.9", "v1", "abc123def456", store.NodeStats{}); err != nil {
 		t.Fatal(err)
 	}
 

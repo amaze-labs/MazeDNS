@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/version"
 )
 
 const shipBatch = 5000 // max query-log entries shipped to the master per cycle
@@ -247,8 +248,13 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
+	// Two distinct versions travel with every poll: the replicated-config hash
+	// this node has applied (Node-Version) and the running binary's build version
+	// (App-Version) — the control plane compares the latter against its own to
+	// flag out-of-date agents.
 	ver, _ := a.store.ConfigVersion()
 	req.Header.Set("X-MazeDNS-Node-Version", ver)
+	req.Header.Set("X-MazeDNS-App-Version", version.Short())
 	if a.advertiseAddr != "" {
 		req.Header.Set("X-MazeDNS-Advertise-Addr", a.advertiseAddr)
 	}

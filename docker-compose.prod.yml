@@ -14,6 +14,11 @@
 # cluster policy) is configured in the UI under Settings — no env vars, no YAML, no
 # restart. The agent below presents MAZEDNS_JOIN_TOKEN as its enrollment key; paste
 # the key from the wizard into your environment (or into the agent service) to join.
+#
+# Required environment (set in your shell or a .env file next to this compose file):
+#   MAZEDNS_CP_IP       IP where the agent host reaches the control plane
+#                       (single-host setup: this host's own LAN IP)
+#   MAZEDNS_JOIN_TOKEN  enrollment key from the setup wizard / Cluster page
 
 name: mazedns
 
@@ -39,41 +44,39 @@ services:
     container_name: mazedns-agent
     restart: unless-stopped
     depends_on: [control-plane]
+    # Host networking (the default here, recommended): the agent binds the host's
+    # own :53 directly, so the resolver sees each client's REAL source IP
+    # (per-client dashboard stats) and the control plane records this node's real
+    # host IP — under bridge networking both collapse to a docker bridge address
+    # like 172.18.0.2. The agent binds :53 out of the box — its baked config
+    # defaults to port 53 and the binary carries CAP_NET_BIND_SERVICE, no root
+    # needed. Host networking has no compose DNS, so the control plane's IP MUST
+    # be pinned: set MAZEDNS_CP_IP in your environment (or a .env file) to the IP
+    # where this host reaches the control plane (with this single-host file:
+    # the host's own LAN IP). DNS is bypassed for the CP dial only; TLS still
+    # verifies the URL host.
+    network_mode: host
     environment:
-      MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind /healthz + /metrics inside the container so the port mapping works
+      MAZEDNS_API_ADDRESS: "0.0.0.0"     # agent /healthz + /metrics
+      MAZEDNS_API_PORT: "9090"           # keep :8080 free for the control plane on this host
       MAZEDNS_DB_PATH: "/data/mazedns.db"
-      MAZEDNS_CP_URL: "http://control-plane:8080"
-      # Pin the control plane's IP when the agent can't resolve its FQDN — e.g. the
-      # agent is its site's only DNS server, or it runs with network_mode: host and
-      # has no upstream resolver yet. DNS is bypassed for the CP dial; TLS still
-      # verifies the URL host. Left empty here (compose DNS resolves the service
-      # name). Alternatively add extra_hosts below.
-      MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:-}"
+      MAZEDNS_CP_URL: "http://${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}:8080"
+      MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}"
       # Enrollment key created in the setup wizard / Cluster → Enrollment keys.
       MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?paste the enrollment key from the setup wizard}"
       MAZEDNS_NODE_NAME: "agent-1"
-    # extra_hosts:                       # pure-Docker alternative to MAZEDNS_CP_IP
-    #   - "cp.example.com:10.0.0.5"      #   (Go's resolver honors /etc/hosts)
-    # The agent listens on 53 inside the container (the image's baked default) and
-    # binds it directly as a non-root user via the binary's CAP_NET_BIND_SERVICE
-    # file capability — no cap_add or root needed with Docker's default caps.
-    ports:
-      - "53:53/udp"
-      - "53:53/tcp"
-      - "9090:8080"       # agent /metrics + /healthz
     volumes:
       - agent-data:/data
-    # --- Host networking (recommended for real deployments) -------------------
-    # Bind the host's own :53 directly so the resolver sees each client's real
-    # source IP (per-client dashboard stats) instead of the docker bridge NAT.
-    # Replace the `ports:` block above with the two lines below (host networking
-    # ignores port mappings). The agent binds :53 out of the box — its baked
-    # config defaults to port 53 and the binary carries CAP_NET_BIND_SERVICE.
-    # Under host networking there's no compose DNS, so reach the CP by an FQDN +
-    # pinned IP (or an IP URL directly):
-    #   MAZEDNS_CP_URL: "https://cp.example.com:8080"
-    #   MAZEDNS_CP_IP:  "10.0.0.5"
-    # network_mode: host
+    # --- Bridge networking (alternative) ---------------------------------------
+    # If you can't use host networking, remove `network_mode: host` and
+    # MAZEDNS_API_PORT above, set MAZEDNS_CP_URL back to the compose service name
+    # (http://control-plane:8080, MAZEDNS_CP_IP no longer needed), and publish the
+    # ports below. Client IPs and this node's IP will then show as the docker
+    # bridge address instead of the real ones.
+    # ports:
+    #   - "53:53/udp"
+    #   - "53:53/tcp"
+    #   - "9090:8080"       # agent /metrics + /healthz
 
 volumes:
   control-plane-data:

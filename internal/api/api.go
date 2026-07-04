@@ -833,7 +833,7 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"name": r.PathValue("name")})
 }
 
-// setNodeSite assigns a node (by id) to a site with a role (primary/backup).
+// setNodeSite assigns a node (by id) to a site with a role (primary/secondary/backup).
 // Roles are advisory labels — every agent still serves DNS.
 func (s *Server) setNodeSite(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

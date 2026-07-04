@@ -51,7 +51,7 @@ export interface Node {
   maintenance: boolean
   approved: boolean // admitted to the cluster (false = pending admin approval)
   site: string // site grouping ('' = unassigned)
-  role: string // '' | 'primary' | 'backup' (advisory)
+  role: string // '' | 'primary' | 'secondary' | 'backup' (advisory)
   total: number
   blocked: number
   cached: number
@@ -238,6 +238,8 @@ export interface ClassifierSettings {
   vt_api_key: string
   abuseipdb_enabled: boolean
   abuseipdb_api_key: string
+  opentip_enabled: boolean
+  opentip_api_key: string
 }
 
 export interface LLMUsageDay {
@@ -258,7 +260,7 @@ export interface ThreatFeed {
 
 export interface ReputationUsageDay {
   day: string
-  service: string // "virustotal" | "abuseipdb"
+  service: string // "virustotal" | "abuseipdb" | "opentip"
   calls: number
   errors: number
   rate_limited: number
@@ -291,6 +293,7 @@ export interface ClassifierStatus {
   has_api_key: boolean
   has_vt_key: boolean
   has_abuseipdb_key: boolean
+  has_opentip_key: boolean
 }
 
 export interface SeriesPoint {

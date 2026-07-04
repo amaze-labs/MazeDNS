@@ -1017,6 +1017,32 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               />
             </div>
           )}
+          <div className="field">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={cls.opentip_enabled}
+                onChange={(e) => setCls({ ...cls, opentip_enabled: e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">
+                Kaspersky OpenTIP — check the domain's threat zone (opentip.kaspersky.com)
+              </span>
+            </label>
+          </div>
+          {cls.opentip_enabled && (
+            <div className="field">
+              <label>Kaspersky OpenTIP API key {clsInfo?.has_opentip_key && <span className="badge allow">key set</span>}</label>
+              <input
+                type="password"
+                value={cls.opentip_api_key}
+                onChange={(e) => setCls({ ...cls, opentip_api_key: e.target.value })}
+                placeholder={clsInfo?.has_opentip_key ? '•••••••••••••• (saved — leave blank to keep)' : 'paste your OpenTIP API token'}
+              />
+            </div>
+          )}
 
           <div className="settings-actions">
             <button className="btn" onClick={testClassifier} disabled={testing}>

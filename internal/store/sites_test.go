@@ -49,8 +49,8 @@ func TestSitesAssignment(t *testing.T) {
 	if err := s.SetNodeSite(id["node-b"], "office", "primary"); err != nil {
 		t.Fatal(err)
 	}
-	if _, r := roleOf("node-a"); r != "backup" {
-		t.Errorf("node-a should be demoted to backup, got %q", r)
+	if _, r := roleOf("node-a"); r != "secondary" {
+		t.Errorf("node-a should be demoted to secondary, got %q", r)
 	}
 	if _, r := roleOf("node-b"); r != "primary" {
 		t.Errorf("node-b should be primary, got %q", r)
@@ -99,7 +99,7 @@ func TestMasterSiteSinglePrimary(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodes, _ := s.ListNodes()
-	if nodes[0].Role != "backup" {
+	if nodes[0].Role != "secondary" {
 		t.Errorf("node-a should be demoted by master primary, got %q", nodes[0].Role)
 	}
 	if s.MasterSite() != "office" || s.MasterRole() != "primary" {

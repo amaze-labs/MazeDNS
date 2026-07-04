@@ -215,12 +215,14 @@ type Classifier struct {
 	// WhoisEnabled enriches classifications with RDAP/WHOIS registration data
 	// (domain age etc.) as a signal for the model.
 	WhoisEnabled bool `yaml:"whois_enabled"`
-	// Reputation enrichment (optional, key-gated): VirusTotal (domain) + AbuseIPDB
-	// (resolved IP) corroborate verdicts.
+	// Reputation enrichment (optional, key-gated): VirusTotal (domain), AbuseIPDB
+	// (resolved IP), and Kaspersky OpenTIP (domain) corroborate verdicts.
 	VTEnabled        bool   `yaml:"vt_enabled"`
 	VTAPIKey         string `yaml:"vt_api_key"`
 	AbuseIPDBEnabled bool   `yaml:"abuseipdb_enabled"`
 	AbuseIPDBAPIKey  string `yaml:"abuseipdb_api_key"`
+	OpenTIPEnabled   bool   `yaml:"opentip_enabled"`
+	OpenTIPAPIKey    string `yaml:"opentip_api_key"`
 }
 
 // Cluster configures control-plane<->agent configuration replication.
@@ -388,6 +390,14 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_API_ADDRESS"); v != "" {
 		cfg.API.Address = v
+	}
+	// MAZEDNS_API_PORT moves the HTTP API (/healthz, /metrics, UI on the control
+	// plane) — needed under host networking when :8080 is taken on the host, e.g.
+	// an agent sharing a host with the control plane.
+	if v := os.Getenv("MAZEDNS_API_PORT"); v != "" {
+		if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cfg.API.Port = p
+		}
 	}
 	if v := os.Getenv("MAZEDNS_DB_PATH"); v != "" {
 		cfg.Database.Path = v

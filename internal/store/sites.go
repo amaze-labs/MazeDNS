@@ -7,8 +7,8 @@ import (
 )
 
 // Site is a named group of cluster nodes (e.g. an office or region). Roles
-// (primary/backup) within a site are advisory labels — every node still serves
-// DNS; clients fail over themselves via resolv.conf / DHCP.
+// (primary/secondary/backup) within a site are advisory labels — every node
+// still serves DNS; clients fail over themselves via resolv.conf / DHCP.
 type Site struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -17,14 +17,17 @@ type Site struct {
 
 // Valid node roles within a site. An empty role means "in the site, unlabelled".
 const (
-	RolePrimary = "primary"
-	RoleBackup  = "backup"
+	RolePrimary   = "primary"
+	RoleSecondary = "secondary"
+	RoleBackup    = "backup"
 )
 
 func normalizeRole(role string) string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case RolePrimary:
 		return RolePrimary
+	case RoleSecondary:
+		return RoleSecondary
 	case RoleBackup:
 		return RoleBackup
 	default:
@@ -88,8 +91,8 @@ func (s *Store) DeleteSite(name string) error {
 }
 
 // SetNodeSite assigns a worker node (by immutable id) to a site with a role.
-// Setting a node primary demotes any existing primary in that site to backup (one
-// primary per site).
+// Setting a node primary demotes any existing primary in that site to secondary
+// (one primary per site).
 func (s *Store) SetNodeSite(id, site, role string) error {
 	site = strings.TrimSpace(site)
 	role = normalizeRole(role)
@@ -102,13 +105,13 @@ func (s *Store) SetNodeSite(id, site, role string) error {
 	}
 	if site != "" && role == RolePrimary {
 		if _, err := tx.Exec(`UPDATE nodes SET role=? WHERE site=? AND role=? AND id<>?`,
-			RoleBackup, site, RolePrimary, id); err != nil {
+			RoleSecondary, site, RolePrimary, id); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 		// If the master currently holds primary in this site, demote it too.
 		if s.MasterSite() == site && s.MasterRole() == RolePrimary {
-			_ = s.SetMasterRoleRaw(RoleBackup)
+			_ = s.SetMasterRoleRaw(RoleSecondary)
 		}
 	}
 	res, err := tx.Exec(`UPDATE nodes SET site=?, role=? WHERE id=?`, site, role, id)
@@ -150,7 +153,7 @@ func (s *Store) SetMasterSite(site, role string) error {
 	}
 	if site != "" && role == RolePrimary {
 		if _, err := s.db.Exec(`UPDATE nodes SET role=? WHERE site=? AND role=?`,
-			RoleBackup, site, RolePrimary); err != nil {
+			RoleSecondary, site, RolePrimary); err != nil {
 			return err
 		}
 	}

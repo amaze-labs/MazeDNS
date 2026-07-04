@@ -265,6 +265,8 @@ func newClassifier(st *store.Store, cfg config.Config, reload func() error) *cla
 		VTAPIKey:              cfg.Classifier.VTAPIKey,
 		AbuseIPDBEnabled:      cfg.Classifier.AbuseIPDBEnabled,
 		AbuseIPDBAPIKey:       cfg.Classifier.AbuseIPDBAPIKey,
+		OpenTIPEnabled:        cfg.Classifier.OpenTIPEnabled,
+		OpenTIPAPIKey:         cfg.Classifier.OpenTIPAPIKey,
 	}
 	if defaults.ThreatFeeds == nil {
 		defaults.ThreatFeeds = classifier.DefaultThreatFeeds

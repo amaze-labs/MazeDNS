@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, type EnrollKey, type Node, type RevokedNode, type Site } from '../api'
 import { pollWhileVisible } from '../poll'
 import Modal from './Modal'
+import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
 const ONLINE_WINDOW = 120 // seconds
 const IMAGE = 'ghcr.io/ipmaze/mazedns-dns-agent:latest'
@@ -54,9 +55,67 @@ function statusOf(n: Node): { dot: 'on' | 'off' | 'warn'; label: string } {
   return { dot: 'on', label: 'Serving DNS' }
 }
 
-const roleRank = (r: string) => (r === 'primary' ? 0 : r === 'backup' ? 1 : 2)
-const roleLabel = (r: string) => (r === 'primary' ? 'Primary' : r === 'backup' ? 'Backup' : '—')
+// Advisory DNS roles within a site: primary answers first, secondary is the
+// resolver clients fail over to, backup is the last resort.
+const ROLES = ['primary', 'secondary', 'backup'] as const
+const roleRank = (r: string) => (r === 'primary' ? 0 : r === 'secondary' ? 1 : r === 'backup' ? 2 : 3)
+const roleLabel = (r: string) =>
+  r === 'primary' ? 'Primary' : r === 'secondary' ? 'Secondary' : r === 'backup' ? 'Backup' : '—'
+const roleBadge = (r: string) => (r === 'primary' ? 'allow' : r === 'secondary' ? 'info' : '')
 const nodeIP = (n: Node) => (n.address || '').replace(/:\d+$/, '')
+
+// Sort accessors for the enrollment-keys table.
+const ENROLL_COLS: SortAccessors<EnrollKey> = {
+  name: (k) => k.name || '',
+  status: (k) => k.status,
+  expires: (k) => k.expires_at || Number.MAX_SAFE_INTEGER,
+  uses: (k) => k.use_count,
+  created: (k) => k.created_at,
+}
+
+// Sort accessors for the agents table.
+const AGENT_COLS: SortAccessors<Node> = {
+  status: (n) => statusOf(n).label,
+  name: (n) => n.name,
+  address: (n) => nodeIP(n),
+  site: (n) => n.site || '',
+  role: (n) => roleRank(n.role),
+  total: (n) => n.total,
+  blocked: (n) => n.blocked,
+  version: (n) => n.version || '',
+  last_seen: (n) => n.last_seen || 0,
+}
+
+// RoleSelect / SiteSelect: the styled dropdowns used in the agents table and the
+// agent modal (a .select-pill wrapper draws the chevron and focus ring).
+function RoleSelect({ value, onChange }: { value: string; onChange: (role: string) => void }) {
+  return (
+    <span className="select-pill">
+      <select value={value || 'backup'} onChange={(e) => onChange(e.target.value)}>
+        {ROLES.map((r) => (
+          <option key={r} value={r}>
+            {roleLabel(r)}
+          </option>
+        ))}
+      </select>
+    </span>
+  )
+}
+
+function SiteSelect({ value, sites, onChange }: { value: string; sites: string[]; onChange: (site: string) => void }) {
+  return (
+    <span className="select-pill">
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— none —</option>
+        {sites.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+    </span>
+  )
+}
 
 export default function Cluster() {
   const [nodes, setNodes] = useState<Node[]>([])
@@ -235,48 +294,72 @@ export default function Cluster() {
   const membersOf = (site: string) =>
     nodes.filter((n) => n.site === site).sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.name.localeCompare(b.name))
   const selectedNode = selected ? nodes.find((n) => n.id === selected) || null : null
+  const agentsTable = useTable(nodes, AGENT_COLS, 'name')
 
   const cpHost = window.location.hostname || '<control-plane-host>'
   const cpURL = `${window.location.protocol}//${cpHost}${window.location.port ? ':' + window.location.port : ''}`
 
   // Prefer showing a freshly-created enrollment key inline; otherwise a placeholder.
   const enrollSecret = newEnrollKey?.key || '<enrollment-key>'
+  // Host networking is the recommended deployment: the resolver sees each
+  // client's real source IP (per-client stats) and the control plane records the
+  // node's real host IP instead of a docker bridge address (e.g. 172.18.0.2).
+  // Under host networking compose/docker DNS is unavailable, so the control
+  // plane's IP must be pinned with MAZEDNS_CP_IP. The HTTP API moves to :9090 in
+  // case :8080 is already taken on the host.
+  const cpIP = '<control-plane-ip>'
+  const bridgeAlt = `# Prefer bridge networking instead? Drop --network host and publish the ports:
+#   -p 53:53/udp -p 53:53/tcp -p 9090:8080
+# (Note: the dashboard then shows the docker bridge IP for clients and this node.)`
   const joinRun = `docker run -d --name mazedns-agent --restart unless-stopped \\
-  -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
+  --network host \\
   -e MAZEDNS_CP_URL=${cpURL} \\
+  -e MAZEDNS_CP_IP=${cpIP} \\
   -e MAZEDNS_JOIN_TOKEN=${enrollSecret} \\
   -e MAZEDNS_NODE_NAME=site-a-1 \\
   -e MAZEDNS_DB_PATH=/data/mazedns.db \\
+  -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
+  -e MAZEDNS_API_PORT=9090 \\
   -v mazedns-agent-data:/data \\
-  -p 53:53/udp -p 53:53/tcp \\
-  ${IMAGE}`
+  ${IMAGE}
+${bridgeAlt}`
   const joinCompose = `services:
   dns-agent:
     image: ${IMAGE}
     restart: unless-stopped
+    network_mode: host          # recommended: real client IPs + real node IP
     environment:
-      MAZEDNS_API_ADDRESS: "0.0.0.0"
       MAZEDNS_CP_URL: "${cpURL}"
+      MAZEDNS_CP_IP: "${cpIP}"  # required: pins the control-plane IP (no docker DNS under host networking)
       MAZEDNS_JOIN_TOKEN: "${enrollSecret}"
       MAZEDNS_NODE_NAME: "site-a-1"
       MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_API_ADDRESS: "0.0.0.0"
+      MAZEDNS_API_PORT: "9090"  # agent /metrics + /healthz (keeps :8080 free on the host)
     volumes:
       - mazedns-agent-data:/data
-    ports:
-      - "53:53/udp"
-      - "53:53/tcp"
+    # Prefer bridge networking instead? Remove network_mode + MAZEDNS_CP_IP +
+    # MAZEDNS_API_PORT and publish the ports (the dashboard then shows the
+    # docker bridge IP for clients and this node):
+    # ports:
+    #   - "53:53/udp"
+    #   - "53:53/tcp"
+    #   - "9090:8080"
 volumes:
   mazedns-agent-data:`
   const manualRun = newKey
     ? `docker run -d --name mazedns-${newKey.name} --restart unless-stopped \\
-  -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
+  --network host \\
   -e MAZEDNS_CP_URL=${cpURL} \\
+  -e MAZEDNS_CP_IP=${cpIP} \\
   -e MAZEDNS_NODE_KEY=${newKey.key} \\
   -e MAZEDNS_NODE_NAME=${newKey.name} \\
   -e MAZEDNS_DB_PATH=/data/mazedns.db \\
+  -e MAZEDNS_API_ADDRESS=0.0.0.0 \\
+  -e MAZEDNS_API_PORT=9090 \\
   -v mazedns-${newKey.name}-data:/data \\
-  -p 53:53/udp -p 53:53/tcp \\
-  ${IMAGE}`
+  ${IMAGE}
+${bridgeAlt}`
     : ''
 
   return (
@@ -309,8 +392,9 @@ volumes:
         </form>
       </div>
       <p className="muted">
-        Group agents into sites and label each <strong>Primary</strong> or <strong>Backup</strong>. Roles are advisory —
-        every agent serves DNS; clients fail over via the order in their <code>resolv.conf</code> / DHCP.
+        Group agents into sites and label each <strong>Primary</strong>, <strong>Secondary</strong>, or{' '}
+        <strong>Backup</strong>. Roles are advisory — every agent serves DNS; clients fail over via the order in their{' '}
+        <code>resolv.conf</code> / DHCP.
       </p>
 
       {sitesInUse.length > 0 ? (
@@ -337,7 +421,7 @@ volumes:
                     return (
                       <li key={n.id} className="site-member" onClick={() => setSelected(n.id)} title="Open agent details">
                         <span className={`node-dot ${st.dot}`} title={st.label} />
-                        <span className={`badge ${n.role === 'primary' ? 'allow' : ''}`}>{roleLabel(n.role)}</span>
+                        <span className={`badge ${roleBadge(n.role)}`}>{roleLabel(n.role)}</span>
                         <strong>{n.name}</strong>
                         <span className="muted" style={{ marginLeft: 'auto' }}>{nodeIP(n) || 'no address'}</span>
                       </li>
@@ -362,19 +446,19 @@ volumes:
         <table className="agents-table">
           <thead>
             <tr>
-              <th>Status</th>
-              <th>Agent</th>
-              <th>Address</th>
-              <th>Site</th>
-              <th>Role</th>
-              <th className="num">Queries</th>
-              <th className="num">Blocked</th>
-              <th>Version</th>
-              <th>Last seen</th>
+              <Th table={agentsTable} col="status">Status</Th>
+              <Th table={agentsTable} col="name">Agent</Th>
+              <Th table={agentsTable} col="address">Address</Th>
+              <Th table={agentsTable} col="site">Site</Th>
+              <Th table={agentsTable} col="role">Role</Th>
+              <Th table={agentsTable} col="total" className="num">Queries</Th>
+              <Th table={agentsTable} col="blocked" className="num">Blocked</Th>
+              <Th table={agentsTable} col="version">Version</Th>
+              <Th table={agentsTable} col="last_seen">Last seen</Th>
             </tr>
           </thead>
           <tbody>
-            {nodes.map((n) => {
+            {agentsTable.rows.map((n) => {
               const st = statusOf(n)
               return (
                 <tr key={n.id} className="agent-row" onClick={() => setSelected(n.id)}>
@@ -394,24 +478,11 @@ volumes:
                   </td>
                   <td>{nodeIP(n) || '—'}</td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <select
-                      value={n.site}
-                      onChange={(e) => assignSite(n, e.target.value, e.target.value ? n.role || 'backup' : '')}
-                    >
-                      <option value="">— none —</option>
-                      {sitesInUse.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
+                    <SiteSelect value={n.site} sites={sitesInUse} onChange={(site) => assignSite(n, site, site ? n.role || 'backup' : '')} />
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
                     {n.site ? (
-                      <select value={n.role || 'backup'} onChange={(e) => assignSite(n, n.site, e.target.value)}>
-                        <option value="primary">Primary</option>
-                        <option value="backup">Backup</option>
-                      </select>
+                      <RoleSelect value={n.role} onChange={(role) => assignSite(n, n.site, role)} />
                     ) : (
                       <span className="muted">—</span>
                     )}
@@ -423,7 +494,7 @@ volumes:
                 </tr>
               )
             })}
-            {nodes.length === 0 && (
+            {agentsTable.rows.length === 0 && (
               <tr>
                 <td colSpan={9} className="muted">
                   No agents enrolled — add one from “Deploy a DNS agent” below.
@@ -433,6 +504,7 @@ volumes:
           </tbody>
         </table>
       </div>
+      <Pager table={agentsTable} unit="agents" />
 
       {/* ── Revoked agents ────────────────────────────────────────────────── */}
       {revoked.length > 0 && (
@@ -604,20 +676,12 @@ function AgentModal({
       <div className="agent-assign">
         <label>
           Site
-          <select value={node.site} onChange={(e) => onAssign(e.target.value, e.target.value ? node.role || 'backup' : '')}>
-            <option value="">— none —</option>
-            {sites.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
+          <SiteSelect value={node.site} sites={sites} onChange={(site) => onAssign(site, site ? node.role || 'backup' : '')} />
         </label>
         {node.site && (
           <label>
             Role
-            <select value={node.role || 'backup'} onChange={(e) => onAssign(node.site, e.target.value)}>
-              <option value="primary">Primary</option>
-              <option value="backup">Backup</option>
-            </select>
+            <RoleSelect value={node.role} onChange={(role) => onAssign(node.site, role)} />
           </label>
         )}
       </div>
@@ -727,6 +791,7 @@ function EnrollKeys({
   const [name, setName] = useState('')
   const [ttl, setTtl] = useState(0)
   const [maxUses, setMaxUses] = useState(0)
+  const table = useTable(keys, ENROLL_COLS, 'created', true)
 
   const submit = (e: FormEvent) => {
     e.preventDefault()
@@ -786,16 +851,16 @@ function EnrollKeys({
           <thead>
             <tr>
               <th>Key</th>
-              <th>Description</th>
-              <th>Status</th>
-              <th>Expires</th>
-              <th className="num">Uses</th>
-              <th>Created</th>
+              <Th table={table} col="name">Description</Th>
+              <Th table={table} col="status">Status</Th>
+              <Th table={table} col="expires">Expires</Th>
+              <Th table={table} col="uses" className="num">Uses</Th>
+              <Th table={table} col="created">Created</Th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {keys.map((k) => (
+            {table.rows.map((k) => (
               <tr key={k.id}>
                 <td>
                   <code>{k.key_prefix}…</code>
@@ -822,7 +887,7 @@ function EnrollKeys({
                 </td>
               </tr>
             ))}
-            {keys.length === 0 && (
+            {table.rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
                   No enrollment keys yet — create one above to let agents join.
@@ -832,6 +897,7 @@ function EnrollKeys({
           </tbody>
         </table>
       </div>
+      <Pager table={table} unit="keys" />
     </>
   )
 }

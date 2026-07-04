@@ -143,7 +143,7 @@ type Node struct {
 	Maintenance      bool   `json:"maintenance"`        // drained: this node answers SERVFAIL
 	ControlPlaneOnly bool   `json:"control_plane_only"` // master only: coordinates the cluster but serves no DNS (answers REFUSED)
 	Site             string `json:"site"`               // site grouping ('' = unassigned)
-	Role             string `json:"role"`               // '' | 'primary' | 'backup' (advisory: both serve DNS)
+	Role             string `json:"role"`               // '' | 'primary' | 'secondary' | 'backup' (advisory: all serve DNS)
 	Approved         bool   `json:"approved"`           // admitted to the cluster (false = pending admin approval)
 	NodeStats
 }

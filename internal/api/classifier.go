@@ -27,8 +27,8 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 	}
 	// Never leak API keys to the UI — but tell it which ones are set so it can show
 	// a "key present" indicator.
-	hasAPIKey, hasVTKey, hasAbuseKey := cfg.APIKey != "", cfg.VTAPIKey != "", cfg.AbuseIPDBAPIKey != ""
-	cfg.APIKey, cfg.VTAPIKey, cfg.AbuseIPDBAPIKey = "", "", ""
+	hasAPIKey, hasVTKey, hasAbuseKey, hasOpenTIPKey := cfg.APIKey != "", cfg.VTAPIKey != "", cfg.AbuseIPDBAPIKey != "", cfg.OpenTIPAPIKey != ""
+	cfg.APIKey, cfg.VTAPIKey, cfg.AbuseIPDBAPIKey, cfg.OpenTIPAPIKey = "", "", "", ""
 	trustedCount, threatCount := 0, 0
 	if s.cls != nil {
 		trustedCount = s.cls.TrustedCount()
@@ -56,6 +56,7 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		"has_api_key":         hasAPIKey,
 		"has_vt_key":          hasVTKey,
 		"has_abuseipdb_key":   hasAbuseKey,
+		"has_opentip_key":     hasOpenTIPKey,
 	})
 }
 
@@ -103,11 +104,14 @@ func (s *Server) putClassifierSettings(w http.ResponseWriter, r *http.Request) {
 	if in.AbuseIPDBAPIKey == "" {
 		in.AbuseIPDBAPIKey = prev.AbuseIPDBAPIKey
 	}
+	if in.OpenTIPAPIKey == "" {
+		in.OpenTIPAPIKey = prev.OpenTIPAPIKey
+	}
 	if err := classifier.SaveSettings(s.store, in); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	in.APIKey, in.VTAPIKey, in.AbuseIPDBAPIKey = "", "", ""
+	in.APIKey, in.VTAPIKey, in.AbuseIPDBAPIKey, in.OpenTIPAPIKey = "", "", "", ""
 	writeJSON(w, http.StatusOK, in)
 }
 

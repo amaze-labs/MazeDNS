@@ -1,5 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Rewrite } from '../api'
+import { useTable, Th, Pager, type SortAccessors } from './tableKit'
+
+const COLS: SortAccessors<Rewrite> = {
+  domain: (r) => r.domain,
+  rrtype: (r) => r.rrtype,
+  value: (r) => r.value,
+}
 
 export default function Rewrites() {
   const [rows, setRows] = useState<Rewrite[]>([])
@@ -32,6 +39,8 @@ export default function Rewrites() {
     load()
   }
 
+  const table = useTable(rows, COLS, 'domain')
+
   return (
     <div>
       <h2>Local DNS rewrites</h2>
@@ -53,14 +62,14 @@ export default function Rewrites() {
       <table>
         <thead>
           <tr>
-            <th>Domain</th>
-            <th>Type</th>
-            <th>Value</th>
+            <Th table={table} col="domain">Domain</Th>
+            <Th table={table} col="rrtype">Type</Th>
+            <Th table={table} col="value">Value</Th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {table.rows.map((r) => (
             <tr key={r.id}>
               <td>{r.domain}</td>
               <td>{r.rrtype}</td>
@@ -72,7 +81,7 @@ export default function Rewrites() {
               </td>
             </tr>
           ))}
-          {rows.length === 0 && (
+          {table.rows.length === 0 && (
             <tr>
               <td colSpan={4} className="muted">
                 No rewrites
@@ -81,6 +90,7 @@ export default function Rewrites() {
           )}
         </tbody>
       </table>
+      <Pager table={table} unit="rewrites" />
     </div>
   )
 }

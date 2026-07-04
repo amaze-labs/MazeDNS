@@ -13,8 +13,23 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
-// clientIP extracts the request's source IP for logging (best effort).
+// clientIP extracts the request's source IP for logging and node addresses (best
+// effort). The control plane commonly runs behind a TLS reverse proxy, so the TCP
+// RemoteAddr is the proxy's (often docker-internal) address for EVERY caller —
+// e.g. all agents showing 172.18.0.2. When forwarding headers are present, the
+// LAST X-Forwarded-For hop (appended by the proxy directly in front of us — the
+// only hop that proxy vouches for) or X-Real-IP wins, validated as an IP literal
+// so a spoofed header can't inject arbitrary strings into the UI or logs.
 func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		hops := strings.Split(xff, ",")
+		if ip := strings.TrimSpace(hops[len(hops)-1]); net.ParseIP(ip) != nil {
+			return ip
+		}
+	}
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" && net.ParseIP(ip) != nil {
+		return ip
+	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
 	}

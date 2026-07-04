@@ -665,3 +665,26 @@ func TestClusterEnrollNameInUse(t *testing.T) {
 		t.Fatalf("suffix_ok: status = %d body=%s, want 201 dns03-2", rr.Code, rr.Body.String())
 	}
 }
+
+// clientIP must prefer the proxy-appended forwarding hop (behind a reverse proxy
+// every agent's RemoteAddr is the proxy container's IP), and never accept a
+// non-IP header value.
+func TestClientIPForwardedHeaders(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil) // RemoteAddr = 192.0.2.1:1234
+	if got := clientIP(req); got != "192.0.2.1" {
+		t.Fatalf("plain RemoteAddr: got %q", got)
+	}
+	req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.9")
+	if got := clientIP(req); got != "10.0.0.9" {
+		t.Fatalf("XFF last hop: got %q", got)
+	}
+	req.Header.Set("X-Forwarded-For", "junk, <script>")
+	req.Header.Set("X-Real-IP", "198.51.100.3")
+	if got := clientIP(req); got != "198.51.100.3" {
+		t.Fatalf("invalid XFF should fall to X-Real-IP: got %q", got)
+	}
+	req.Header.Set("X-Real-IP", "also-junk")
+	if got := clientIP(req); got != "192.0.2.1" {
+		t.Fatalf("all-invalid headers should fall to RemoteAddr: got %q", got)
+	}
+}

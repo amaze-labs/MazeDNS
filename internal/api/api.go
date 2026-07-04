@@ -678,10 +678,11 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Server-driven key rotation runs on the authenticated poll (see maybeRotate).
 	newNodeKey := s.maybeRotateNodeKey(node, viaCurrent)
 	ver := r.Header.Get("X-MazeDNS-Node-Version")
-	addr := r.RemoteAddr
-	if host, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
-		addr = host
-	}
+	// clientIP honors X-Forwarded-For / X-Real-IP: behind a reverse proxy the TCP
+	// RemoteAddr is the proxy's container IP for EVERY agent (all nodes showing
+	// the same 172.18.x.x), while the forwarding header carries each agent's
+	// real source address.
+	addr := clientIP(r)
 	// Prefer the node's self-reported site-reachable address (MAZEDNS_ADVERTISE_ADDR):
 	// the TCP RemoteAddr is often a docker-internal IP that doesn't exist on the LAN.
 	// It is attacker-controllable (a node key holder sets it) and is displayed and

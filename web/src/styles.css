@@ -1714,15 +1714,25 @@ details.settings-card[open] > :last-child {
   }
 
   /* ---- App shell: sidebar becomes a bottom tab bar ----
-     The app pins to the visual viewport (100dvh) and <main> becomes the scroll
-     container: the tab bar is a normal flex child below it, so it can never
-     drift while scrolling (no position:fixed vs. mobile-URL-bar quirks), and
-     sticky elements inside <main> (e.g. the Settings save bar) stick to the
-     visible area just above the tab bar instead of hiding behind it. */
+     The app fills the layout viewport exactly and <main> becomes the ONLY
+     scroll container: the tab bar is a normal flex child below it, so it can
+     never drift while scrolling, and sticky elements inside <main> (e.g. the
+     Settings save bar) stick just above the tab bar. The body itself must
+     never scroll — a scrollable body both leaves a dead background band under
+     the tab bar (viewport-unit vs browser-chrome mismatch) and lets the whole
+     page pan sideways when something overflows. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 0;
+  }
+  body {
+    overflow: hidden;
+  }
   .app {
     flex-direction: column;
-    height: 100vh; /* fallback */
-    height: 100dvh;
+    height: 100%;
     min-height: 0;
   }
   .app > main {
@@ -1730,6 +1740,7 @@ details.settings-card[open] > :last-child {
     max-width: 100%;
     min-height: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
     padding: 16px 14px 24px;
   }
@@ -1814,6 +1825,27 @@ details.settings-card[open] > :last-child {
   }
   .settings {
     max-width: 100%;
+  }
+
+  /* ---- Filter bars: wrap instead of overflowing the viewport ---- */
+  .range-tabs {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .range-tabs .spacer {
+    display: none; /* Focus wraps below the window chips instead of being pushed offscreen */
+  }
+  .ql-filters .ql-select {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+  }
+  .ql-filters input.search {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  /* KPI cards: two per row instead of a squeezed auto-fit. */
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 

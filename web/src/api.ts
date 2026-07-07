@@ -44,14 +44,15 @@ export interface Node {
   name: string // mutable display label
   key_prefix: string
   address: string
-  version: string
+  version: string // replicated-CONFIG hash the node last applied (rules sync state)
+  app_version: string // running binary build version ('' = agent predates version reporting)
   last_seen: number
   created_at: number
   key_issued_at: number // when the current node key was issued (rotation display)
   maintenance: boolean
   approved: boolean // admitted to the cluster (false = pending admin approval)
   site: string // site grouping ('' = unassigned)
-  role: string // '' | 'primary' | 'backup' (advisory)
+  role: string // '' | 'primary' | 'secondary' | 'backup' (advisory)
   total: number
   blocked: number
   cached: number
@@ -238,6 +239,8 @@ export interface ClassifierSettings {
   vt_api_key: string
   abuseipdb_enabled: boolean
   abuseipdb_api_key: string
+  opentip_enabled: boolean
+  opentip_api_key: string
 }
 
 export interface LLMUsageDay {
@@ -258,7 +261,7 @@ export interface ThreatFeed {
 
 export interface ReputationUsageDay {
   day: string
-  service: string // "virustotal" | "abuseipdb"
+  service: string // "virustotal" | "abuseipdb" | "opentip"
   calls: number
   errors: number
   rate_limited: number
@@ -291,6 +294,7 @@ export interface ClassifierStatus {
   has_api_key: boolean
   has_vt_key: boolean
   has_abuseipdb_key: boolean
+  has_opentip_key: boolean
 }
 
 export interface SeriesPoint {
@@ -689,6 +693,9 @@ export const api = {
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
+  // Control plane's own build version (the up-to-date reference for agents) and
+  // the current replicated-config version (the rules hash agents should carry).
+  serverVersion: () => fetch('/api/version').then(j<{ version: string; config_version: string }>),
   addNode: (name: string) =>
     fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ id: string; name: string; key: string }>),
   renewNodeKey: (id: string) =>

@@ -32,11 +32,9 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/version"
 	"github.com/IPMaze/MazeDNS/internal/victorialogs"
 )
-
-// version is set at build time via -ldflags "-X main.version=...".
-var version = "dev"
 
 func main() {
 	// Break-glass admin recovery: `control-plane reset-admin` operates directly on
@@ -60,7 +58,7 @@ func main() {
 	for _, d := range cfg.Deprecations {
 		slog.Warn(d)
 	}
-	slog.Info("MazeDNS control plane starting", "version", version)
+	slog.Info("MazeDNS control plane starting", "version", version.Short())
 
 	st, err := boot.OpenStore(cfg)
 	if err != nil {
@@ -265,6 +263,8 @@ func newClassifier(st *store.Store, cfg config.Config, reload func() error) *cla
 		VTAPIKey:              cfg.Classifier.VTAPIKey,
 		AbuseIPDBEnabled:      cfg.Classifier.AbuseIPDBEnabled,
 		AbuseIPDBAPIKey:       cfg.Classifier.AbuseIPDBAPIKey,
+		OpenTIPEnabled:        cfg.Classifier.OpenTIPEnabled,
+		OpenTIPAPIKey:         cfg.Classifier.OpenTIPAPIKey,
 	}
 	if defaults.ThreatFeeds == nil {
 		defaults.ThreatFeeds = classifier.DefaultThreatFeeds

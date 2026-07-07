@@ -228,7 +228,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 	approved INTEGER NOT NULL DEFAULT 1,     -- token-enrolled node is admitted to the cluster
 	key_issued_at INTEGER NOT NULL DEFAULT 0,      -- when the current key_hash was issued (for periodic rotation)
 	prev_key_hash TEXT NOT NULL DEFAULT '',        -- previous key, still accepted during the rotation grace window
-	prev_key_expires_at INTEGER NOT NULL DEFAULT 0 -- grace deadline for prev_key_hash (0 = none)
+	prev_key_expires_at INTEGER NOT NULL DEFAULT 0, -- grace deadline for prev_key_hash (0 = none)
+	app_version TEXT NOT NULL DEFAULT ''           -- running binary build version the node last reported
 );
 CREATE TABLE IF NOT EXISTS enroll_keys (
 	id TEXT PRIMARY KEY,                     -- uuid
@@ -348,6 +349,7 @@ func (s *Store) migrate() error {
 		`ALTER TABLE nodes ADD COLUMN key_issued_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN prev_key_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN prev_key_expires_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN app_version TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)

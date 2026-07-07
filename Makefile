@@ -5,7 +5,7 @@ BIN_DIR   := bin
 CP_IMAGE    ?= ghcr.io/ipmaze/mazedns-control-plane
 AGENT_IMAGE ?= ghcr.io/ipmaze/mazedns-dns-agent
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X main.version=$(VERSION)
+LDFLAGS := -s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=$(VERSION)
 
 .DEFAULT_GOAL := help
 

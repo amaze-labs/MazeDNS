@@ -28,7 +28,7 @@ COPY . .
 COPY --from=web /web/dist ./web/dist
 RUN mkdir -p /data && \
     CGO_ENABLED=0 go build -tags embed_dist -trimpath \
-      -ldflags="-s -w -X main.version=${VERSION}" -o /out/control-plane ./cmd/control-plane
+      -ldflags="-s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=${VERSION}" -o /out/control-plane ./cmd/control-plane
 
 # ---- dns-agent binary (lean: no web assets) ----
 FROM golang:1.26-alpine AS build-agent
@@ -39,7 +39,7 @@ RUN go mod download
 COPY . .
 RUN mkdir -p /data && \
     CGO_ENABLED=0 go build -trimpath \
-      -ldflags="-s -w -X main.version=${VERSION}" -o /out/dns-agent ./cmd/dns-agent
+      -ldflags="-s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=${VERSION}" -o /out/dns-agent ./cmd/dns-agent
 # Grant the binary CAP_NET_BIND_SERVICE via a file capability so the non-root
 # runtime user can bind the privileged DNS port 53 directly (e.g. under
 # network_mode: host) without running as root or needing compose cap_add. The

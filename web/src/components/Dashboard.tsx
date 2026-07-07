@@ -34,11 +34,9 @@ const sourceColors: Record<string, string> = {
   Rewritten: '#c48aff',
 }
 const ONLINE_WINDOW = 120
-// Chrome (grid/axis/tooltip) follows the active theme via CSS custom properties —
-// only the series colors above stay fixed across themes (see styles.css). Without
-// this, the chart chrome was hardcoded to the dark palette and rendered too heavy
-// (grid) or mismatched (tooltip) in light mode.
-const tooltipStyle = { background: 'var(--panel-2)', border: '1px solid var(--line-strong)', borderRadius: 8, color: 'var(--fg)' }
+// Chart chrome follows the active theme via CSS variables (light mode was stuck
+// on dark hex literals otherwise).
+const tooltipStyle = { background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--fg)' }
 
 const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
 
@@ -400,8 +398,8 @@ export default function Dashboard() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="time" stroke="var(--muted)" fontSize={12} tickLine={false} minTickGap={32} />
-                <YAxis stroke="var(--muted)" fontSize={12} tickLine={false} width={40} allowDecimals={false} />
+                <XAxis dataKey="time" stroke="var(--muted)" fontSize={11} tickLine={false} minTickGap={32} />
+                <YAxis stroke="var(--muted)" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Area type="monotone" dataKey="forwarded" stackId="1" stroke="#4ea1ff" fill="url(#gForwarded)" strokeWidth={2} />
                 <Area type="monotone" dataKey="cached" stackId="1" stroke="#3ecf8e" fill="url(#gCached)" strokeWidth={2} />
@@ -419,8 +417,8 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={300}>
               <LineChart syncId="dash-time" data={latData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="time" stroke="var(--muted)" fontSize={12} tickLine={false} minTickGap={32} />
-                <YAxis stroke="var(--muted)" fontSize={12} tickLine={false} width={40} />
+                <XAxis dataKey="time" stroke="var(--muted)" fontSize={11} tickLine={false} minTickGap={32} />
+                <YAxis stroke="var(--muted)" fontSize={11} tickLine={false} width={40} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Line type="monotone" dataKey="overall" name="overall" stroke={OVERALL_COLOR} strokeWidth={2.5} dot={false} connectNulls />
                 {latNodes.map((n) => (

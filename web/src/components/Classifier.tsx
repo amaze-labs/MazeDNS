@@ -6,6 +6,7 @@ import DomainDetail from './DomainDetail'
 import DecisionModal from './DecisionModal'
 import ReputationUsage from './ReputationUsage'
 import { pollWhileVisible } from '../poll'
+import { PAGE_SIZE } from './tableKit'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -23,7 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
   clean: 'Clean',
 }
 export const statusLabel = (s: string) => STATUS_LABELS[s] ?? s
-const PAGE = 25
+const PAGE = PAGE_SIZE
 const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
 // Security categories are red; "other" is neutral/green; content categories blue.
 const catClass = (c: string) => (BLOCK_CATS.includes(c) ? 'blocked' : c === 'other' ? 'allow' : 'info')
@@ -225,6 +226,7 @@ export default function Classifier() {
           </button>
           {st?.vt_enabled && <span className="cat-chip badge info" title="Per-domain reputation lookup.">VirusTotal</span>}
           {st?.abuseipdb_enabled && <span className="cat-chip badge info" title="Resolved-IP reputation lookup.">AbuseIPDB</span>}
+          {st?.opentip_enabled && <span className="cat-chip badge info" title="Kaspersky OpenTIP threat-zone lookup.">Kaspersky OpenTIP</span>}
           {st?.whois_enabled && <span className="cat-chip badge info" title="Domain age via RDAP — the single best phishing indicator.">WHOIS age</span>}
         </div>
         <p className="muted" style={{ textAlign: 'left', margin: '10px 0 0' }}>

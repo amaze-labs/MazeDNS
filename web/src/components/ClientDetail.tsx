@@ -16,9 +16,9 @@ const ACTION_COLORS: Record<string, string> = {
   authoritative: '#56d4dd',
 }
 const actionColor = (a: string) => ACTION_COLORS[a] ?? '#8a93a0'
-// Chrome (grid/axis/tooltip) follows the active theme — only the series colors
-// above stay fixed across themes (see styles.css).
-const tooltipStyle = { background: 'var(--panel-2)', border: '1px solid var(--line-strong)', borderRadius: 8, fontSize: 12, color: 'var(--fg)' }
+// Chart chrome follows the active theme via CSS variables (light mode was stuck
+// on dark hex literals otherwise).
+const tooltipStyle = { background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--fg)' }
 
 // PieTooltip reads the slice's own colour from the datum so the hover swatch
 // matches the legend/slice — Recharts' default pie tooltip mis-colours them.
@@ -207,9 +207,9 @@ export default function ClientDetail({
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={cats} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-                    <XAxis dataKey="name" stroke="var(--muted)" fontSize={12} tickLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
-                    <YAxis stroke="var(--muted)" fontSize={12} tickLine={false} width={40} allowDecimals={false} />
-                    <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--hover-strong)' }} />
+                    <XAxis dataKey="name" stroke="var(--muted)" fontSize={11} tickLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
+                    <YAxis stroke="var(--muted)" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
+                    <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--hover)' }} />
                     <Bar dataKey="value" fill="#ff5d6c" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

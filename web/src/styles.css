@@ -987,6 +987,21 @@ select option {
   color: var(--fg);
 }
 
+/* Compact pill selects for inline assignment controls (agent site/role). The
+   wrapper exists so the pill styling doesn't leak into every other select. */
+.select-pill select {
+  background-color: var(--panel-2);
+  border-radius: 999px;
+  padding: 5px 26px 5px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  min-width: 112px;
+  box-shadow: var(--shadow-sm);
+}
+.select-pill select:hover:not(:focus) {
+  border-color: var(--accent);
+}
+
 input {
   flex: 1;
   min-width: 180px;
@@ -1715,20 +1730,44 @@ details.settings-card[open] > :last-child {
     grid-template-columns: 1fr;
   }
 
-  /* ---- App shell: sidebar becomes a bottom tab bar ---- */
+  /* ---- App shell: sidebar becomes a bottom tab bar ----
+     The app fills the layout viewport exactly and <main> becomes the ONLY
+     scroll container: the tab bar is a normal flex child below it, so it can
+     never drift while scrolling, and sticky elements inside <main> (e.g. the
+     Settings save bar) stick just above the tab bar. The body itself must
+     never scroll — a scrollable body both leaves a dead background band under
+     the tab bar (viewport-unit vs browser-chrome mismatch) and lets the whole
+     page pan sideways when something overflows. */
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 0;
+  }
+  body {
+    overflow: hidden;
+  }
   .app {
     flex-direction: column;
+    height: 100%;
+    min-height: 0;
   }
   .app > main {
+    order: 1;
     max-width: 100%;
-    padding: 16px 14px calc(72px + env(safe-area-inset-bottom));
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: 16px 14px 24px;
   }
   .sidebar,
   .app.collapsed .sidebar {
-    position: fixed;
-    inset: auto 0 0 0;
+    order: 2;
+    position: static;
     width: 100%;
     height: auto;
+    flex: 0 0 auto;
     flex-direction: row;
     align-items: center;
     gap: 2px;
@@ -1803,6 +1842,27 @@ details.settings-card[open] > :last-child {
   }
   .settings {
     max-width: 100%;
+  }
+
+  /* ---- Filter bars: wrap instead of overflowing the viewport ---- */
+  .range-tabs {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .range-tabs .spacer {
+    display: none; /* Focus wraps below the window chips instead of being pushed offscreen */
+  }
+  .ql-filters .ql-select {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+  }
+  .ql-filters input.search {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  /* KPI cards: two per row instead of a squeezed auto-fit. */
+  .cards {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 

@@ -3,6 +3,7 @@ package classifier
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,32 +72,87 @@ type rdapResp struct {
 	} `json:"nameservers"`
 }
 
+// rdapPace spaces our RDAP calls out (the public rdap.org bootstrap rate-limits
+// aggressive clients). Bulk classification bursts used to trip its limiter, the
+// error was swallowed, and every verdict recorded "registration date unknown" —
+// while the detail view's later, single lookup succeeded.
+var rdapPace = make(chan struct{}, 1)
+
+const rdapMinGap = 500 * time.Millisecond
+
 // LookupWhois queries RDAP for a domain via the public bootstrap (rdap.org),
-// which redirects to the authoritative RDAP server for the TLD.
+// which redirects to the authoritative RDAP server for the TLD. Calls are paced,
+// and a rate-limited or transiently-failed request is retried once, so bulk
+// classification doesn't silently lose the domain-age signal.
 func LookupWhois(ctx context.Context, domain string) (WhoisInfo, error) {
 	domain = RegisteredDomain(domain)
 	if domain == "" {
 		return WhoisInfo{}, fmt.Errorf("whois: invalid domain")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://rdap.org/domain/"+domain, nil)
+	select {
+	case rdapPace <- struct{}{}:
+	case <-ctx.Done():
+		return WhoisInfo{}, ctx.Err()
+	}
+	defer func() {
+		time.AfterFunc(rdapMinGap, func() { <-rdapPace })
+	}()
+
+	body, err := rdapGet(ctx, domain)
 	if err != nil {
-		return WhoisInfo{}, err
+		var re *rdapRetryableError
+		if !errors.As(err, &re) {
+			return WhoisInfo{}, err
+		}
+		select {
+		case <-time.After(re.after):
+		case <-ctx.Done():
+			return WhoisInfo{}, ctx.Err()
+		}
+		if body, err = rdapGet(ctx, domain); err != nil {
+			return WhoisInfo{}, err
+		}
 	}
-	req.Header.Set("Accept", "application/rdap+json")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return WhoisInfo{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return WhoisInfo{}, fmt.Errorf("whois: rdap status %d", resp.StatusCode)
-	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	var rd rdapResp
 	if err := json.Unmarshal(body, &rd); err != nil {
 		return WhoisInfo{}, err
 	}
 	return parseRDAP(domain, rd), nil
+}
+
+// rdapRetryableError marks a failure worth one retry (429 / 5xx / transport).
+type rdapRetryableError struct {
+	err   error
+	after time.Duration
+}
+
+func (e *rdapRetryableError) Error() string { return e.err.Error() }
+func (e *rdapRetryableError) Unwrap() error { return e.err }
+
+// rdapGet performs one RDAP request, classifying rate-limit and server errors as
+// retryable (honouring Retry-After when reasonable).
+func rdapGet(ctx context.Context, domain string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://rdap.org/domain/"+domain, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/rdap+json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, &rdapRetryableError{err: err, after: 2 * time.Second}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		after := 2 * time.Second
+		if ra, perr := time.ParseDuration(resp.Header.Get("Retry-After") + "s"); perr == nil && ra > 0 && ra <= 10*time.Second {
+			after = ra
+		}
+		return nil, &rdapRetryableError{err: fmt.Errorf("whois: rdap status %d", resp.StatusCode), after: after}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("whois: rdap status %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 }
 
 func parseRDAP(domain string, rd rdapResp) WhoisInfo {
@@ -132,12 +188,23 @@ func parseRDAP(domain string, rd rdapResp) WhoisInfo {
 			info.Nameservers = append(info.Nameservers, strings.ToLower(ns.LDHName))
 		}
 	}
-	if t, err := time.Parse(time.RFC3339, info.Created); err == nil {
+	if t, ok := parseRDAPDate(info.Created); ok {
 		if d := int(time.Since(t).Hours() / 24); d > 0 {
 			info.AgeDays = d
 		}
 	}
 	return info
+}
+
+// parseRDAPDate accepts the timestamp shapes registries actually emit (RFC3339
+// with or without fractional seconds, and bare dates).
+func parseRDAPDate(s string) (time.Time, bool) {
+	for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func containsFold(ss []string, want string) bool {

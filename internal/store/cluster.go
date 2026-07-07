@@ -136,14 +136,15 @@ type Node struct {
 	PrevKeyHash      string `json:"-"`             // previous key accepted during the rotation grace window
 	PrevKeyExpiresAt int64  `json:"-"`             // grace deadline for prev_key_hash (0 = none)
 	Address          string `json:"address"`
-	Version          string `json:"version"` // short content hash the node last reported
+	Version          string `json:"version"`     // replicated-CONFIG hash the node last reported (rules sync state)
+	AppVersion       string `json:"app_version"` // running binary build version the node last reported
 	LastSeen         int64  `json:"last_seen"`
 	CreatedAt        int64  `json:"created_at"`
 	IsMaster         bool   `json:"is_master"`          // the master node (always online; no key to renew)
 	Maintenance      bool   `json:"maintenance"`        // drained: this node answers SERVFAIL
 	ControlPlaneOnly bool   `json:"control_plane_only"` // master only: coordinates the cluster but serves no DNS (answers REFUSED)
 	Site             string `json:"site"`               // site grouping ('' = unassigned)
-	Role             string `json:"role"`               // '' | 'primary' | 'backup' (advisory: both serve DNS)
+	Role             string `json:"role"`               // '' | 'primary' | 'secondary' | 'backup' (advisory: all serve DNS)
 	Approved         bool   `json:"approved"`           // admitted to the cluster (false = pending admin approval)
 	NodeStats
 }
@@ -428,13 +429,14 @@ func (s *Store) nodeBy(where string, args ...any) (*Node, error) {
 	return n, nil
 }
 
-// TouchNode refreshes a node's last-seen address, config version, and stats.
-func (s *Store) TouchNode(id, address, version string, st NodeStats) error {
+// TouchNode refreshes a node's last-seen address, config version, app (build)
+// version, and stats.
+func (s *Store) TouchNode(id, address, version, appVersion string, st NodeStats) error {
 	_, err := s.db.Exec(
-		`UPDATE nodes SET address=?, version=?, last_seen=?,
+		`UPDATE nodes SET address=?, version=?, app_version=?, last_seen=?,
 		   q_total=?, q_blocked=?, q_cached=?, q_forwarded=?, q_rewritten=?, q_errors=?
 		 WHERE id=?`,
-		address, version, time.Now().Unix(),
+		address, version, appVersion, time.Now().Unix(),
 		st.Total, st.Blocked, st.Cached, st.Forwarded, st.Rewritten, st.Errors, id)
 	return err
 }
@@ -470,7 +472,7 @@ func (s *Store) AllNodeInsights() (map[string]Insights, error) {
 // ListNodes returns all enrolled nodes (with their latest stats) ordered by name.
 func (s *Store) ListNodes() ([]Node, error) {
 	rows, err := s.read.Query(
-		`SELECT id, name, key_prefix, address, version, last_seen, created_at,
+		`SELECT id, name, key_prefix, address, version, app_version, last_seen, created_at,
 		        q_total, q_blocked, q_cached, q_forwarded, q_rewritten, q_errors, maintenance, site, role, approved, key_issued_at
 		 FROM nodes ORDER BY name`)
 	if err != nil {
@@ -481,7 +483,7 @@ func (s *Store) ListNodes() ([]Node, error) {
 	for rows.Next() {
 		var n Node
 		var maintenance, approved int
-		if err := rows.Scan(&n.ID, &n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt,
+		if err := rows.Scan(&n.ID, &n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.AppVersion, &n.LastSeen, &n.CreatedAt,
 			&n.Total, &n.Blocked, &n.Cached, &n.Forwarded, &n.Rewritten, &n.Errors, &maintenance, &n.Site, &n.Role, &approved, &n.KeyIssuedAt); err != nil {
 			return nil, err
 		}

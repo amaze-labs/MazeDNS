@@ -142,20 +142,20 @@ plane over your private overlay (VPN/WireGuard) — see
 > via a `CAP_NET_BIND_SERVICE` file capability baked into the binary — no root and no
 > `cap_add` needed with Docker's default capabilities.
 
-### Seeing real client IPs (host networking)
+### Real client IPs and node IPs (host networking)
 
-With the default bridge port mapping (`53:53`), Docker's NAT rewrites every query's
-source to the Docker gateway, so the dashboard collapses all clients into one. To
-preserve real client IPs on a Linux host, run the agent with **host networking**.
-In `docker-compose.prod.yml`, replace the agent's `ports:` block with:
+The agent in `docker-compose.prod.yml` runs with **`network_mode: host`** (the
+recommended production setup): it binds the host's `:53` directly, so the resolver
+sees each client's real source IP (per-client dashboard stats) and the control
+plane records the node's real host IP. With bridge port mapping (`53:53`) instead,
+Docker's NAT rewrites every query's source to the Docker gateway, the dashboard
+collapses all clients into one, and nodes show up with bridge addresses like
+`172.18.0.2`.
 
-```yaml
-    network_mode: host
-```
-
-Host networking ignores port mappings (the agent binds the host's `:53` directly),
-and there is no Compose-provided DNS, so tell the agent how to reach the control
-plane by IP — see below. This is the recommended production setup.
+Host networking has no Compose-provided DNS, so the control plane's IP must be
+pinned with **`MAZEDNS_CP_IP`** (required by the compose file) — see below. The
+agent's HTTP API is moved to `:9090` via `MAZEDNS_API_PORT` so it doesn't collide
+with a control plane sharing the host on `:8080`.
 
 ### Reaching the control plane from an agent
 
@@ -201,13 +201,18 @@ docker run -d --name mazedns-control-plane \
   ghcr.io/ipmaze/mazedns-control-plane:latest
 
 # 2. DNS agent — self-enrolls with an enrollment key, then serves DNS on :53.
+#    Host networking (recommended): real client IPs in the dashboard and the
+#    node's real host IP at the control plane; MAZEDNS_CP_IP is required because
+#    there is no Docker DNS (it pins the dial — TLS still verifies the URL host).
 docker run -d --name mazedns-agent \
-  -p 53:53/udp -p 53:53/tcp -v agent-data:/data \
-  -e MAZEDNS_API_ADDRESS=0.0.0.0 \
+  --network host -v agent-data:/data \
   -e MAZEDNS_CP_URL=http://<control-plane-host>:8080 \
+  -e MAZEDNS_CP_IP=<control-plane-ip> \
   -e MAZEDNS_JOIN_TOKEN=<enrollment-key> \
   -e MAZEDNS_NODE_NAME=agent-1 \
   -e MAZEDNS_DB_PATH=/data/mazedns.db \
+  -e MAZEDNS_API_ADDRESS=0.0.0.0 \
+  -e MAZEDNS_API_PORT=9090 \
   ghcr.io/ipmaze/mazedns-dns-agent:latest
   # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Cluster →
   # Enrollment keys), not a shared password. It only lets an agent enroll; the
@@ -217,15 +222,19 @@ docker run -d --name mazedns-agent \
   # volume); you can rename the node later in the UI without re-identifying it.
   # Keep the volume: it holds the node's identity + key, so restarts/renames map
   # back to the SAME node instead of enrolling a duplicate.
-  # Agent can't resolve the control plane's hostname? Pin its IP (DNS bypassed,
-  # TLS still verifies the URL host):  -e MAZEDNS_CP_IP=10.0.0.5
-  # Real client IPs on Linux: use --network host instead of the -p mappings.
+  # Prefer bridge networking? Replace --network host with
+  #   -p 53:53/udp -p 53:53/tcp -p 9090:8080
+  # and drop MAZEDNS_CP_IP + MAZEDNS_API_PORT — but the dashboard then shows the
+  # docker bridge IP for all clients and for this node.
 ```
 
 > **Keep the agent's `/data` volume across image updates.** It stores the node's
-> identity (its server-assigned UUID + rotating key). Recreate the agent without it
-> and the control plane sees a brand-new node — you get a duplicated, `-2`-suffixed
-> entry instead of the original.
+> identity (its server-assigned UUID + rotating key), so a recreated container
+> rejoins instantly as the same node. If the volume is lost anyway, a stable and
+> unique `MAZEDNS_NODE_NAME` is the safety net: the new container waits for the
+> old one to be marked offline (~2 minutes) and then **reclaims** the same node —
+> history, site, and role included — instead of duplicating it. Only two *live*
+> agents claiming the same name still produce a de-duplicated `-2` entry.
 
 `MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/metrics` port reachable
 from outside the container (it defaults to loopback). The control plane's `/metrics`

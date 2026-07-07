@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, type List, type Protection, type Rule } from '../api'
+import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
 const categories = ['custom', 'ads', 'trackers', 'malware', 'phishing', 'not-found']
+
+const COLS: SortAccessors<List> = {
+  name: (l) => l.name,
+  source: (l) => l.source,
+  category: (l) => l.category,
+  rules: (l) => l.rule_count,
+  updated: (l) => l.updated_at,
+  enabled: (l) => (l.enabled ? 1 : 0),
+}
 const PAUSE_PRESETS = [
   { label: '30 seconds', seconds: 30 },
   { label: '5 minutes', seconds: 300 },
@@ -176,6 +186,8 @@ export default function Lists() {
     }
   }
 
+  const table = useTable(lists, COLS, 'name')
+
   return (
     <div>
       <h2>Protection</h2>
@@ -208,17 +220,17 @@ export default function Lists() {
       <table>
         <thead>
           <tr>
-            <th>List</th>
-            <th>Source</th>
-            <th>Category</th>
-            <th>Rules</th>
-            <th>Updated</th>
-            <th>Enabled</th>
+            <Th table={table} col="name">List</Th>
+            <Th table={table} col="source">Source</Th>
+            <Th table={table} col="category">Category</Th>
+            <Th table={table} col="rules">Rules</Th>
+            <Th table={table} col="updated">Updated</Th>
+            <Th table={table} col="enabled">Enabled</Th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {lists.map((l) => (
+          {table.rows.map((l) => (
             <RowGroup
               key={l.id}
               l={l}
@@ -231,7 +243,7 @@ export default function Lists() {
               onInterval={(m) => setListInterval(l, m)}
             />
           ))}
-          {lists.length === 0 && (
+          {table.rows.length === 0 && (
             <tr>
               <td colSpan={7} className="muted">
                 No lists yet — import a file or add a URL below
@@ -240,6 +252,7 @@ export default function Lists() {
           )}
         </tbody>
       </table>
+      <Pager table={table} unit="lists" />
 
       <div className="charts" style={{ marginTop: 28 }}>
         <div className="panel">

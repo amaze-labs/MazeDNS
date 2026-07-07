@@ -69,6 +69,9 @@ type Settings struct {
 	VTAPIKey         string `json:"vt_api_key"`
 	AbuseIPDBEnabled bool   `json:"abuseipdb_enabled"`
 	AbuseIPDBAPIKey  string `json:"abuseipdb_api_key"`
+	// Kaspersky OpenTIP (opentip.kaspersky.com): per-domain threat-zone lookup.
+	OpenTIPEnabled bool   `json:"opentip_enabled"`
+	OpenTIPAPIKey  string `json:"opentip_api_key"`
 }
 
 // aiConfigured reports whether the optional LLM layer should run. The AI master
@@ -366,6 +369,10 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if s.WhoisEnabled {
 		if info, werr := w.whois.Lookup(ctx, domain); werr == nil {
 			whois = info
+		} else {
+			// The verdict freezes its factors, so a failed lookup here permanently
+			// records "registration date unknown" — make that visible.
+			slog.Warn("whois lookup failed — verdict scored without domain age", "domain", domain, "err", werr)
 		}
 	}
 	for _, ns := range whois.Nameservers {

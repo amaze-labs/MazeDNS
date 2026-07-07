@@ -176,6 +176,20 @@ func computeScore(in ScoreInput) Score {
 	if in.Rep.AbuseChecked && in.Rep.AbuseScore >= 25 {
 		add("AbuseIPDB", fmt.Sprintf("IP %s abuse confidence %d%% (%d reports)", in.Rep.AbuseIP, in.Rep.AbuseScore, in.Rep.AbuseReports), -imin(50, in.Rep.AbuseScore/2))
 	}
+	if in.Rep.KasperskyChecked {
+		switch in.Rep.KasperskyZone {
+		case "Red":
+			add("Kaspersky OpenTIP", "red zone — dangerous (malware/phishing)", -60)
+		case "Orange":
+			add("Kaspersky OpenTIP", "orange zone — not trusted, may host malicious content", -25)
+		case "Yellow":
+			add("Kaspersky OpenTIP", "yellow zone — adware / potentially unwanted programs", -12)
+		case "Green":
+			note("Kaspersky OpenTIP", "green zone — clean")
+		default:
+			note("Kaspersky OpenTIP", "grey zone — no data")
+		}
+	}
 
 	// Model assessment — the LLM's own read, made WITH all the signals above in
 	// hand. It contributes (up to -50) but, by being one bounded factor, it can no

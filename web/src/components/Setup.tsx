@@ -44,6 +44,10 @@ export default function Setup({ onDone }: { onDone: () => void }) {
   // SSO-only setups have no local session, so the wizard can't continue into the
   // authenticated DNS/Cluster steps — it jumps to a "sign in with SSO" finish.
   const [ssoOnly, setSsoOnly] = useState(false)
+  // Local admin created but the auto-login session didn't start: setup is done,
+  // but the authenticated DNS/Cluster steps can't run — finish with a sign-in
+  // prompt instead of silently skipping ahead.
+  const [needsLogin, setNeedsLogin] = useState(false)
 
   const pwScore = passwordScore(password)
   const localAdminNeeded = method === 'local' || breakGlass
@@ -123,6 +127,11 @@ export default function Setup({ onDone }: { onDone: () => void }) {
       })
       if (res.authenticated) {
         setStep(2)
+      } else if (localAdminNeeded) {
+        // A local admin was created but the session didn't start — setup itself
+        // succeeded, so surface a sign-in finish rather than pretending SSO.
+        setNeedsLogin(true)
+        setStep(4)
       } else {
         // SSO-only: no local session — finish and send the operator to SSO login.
         setSsoOnly(true)
@@ -195,9 +204,13 @@ export default function Setup({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const agentSnippet = `-e MAZEDNS_CP_URL=${cpURL} \\
+  const agentSnippet = `--network host \\
+-e MAZEDNS_CP_URL=${cpURL} \\
+-e MAZEDNS_CP_IP=<control-plane-ip> \\
 -e MAZEDNS_JOIN_TOKEN=${enrollKey || '<enrollment-key>'} \\
 -e MAZEDNS_DB_PATH=/data/mazedns.db \\
+-e MAZEDNS_API_ADDRESS=0.0.0.0 \\
+-e MAZEDNS_API_PORT=9090 \\
 -v mazedns-agent-data:/data`
 
   return (
@@ -410,6 +423,16 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                 <a className="btn primary" href="/api/auth/oidc/login">
                   Sign in with SSO
                 </a>
+              </>
+            ) : needsLogin ? (
+              <>
+                <div className="ok-msg">
+                  <strong>Setup complete.</strong> Sign in with the admin account you just created to configure DNS and
+                  cluster settings.
+                </div>
+                <button className="btn primary" onClick={onDone}>
+                  Go to sign in
+                </button>
               </>
             ) : (
               <>

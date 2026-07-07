@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,9 @@ type Reputation struct {
 	AbuseScore   int    `json:"abuse_score"` // 0-100 abuse-confidence
 	AbuseReports int    `json:"abuse_reports"`
 	AbuseIP      string `json:"abuse_ip"`
+	// Kaspersky OpenTIP (domain report).
+	KasperskyChecked bool   `json:"kaspersky_checked"`
+	KasperskyZone    string `json:"kaspersky_zone"` // Red | Orange | Yellow | Grey | Green
 }
 
 // summary is a one-line form fed to the model as an extra signal.
@@ -38,23 +42,27 @@ func (r Reputation) summary() string {
 	if r.AbuseChecked {
 		parts = append(parts, fmt.Sprintf("AbuseIPDB confidence %d%% on %s (%d reports)", r.AbuseScore, r.AbuseIP, r.AbuseReports))
 	}
+	if r.KasperskyChecked {
+		parts = append(parts, "Kaspersky OpenTIP zone "+r.KasperskyZone)
+	}
 	return strings.Join(parts, "; ")
 }
 
 // any reports whether any source was actually checked.
-func (r Reputation) any() bool { return r.VTChecked || r.AbuseChecked }
+func (r Reputation) any() bool { return r.VTChecked || r.AbuseChecked || r.KasperskyChecked }
 
 // Malicious reports whether the reputation services flag the domain malicious
-// (≥2 VirusTotal vendors, or an AbuseIPDB confidence ≥50%) — a definitive signal.
+// (≥2 VirusTotal vendors, an AbuseIPDB confidence ≥50%, or Kaspersky's red
+// "dangerous" zone) — a definitive signal.
 func (r Reputation) Malicious() bool {
-	return r.VTMalicious >= 2 || (r.AbuseChecked && r.AbuseScore >= 50)
+	return r.VTMalicious >= 2 || (r.AbuseChecked && r.AbuseScore >= 50) || r.KasperskyZone == "Red"
 }
 
 // RepCall describes one reputation-API call made, for usage accounting. Remaining
 // and Limit are the API-reported quota figures (-1 when the service doesn't report
 // them).
 type RepCall struct {
-	Service     string // "virustotal" | "abuseipdb"
+	Service     string // "virustotal" | "abuseipdb" | "opentip"
 	Errored     bool
 	RateLimited bool // the API returned 429 (quota exhausted)
 	Remaining   int
@@ -103,10 +111,10 @@ func (c *RepCache) Lookup(ctx context.Context, domain string, s Settings) Reputa
 	if domain == "" {
 		return Reputation{}
 	}
-	if !s.VTEnabled && !s.AbuseIPDBEnabled {
+	if !s.VTEnabled && !s.AbuseIPDBEnabled && !s.OpenTIPEnabled {
 		return Reputation{}
 	}
-	key := fmt.Sprintf("%s|%v|%v", domain, s.VTEnabled, s.AbuseIPDBEnabled)
+	key := fmt.Sprintf("%s|%v|%v|%v", domain, s.VTEnabled, s.AbuseIPDBEnabled, s.OpenTIPEnabled)
 	c.mu.Lock()
 	if e, ok := c.m[key]; ok && time.Now().Before(e.exp) {
 		c.mu.Unlock()
@@ -130,6 +138,13 @@ func (c *RepCache) Lookup(ctx context.Context, domain string, s Settings) Reputa
 			}
 			c.rec(RepCall{Service: "abuseipdb", Errored: err != nil, RateLimited: meta.rateLimited, Remaining: meta.remaining, Limit: meta.limit})
 		}
+	}
+	if s.OpenTIPEnabled && s.OpenTIPAPIKey != "" {
+		zone, meta, err := openTIPDomain(ctx, domain, s.OpenTIPAPIKey)
+		if err == nil {
+			rep.KasperskyChecked, rep.KasperskyZone = true, zone
+		}
+		c.rec(RepCall{Service: "opentip", Errored: err != nil, RateLimited: meta.rateLimited, Remaining: meta.remaining, Limit: meta.limit})
 	}
 	ttl := 24 * time.Hour
 	if !rep.any() {
@@ -216,6 +231,47 @@ func abuseIPDBCheck(ctx context.Context, ip, apiKey string) (score, reports int,
 		return 0, 0, meta, err
 	}
 	return ar.Data.AbuseConfidenceScore, ar.Data.TotalReports, meta, nil
+}
+
+// openTIPDomain queries Kaspersky OpenTIP's domain lookup
+// (https://opentip.kaspersky.com/Help/Doc_data/DomainLookupAPI.htm) and returns
+// the threat zone: Red (dangerous), Orange (not trusted), Yellow (adware/PUA),
+// Grey (no data), Green (clean). A 404 means OpenTIP has never seen the domain —
+// that's a valid "no data" answer, not an error.
+func openTIPDomain(ctx context.Context, domain, apiKey string) (zone string, meta repMeta, err error) {
+	meta = newRepMeta()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://opentip.kaspersky.com/api/v1/search/domain?request="+url.QueryEscape(domain), nil)
+	if err != nil {
+		return "", meta, err
+	}
+	req.Header.Set("x-api-key", apiKey)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return "", meta, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return "Grey", meta, nil // unknown to OpenTIP
+	case http.StatusForbidden, http.StatusTooManyRequests:
+		meta.rateLimited = true // OpenTIP signals an exhausted quota with 403
+		return "", meta, fmt.Errorf("opentip: status %d", resp.StatusCode)
+	default:
+		return "", meta, fmt.Errorf("opentip: status %d", resp.StatusCode)
+	}
+	var or struct {
+		Zone string `json:"Zone"`
+	}
+	if err := json.Unmarshal(body, &or); err != nil {
+		return "", meta, err
+	}
+	if or.Zone == "" {
+		or.Zone = "Grey"
+	}
+	return or.Zone, meta, nil
 }
 
 // atoiOr parses a non-negative integer header, returning def on any failure.

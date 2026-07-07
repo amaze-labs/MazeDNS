@@ -26,7 +26,7 @@ function PieTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null
   const p = payload[0]
   const d = p.payload || {}
-  const color = d.fill || p.color || '#8a93a0'
+  const color = d.fill || p.color || 'var(--muted)'
   return (
     <div style={{ ...tooltipStyle, padding: '6px 10px', fontSize: 13 }}>
       <span style={{ color }}>● </span>

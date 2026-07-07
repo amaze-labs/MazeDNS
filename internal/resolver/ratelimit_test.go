@@ -24,22 +24,34 @@ func TestRateLimiter(t *testing.T) {
 	}
 }
 
+// rlTotal sums entry counts across all shards.
+func rlTotal(rl *rateLimiter) int {
+	n := 0
+	for i := range rl.shards {
+		n += len(rl.shards[i].counts)
+	}
+	return n
+}
+
 // Past the cleanup threshold, allow() sweeps stale windows but only a bounded
-// number per call (so it never scans the whole map under the lock), and still
-// enforces limits.
+// number per call (so it never scans a whole shard's map under its lock), and
+// still enforces limits.
 func TestRateLimiterBoundedCleanup(t *testing.T) {
 	rl := newRateLimiter(5)
 	stale := time.Now().Add(-2 * time.Minute) // older than the 1-minute window
 	for i := 0; i < 11000; i++ {
-		rl.counts["stale"+strconv.Itoa(i)] = &rlEntry{start: stale, count: 1}
+		key := "stale" + strconv.Itoa(i)
+		s := rl.shardFor(key)
+		s.counts[key] = &rlEntry{start: stale, count: 1}
 	}
-	before := len(rl.counts)
+	before := rlTotal(rl)
 
-	// A fresh client crosses the >10000 threshold and triggers one bounded sweep.
+	// A fresh client crosses the fresh client's shard threshold and triggers one
+	// bounded sweep of that shard.
 	if !rl.allow("fresh") {
 		t.Fatal("fresh client should be allowed")
 	}
-	after := len(rl.counts)
+	after := rlTotal(rl)
 
 	if after >= before {
 		t.Errorf("expected stale entries to be swept; before=%d after=%d", before, after)

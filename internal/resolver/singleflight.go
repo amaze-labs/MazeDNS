@@ -14,8 +14,19 @@ import (
 // for the same uncached name at once (e.g. a popular record's TTL just expired).
 //
 // It is the classic WaitGroup-based pattern (same idea as golang.org/x/sync/
-// singleflight), kept in-package to avoid a new dependency.
+// singleflight), kept in-package to avoid a new dependency. Sharded the same way
+// as the cache (internal/cache/cache.go) and the rate limiter (ratelimit.go): a
+// single global lock/map would serialize every cache-miss forward's in-flight
+// bookkeeping across all distinct names, not just genuinely-colliding ones.
 type singleflight struct {
+	shards [sfShards]sfShard
+}
+
+// sfShards mirrors cacheShards/rlShards — a power of two so the hash maps
+// cheaply with a mask.
+const sfShards = 16
+
+type sfShard struct {
 	mu sync.Mutex
 	m  map[string]*sfCall
 }
@@ -27,30 +38,45 @@ type sfCall struct {
 	err error
 }
 
+// shardFor picks a shard by an inline, allocation-free FNV-1a hash of key.
+func (g *singleflight) shardFor(key string) *sfShard {
+	const (
+		offset32 = 2166136261
+		prime32  = 16777619
+	)
+	h := uint32(offset32)
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= prime32
+	}
+	return &g.shards[h&(sfShards-1)]
+}
+
 // Do runs fn for key, deduplicating concurrent calls. The returned *dns.Msg is
 // shared with other waiters, so callers MUST treat it as read-only (copy before
 // mutating).
 func (g *singleflight) Do(key string, fn func() (*dns.Msg, time.Duration, error)) (*dns.Msg, time.Duration, error) {
-	g.mu.Lock()
-	if g.m == nil {
-		g.m = make(map[string]*sfCall)
+	s := g.shardFor(key)
+	s.mu.Lock()
+	if s.m == nil {
+		s.m = make(map[string]*sfCall)
 	}
-	if c, ok := g.m[key]; ok {
-		g.mu.Unlock()
+	if c, ok := s.m[key]; ok {
+		s.mu.Unlock()
 		c.wg.Wait()
 		return c.msg, c.rtt, c.err
 	}
 	c := &sfCall{}
 	c.wg.Add(1)
-	g.m[key] = c
-	g.mu.Unlock()
+	s.m[key] = c
+	s.mu.Unlock()
 
 	c.msg, c.rtt, c.err = fn()
 	c.wg.Done()
 
-	g.mu.Lock()
-	delete(g.m, key)
-	g.mu.Unlock()
+	s.mu.Lock()
+	delete(s.m, key)
+	s.mu.Unlock()
 	return c.msg, c.rtt, c.err
 }
 

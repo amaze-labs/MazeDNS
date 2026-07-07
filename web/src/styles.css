@@ -356,6 +356,17 @@ td {
   color: var(--danger);
 }
 
+/* Ties the Cached/Forwarded KPI tiles to their matching chart-legend colors
+   (badge.cache / badge.forward use the same --ok / --accent), so the overview
+   row reads as one palette with the traffic chart below it. */
+.card.cached .card-value {
+  color: var(--ok);
+}
+
+.card.forwarded .card-value {
+  color: var(--accent);
+}
+
 h1,
 h2,
 h3 {
@@ -396,6 +407,12 @@ th {
 
 tbody tr {
   transition: background 0.12s ease;
+}
+/* Zebra striping so a long list (e.g. the Requests query log) reads as rows
+   instead of one dense block. Skipped on the compact `.mini` dashboard-panel
+   tables, which are short enough not to need it. */
+table:not(.mini) tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
 tbody tr:hover td {
   background: var(--hover);

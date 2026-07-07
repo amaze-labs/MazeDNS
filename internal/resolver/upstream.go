@@ -67,6 +67,11 @@ type Upstream interface {
 	String() string
 }
 
+// warmer is implemented by upstreams that keep a pool of persistent connections
+// (DoT, plain TCP) which benefit from being refreshed on a timer so a low-traffic
+// node never pays a handshake on the next real query. See Resolver.MaintainUpstreams.
+type warmer interface{ keepWarm() }
+
 // ParseUpstream builds an Upstream from a spec:
 //
 //	1.1.1.1                                -> plain UDP (TCP fallback) on :53
@@ -116,20 +121,39 @@ type plainUpstream struct {
 	primary *dns.Client // reused across queries (proto = udp or tcp)
 	tcp     *dns.Client // TCP fallback for truncated UDP responses
 	metrics *metrics.Metrics
+	// pool/probe are only set when proto == "tcp": a plain TCP forwarder otherwise
+	// pays a fresh TCP handshake on every single query (dns.Client.Exchange dials
+	// and closes a new connection each call), unlike DoT's pooled connections. UDP
+	// needs no pool: a UDP "connection" is just a local unconnected socket, so
+	// dialing one per query is cheap (no handshake, no round trip).
+	pool  chan pooledConn
+	probe *dns.Client
 }
 
 func newPlain(addr, proto string, timeout time.Duration) *plainUpstream {
-	return &plainUpstream{
+	u := &plainUpstream{
 		addr:    addr,
 		proto:   proto,
 		primary: &dns.Client{Net: proto, Timeout: timeout, UDPSize: largeUDPSize},
 		tcp:     &dns.Client{Net: "tcp", Timeout: timeout},
 	}
+	if proto == "tcp" {
+		probeTimeout := dotProbeTimeout
+		if timeout > 0 && timeout < probeTimeout {
+			probeTimeout = timeout
+		}
+		u.probe = &dns.Client{Timeout: probeTimeout}
+		u.pool = make(chan pooledConn, dotPoolSize())
+	}
+	return u
 }
 
 func (u *plainUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	if u.proto == "tcp" {
+		return u.exchangeTCP(req)
+	}
 	resp, rtt, err := u.primary.Exchange(req, u.addr)
-	if err == nil && resp != nil && resp.Truncated && u.proto == "udp" {
+	if err == nil && resp != nil && resp.Truncated {
 		if u.metrics != nil {
 			u.metrics.UpstreamTCPFallback.Inc()
 		}
@@ -138,6 +162,58 @@ func (u *plainUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) 
 		}
 	}
 	return resp, rtt, err
+}
+
+// exchangeTCP mirrors dotUpstream.Exchange: try a warm pooled connection first
+// (short read budget so a stale one fails over fast), otherwise dial fresh and
+// pool the connection for the next query.
+func (u *plainUpstream) exchangeTCP(req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	start := time.Now()
+	if conn := getPooledConn(u.pool); conn != nil {
+		if resp, _, err := u.probe.ExchangeWithConn(req, conn); err == nil {
+			putPooledConn(u.pool, conn)
+			return resp, time.Since(start), nil
+		}
+		conn.Close()
+	}
+	conn, err := u.primary.Dial(u.addr)
+	if err != nil {
+		return nil, time.Since(start), err
+	}
+	resp, _, err := u.primary.ExchangeWithConn(req, conn)
+	if err != nil {
+		conn.Close()
+		return nil, time.Since(start), err
+	}
+	putPooledConn(u.pool, conn)
+	return resp, time.Since(start), nil
+}
+
+// keepWarm keeps one pooled TCP connection alive (see dotUpstream.keepWarm). A
+// no-op for UDP, which has no pool.
+func (u *plainUpstream) keepWarm() {
+	if u.pool == nil {
+		return
+	}
+	conn := getPooledConn(u.pool)
+	if conn == nil {
+		c, err := u.primary.Dial(u.addr)
+		if err != nil {
+			return
+		}
+		putPooledConn(u.pool, c)
+		return
+	}
+	m := new(dns.Msg)
+	m.SetQuestion(".", dns.TypeNS)
+	if _, _, err := u.probe.ExchangeWithConn(m, conn); err != nil {
+		conn.Close()
+		if c, err := u.primary.Dial(u.addr); err == nil {
+			putPooledConn(u.pool, c)
+		}
+		return
+	}
+	putPooledConn(u.pool, conn)
 }
 
 func (u *plainUpstream) String() string { return u.proto + "://" + u.addr }
@@ -188,10 +264,18 @@ func (u *dotUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 // getConn returns a warm pooled connection, discarding any that have been idle
 // past dotIdleTimeout (and are therefore likely dropped). Returns nil if the pool
 // has no usable connection, so the caller dials fresh.
-func (u *dotUpstream) getConn() *dns.Conn {
+func (u *dotUpstream) getConn() *dns.Conn { return getPooledConn(u.pool) }
+
+func (u *dotUpstream) putConn(c *dns.Conn) { putPooledConn(u.pool, c) }
+
+// getPooledConn and putPooledConn implement a small bounded warm-connection pool,
+// shared by dotUpstream and plainUpstream's TCP mode: both need to discard
+// connections idle past dotIdleTimeout (likely dropped by the peer/NAT/firewall)
+// and cap how many idle connections are kept around.
+func getPooledConn(pool chan pooledConn) *dns.Conn {
 	for {
 		select {
-		case pc := <-u.pool:
+		case pc := <-pool:
 			if time.Since(pc.lastUsed) > dotIdleTimeout {
 				pc.conn.Close()
 				continue
@@ -203,9 +287,9 @@ func (u *dotUpstream) getConn() *dns.Conn {
 	}
 }
 
-func (u *dotUpstream) putConn(c *dns.Conn) {
+func putPooledConn(pool chan pooledConn, c *dns.Conn) {
 	select {
-	case u.pool <- pooledConn{conn: c, lastUsed: time.Now()}:
+	case pool <- pooledConn{conn: c, lastUsed: time.Now()}:
 	default:
 		c.Close() // pool full — let the extra connection go.
 	}

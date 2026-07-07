@@ -68,3 +68,50 @@ func TestDotPoolReusesFreshConn(t *testing.T) {
 		t.Fatalf("getConn did not return the warm pooled connection")
 	}
 }
+
+// newPlain with proto "tcp" must set up a connection pool, so plain TCP
+// upstreams (conditional-forwarding specs like "tcp://...") reuse connections
+// instead of paying a fresh TCP handshake on every query. UDP needs none.
+func TestNewPlainPoolsOnlyTCP(t *testing.T) {
+	tcp := newPlain("127.0.0.1:53", "tcp", time.Second)
+	if tcp.pool == nil {
+		t.Fatal("plain TCP upstream should have a connection pool")
+	}
+	udp := newPlain("127.0.0.1:53", "udp", time.Second)
+	if udp.pool != nil {
+		t.Fatal("plain UDP upstream should not have a connection pool")
+	}
+}
+
+// A pooled plain-TCP connection idle past dotIdleTimeout must be discarded, same
+// as a DoT pool entry — sharing getPooledConn/putPooledConn must not change that.
+func TestPlainTCPPoolDiscardsIdleConn(t *testing.T) {
+	u := newPlain("127.0.0.1:53", "tcp", time.Second)
+
+	c1, c2 := net.Pipe()
+	defer c2.Close()
+	tc := &trackedConn{Conn: c1}
+	u.pool <- pooledConn{conn: &dns.Conn{Conn: tc}, lastUsed: time.Now().Add(-2 * dotIdleTimeout)}
+
+	if got := getPooledConn(u.pool); got != nil {
+		t.Fatalf("getPooledConn returned a stale connection; want nil")
+	}
+	if !tc.closed {
+		t.Errorf("stale pooled connection was not closed")
+	}
+}
+
+// A pooled plain-TCP connection still within the idle window must be reused.
+func TestPlainTCPPoolReusesFreshConn(t *testing.T) {
+	u := newPlain("127.0.0.1:53", "tcp", time.Second)
+
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	conn := &dns.Conn{Conn: c1}
+	u.pool <- pooledConn{conn: conn, lastUsed: time.Now()}
+
+	if got := getPooledConn(u.pool); got != conn {
+		t.Fatalf("getPooledConn did not return the warm pooled connection")
+	}
+}

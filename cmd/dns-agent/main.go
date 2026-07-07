@@ -82,7 +82,7 @@ func main() {
 		Zones:    boot.ToZoneSpecs(cfg.Zones),
 		QueryLog: cfg.Log.QueryLog,
 		Metrics:  mx,
-		OnQuery: func(ev resolver.QueryEvent) {
+		OnQuery: func(ev *resolver.QueryEvent) {
 			qlog.Write(store.QueryLogEntry{
 				TS:        ev.TS.UnixMilli(),
 				Client:    ev.Client,

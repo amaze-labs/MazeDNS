@@ -46,6 +46,9 @@ func (s *Store) AddForwarder(suffix string, upstreams []string, scopeType string
 	if err != nil {
 		return 0, err
 	}
+	if upstreams == nil {
+		upstreams = []string{}
+	}
 	ups, err := json.Marshal(upstreams)
 	if err != nil {
 		return 0, err
@@ -64,20 +67,49 @@ func (s *Store) AddForwarder(suffix string, upstreams []string, scopeType string
 }
 
 // AddForwardersBulk upserts many forwarders (config-bundle import), honoring
-// each entry's enabled flag. Returns the count applied.
+// each entry's enabled flag, in a single transaction: either every entry
+// applies or none do, and a disabled entry is never transiently visible as
+// enabled. Returns the count applied.
 func (s *Store) AddForwardersBulk(fws []Forwarder) (int, error) {
+	if len(fws) == 0 {
+		return 0, nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	stmt, err := tx.Prepare(
+		`INSERT INTO forwarders(suffix, upstreams, scope_type, scope_values, enabled, updated_at) VALUES(?,?,?,?,?,?)
+		 ON CONFLICT(suffix, scope_type, scope_values) DO UPDATE SET upstreams=excluded.upstreams, enabled=excluded.enabled, updated_at=excluded.updated_at`)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	defer stmt.Close()
+	now := time.Now().Unix()
 	n := 0
 	for _, f := range fws {
-		id, err := s.AddForwarder(f.Suffix, f.Upstreams, f.ScopeType, f.ScopeValues)
+		st, vals, cerr := CanonicalScope(f.ScopeType, f.ScopeValues)
+		if cerr != nil {
+			st, vals = ScopeAll, "[]" // tolerate malformed imported scopes: fall back to cluster-wide
+		}
+		ups := f.Upstreams
+		if ups == nil {
+			ups = []string{}
+		}
+		upsJSON, err := json.Marshal(ups)
 		if err != nil {
+			_ = tx.Rollback()
 			return n, err
 		}
-		if !f.Enabled {
-			if err := s.UpdateForwarder(id, f.Upstreams, false, f.ScopeType, f.ScopeValues); err != nil {
-				return n, err
-			}
+		if _, err := stmt.Exec(f.Suffix, string(upsJSON), st, vals, boolToInt(f.Enabled), now); err != nil {
+			_ = tx.Rollback()
+			return n, err
 		}
 		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 	return n, nil
 }
@@ -87,6 +119,9 @@ func (s *Store) UpdateForwarder(id int64, upstreams []string, enabled bool, scop
 	st, vals, err := CanonicalScope(scopeType, scopeValues)
 	if err != nil {
 		return err
+	}
+	if upstreams == nil {
+		upstreams = []string{}
 	}
 	ups, err := json.Marshal(upstreams)
 	if err != nil {

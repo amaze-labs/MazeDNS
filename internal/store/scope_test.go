@@ -182,6 +182,17 @@ func TestRewritesScopeMigration(t *testing.T) {
 	}
 }
 
+// mustListRewrites is a test helper that fails the test on error instead of
+// forcing every caller to check it inline.
+func mustListRewrites(t *testing.T, s *Store) []Rewrite {
+	t.Helper()
+	rws, err := s.ListRewrites()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rws
+}
+
 func TestPerNodeFilteringAndHash(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {
@@ -216,6 +227,59 @@ func TestPerNodeFilteringAndHash(t *testing.T) {
 	check("n1", "office", "3.3.3.3") // node beats site beats all
 	check("n2", "office", "2.2.2.2") // site beats all
 	check("n3", "", "1.1.1.1")       // fallback
+
+	// Disabling the node-scoped override must fall back to the site value, not
+	// mask it into "no rewrite at all".
+	var nodeID int64 = -1
+	for _, rw := range mustListRewrites(t, s) {
+		if rw.Value == "3.3.3.3" {
+			nodeID = rw.ID
+		}
+	}
+	if nodeID == -1 {
+		t.Fatal("expected the node-scoped nas.home entry")
+	}
+	if err := s.UpdateRewrite(nodeID, "3.3.3.3", false, ScopeNodes, []string{"n1"}); err != nil {
+		t.Fatal(err)
+	}
+	check("n1", "office", "2.2.2.2") // node entry disabled -> falls back to site
+
+	// Disabling the site entry too must fall back further, to 'all'.
+	var siteID int64 = -1
+	for _, rw := range mustListRewrites(t, s) {
+		if rw.Value == "2.2.2.2" {
+			siteID = rw.ID
+		}
+	}
+	if siteID == -1 {
+		t.Fatal("expected the site-scoped nas.home entry")
+	}
+	if err := s.UpdateRewrite(siteID, "2.2.2.2", false, ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	check("n1", "office", "1.1.1.1") // site entry disabled too -> falls back to 'all'
+
+	// Disabling the 'all' entry too leaves nothing enabled: the most specific
+	// disabled entry (node-scoped, value 3.3.3.3) is still served, disabled.
+	var allID int64 = -1
+	for _, rw := range mustListRewrites(t, s) {
+		if rw.Value == "1.1.1.1" {
+			allID = rw.ID
+		}
+	}
+	if allID == -1 {
+		t.Fatal("expected the all-scoped nas.home entry")
+	}
+	if err := s.UpdateRewrite(allID, "1.1.1.1", false, ScopeAll, nil); err != nil {
+		t.Fatal(err)
+	}
+	rws, err := s.ListRewritesForNode("n1", "office")
+	if err != nil || len(rws) != 1 {
+		t.Fatalf("n1/office: want 1 rewrite, got %d (%v)", len(rws), err)
+	}
+	if rws[0].Enabled || rws[0].Value != "3.3.3.3" {
+		t.Fatalf("want the most specific disabled entry (3.3.3.3), got %+v", rws[0])
+	}
 
 	// Forwarders: only enabled entries are served; site scope filters.
 	fid, err := s.AddForwarder("corp.internal", []string{"10.0.0.2:53"}, ScopeSites, []string{"office"})

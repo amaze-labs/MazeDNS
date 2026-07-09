@@ -107,9 +107,11 @@ func (s *Store) ConfigVersionForNode(nodeName, nodeSite string) (string, error) 
 }
 
 // ListRewritesForNode returns the rewrites that apply to one node, precedence
-// resolved (nodes > sites > all) to a single winner per domain+rrtype, with
-// scope fields zeroed — the served set is scope-free by design, so agents
-// need no scope logic and old agents keep working.
+// resolved to a single winner per domain+rrtype, with scope fields zeroed —
+// the served set is scope-free by design, so agents need no scope logic and
+// old agents keep working. The rule: the most specific enabled entry wins; a
+// disabled entry is served only when nothing enabled matches — so disabling
+// an override falls back to the broader scope, matching forwarder behavior.
 func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error) {
 	all, err := s.ListRewrites()
 	if err != nil {
@@ -128,8 +130,16 @@ func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error
 			continue
 		}
 		k := key{rw.Domain, rw.RRType}
-		if r := scopeRank(rw.ScopeType); r > rank[k] {
-			rank[k] = r
+		// Enabled always beats disabled (any enabled rank 1..3 plus 3 exceeds any
+		// disabled rank 1..3); among same enabled-ness, higher scope rank wins.
+		// Ties within the same effectiveRank can't happen: write-time overlap
+		// rejection guarantees at most one match per (key, scope rank).
+		effectiveRank := scopeRank(rw.ScopeType)
+		if rw.Enabled {
+			effectiveRank += 3
+		}
+		if effectiveRank > rank[k] {
+			rank[k] = effectiveRank
 			rw.ScopeType, rw.ScopeValues = "", nil
 			best[k] = rw
 		}

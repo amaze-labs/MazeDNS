@@ -121,6 +121,10 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("PUT /api/rewrites/{id}", s.requireRole(roleAdmin, s.updateRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+		mux.HandleFunc("GET /api/forwarders", s.requireRole(roleReadonly, s.listForwarders))
+		mux.HandleFunc("POST /api/forwarders", s.requireRole(roleAdmin, s.addForwarder))
+		mux.HandleFunc("PUT /api/forwarders/{id}", s.requireRole(roleAdmin, s.updateForwarder))
+		mux.HandleFunc("DELETE /api/forwarders/{id}", s.requireRole(roleAdmin, s.deleteForwarder))
 
 		// Managed lists + global block-pause ("protection").
 		mux.HandleFunc("GET /api/lists", s.requireRole(roleReadonly, s.listLists))

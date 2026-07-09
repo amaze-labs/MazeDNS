@@ -47,7 +47,11 @@ func TestForwardersCRUD(t *testing.T) {
 		t.Fatal("disjoint sites must not conflict")
 	}
 
-	// A forwarder never conflicts with itself when its own id is excluded.
+	// A forwarder never conflicts with itself when its own id is excluded. Use
+	// a different-but-intersecting value list (not identical to the row's own
+	// ["lab"]) so the self-skip is actually exercised via excludeID — an
+	// identical list would pass this assertion via the "vals != valuesJSON"
+	// shortcut even if excludeID were ignored entirely.
 	var sitesID int64 = -1
 	for _, f := range fws {
 		if f.ScopeType == ScopeSites {
@@ -57,8 +61,11 @@ func TestForwardersCRUD(t *testing.T) {
 	if sitesID == -1 {
 		t.Fatal("expected a sites-scoped forwarder in list")
 	}
-	if c, _ := s.ForwarderScopeConflict("corp.internal", ScopeSites, `["lab"]`, sitesID); c {
+	if c, _ := s.ForwarderScopeConflict("corp.internal", ScopeSites, `["dc","lab"]`, sitesID); c {
 		t.Fatal("forwarder must not conflict with itself when excludeID is its own id")
+	}
+	if c, _ := s.ForwarderScopeConflict("corp.internal", ScopeSites, `["dc","lab"]`, 0); !c {
+		t.Fatal("expected conflict when excludeID does not match the row")
 	}
 
 	if err := s.DeleteForwarder(id); err != nil {

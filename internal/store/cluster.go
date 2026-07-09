@@ -48,10 +48,30 @@ func (s *Store) ReplicatedRules() ([]Rule, error) {
 	return rules, nil
 }
 
-// ConfigVersion returns a short content hash of the replicated config (rules +
-// rewrites). It changes only when that content changes and is identical on any
-// node holding the same config, so a worker detects drift by comparing its own
-// hash to the master's — no monotonic counter needed.
+// configHash is the shared content hash both sides compute from their own
+// data: the master over a node's filtered view, the agent over its local
+// tables + persisted forwarders blob. Line formats are frozen (R|, W|, F|) —
+// changing them desynchronizes every agent at once.
+func configHash(rules []Rule, rewrites []Rewrite, fws []ForwardSpec) string {
+	lines := make([]string, 0, len(rules)+len(rewrites)+len(fws))
+	for _, r := range rules {
+		lines = append(lines, fmt.Sprintf("R|%s|%s|%s|%t", r.Action, r.Domain, r.Category, r.Enabled))
+	}
+	for _, rw := range rewrites {
+		lines = append(lines, fmt.Sprintf("W|%s|%s|%s|%t", rw.Domain, rw.RRType, rw.Value, rw.Enabled))
+	}
+	for _, f := range fws {
+		lines = append(lines, fmt.Sprintf("F|%s|%s", f.Suffix, strings.Join(f.Upstreams, ",")))
+	}
+	sort.Strings(lines) // order-independent: same content -> same hash on every node
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// ConfigVersion returns a short content hash of the replicated config this
+// node holds (rules + rewrites + centrally-pushed forwarders). A worker
+// detects drift by comparing its own hash to the per-node hash the master
+// advertises — no monotonic counter needed.
 func (s *Store) ConfigVersion() (string, error) {
 	rules, err := s.ReplicatedRules()
 	if err != nil {
@@ -61,16 +81,104 @@ func (s *Store) ConfigVersion() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	lines := make([]string, 0, len(rules)+len(rewrites))
-	for _, r := range rules {
-		lines = append(lines, fmt.Sprintf("R|%s|%s|%s|%t", r.Action, r.Domain, r.Category, r.Enabled))
+	fws, err := s.ClusterForwarders()
+	if err != nil {
+		return "", err
 	}
-	for _, rw := range rewrites {
-		lines = append(lines, fmt.Sprintf("W|%s|%s|%s|%t", rw.Domain, rw.RRType, rw.Value, rw.Enabled))
+	return configHash(rules, rewrites, fws), nil
+}
+
+// ConfigVersionForNode is the master-side counterpart of an agent's
+// ConfigVersion: the hash of exactly the content served to that node.
+func (s *Store) ConfigVersionForNode(nodeName, nodeSite string) (string, error) {
+	rules, err := s.ReplicatedRules()
+	if err != nil {
+		return "", err
 	}
-	sort.Strings(lines) // order-independent: same content -> same hash on every node
-	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	return hex.EncodeToString(sum[:])[:12], nil
+	rws, err := s.ListRewritesForNode(nodeName, nodeSite)
+	if err != nil {
+		return "", err
+	}
+	fws, err := s.ListForwardersForNode(nodeName, nodeSite)
+	if err != nil {
+		return "", err
+	}
+	return configHash(rules, rws, fws), nil
+}
+
+// ListRewritesForNode returns the rewrites that apply to one node, precedence
+// resolved (nodes > sites > all) to a single winner per domain+rrtype, with
+// scope fields zeroed — the served set is scope-free by design, so agents
+// need no scope logic and old agents keep working.
+func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error) {
+	all, err := s.ListRewrites()
+	if err != nil {
+		return nil, err
+	}
+	type key struct{ domain, rrtype string }
+	best := map[key]Rewrite{}
+	rank := map[key]int{}
+	for _, rw := range all {
+		valsJSON := "[]"
+		if len(rw.ScopeValues) > 0 {
+			b, _ := json.Marshal(rw.ScopeValues)
+			valsJSON = string(b)
+		}
+		if !ScopeMatches(rw.ScopeType, valsJSON, nodeName, nodeSite) {
+			continue
+		}
+		k := key{rw.Domain, rw.RRType}
+		if r := scopeRank(rw.ScopeType); r > rank[k] {
+			rank[k] = r
+			rw.ScopeType, rw.ScopeValues = "", nil
+			best[k] = rw
+		}
+	}
+	out := make([]Rewrite, 0, len(best))
+	for _, rw := range best {
+		out = append(out, rw)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Domain != out[j].Domain {
+			return out[i].Domain < out[j].Domain
+		}
+		return out[i].RRType < out[j].RRType
+	})
+	return out, nil
+}
+
+// ListForwardersForNode returns the enabled forwarders that apply to one node,
+// precedence resolved to a single winner per suffix, as lean ForwardSpecs.
+func (s *Store) ListForwardersForNode(nodeName, nodeSite string) ([]ForwardSpec, error) {
+	all, err := s.ListForwarders()
+	if err != nil {
+		return nil, err
+	}
+	best := map[string]ForwardSpec{}
+	rank := map[string]int{}
+	for _, f := range all {
+		if !f.Enabled {
+			continue
+		}
+		valsJSON := "[]"
+		if len(f.ScopeValues) > 0 {
+			b, _ := json.Marshal(f.ScopeValues)
+			valsJSON = string(b)
+		}
+		if !ScopeMatches(f.ScopeType, valsJSON, nodeName, nodeSite) {
+			continue
+		}
+		if r := scopeRank(f.ScopeType); r > rank[f.Suffix] {
+			rank[f.Suffix] = r
+			best[f.Suffix] = ForwardSpec{Suffix: f.Suffix, Upstreams: f.Upstreams}
+		}
+	}
+	out := make([]ForwardSpec, 0, len(best))
+	for _, f := range best {
+		out = append(out, f)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Suffix < out[j].Suffix })
+	return out, nil
 }
 
 // ApplySnapshot replaces all rules and rewrites with the given set. Used by

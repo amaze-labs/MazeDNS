@@ -181,3 +181,117 @@ func TestRewritesScopeMigration(t *testing.T) {
 		t.Fatalf("post-migration split-horizon insert failed: %v", err)
 	}
 }
+
+func TestPerNodeFilteringAndHash(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// nas.home: global fallback, site override, node override.
+	if _, err := s.AddRewriteScoped("nas.home", "A", "1.1.1.1", ScopeAll, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRewriteScoped("nas.home", "A", "2.2.2.2", ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRewriteScoped("nas.home", "A", "3.3.3.3", ScopeNodes, []string{"n1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(name, site, wantVal string) {
+		t.Helper()
+		rws, err := s.ListRewritesForNode(name, site)
+		if err != nil || len(rws) != 1 {
+			t.Fatalf("%s/%s: want 1 rewrite, got %d (%v)", name, site, len(rws), err)
+		}
+		if rws[0].Value != wantVal {
+			t.Fatalf("%s/%s: got %s, want %s", name, site, rws[0].Value, wantVal)
+		}
+		if rws[0].ScopeType != "" || rws[0].ScopeValues != nil {
+			t.Fatalf("scope must be zeroed in the served set: %+v", rws[0])
+		}
+	}
+	check("n1", "office", "3.3.3.3") // node beats site beats all
+	check("n2", "office", "2.2.2.2") // site beats all
+	check("n3", "", "1.1.1.1")       // fallback
+
+	// Forwarders: only enabled entries are served; site scope filters.
+	fid, err := s.AddForwarder("corp.internal", []string{"10.0.0.2:53"}, ScopeSites, []string{"office"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddForwarder("lab.internal", []string{"10.9.0.2:53"}, ScopeAll, nil); err != nil {
+		t.Fatal(err)
+	}
+	fws, err := s.ListForwardersForNode("n1", "office")
+	if err != nil || len(fws) != 2 {
+		t.Fatalf("n1 forwarders: want 2, got %d (%v)", len(fws), err)
+	}
+	if fws, _ := s.ListForwardersForNode("n3", ""); len(fws) != 1 || fws[0].Suffix != "lab.internal" {
+		t.Fatalf("n3 forwarders: want only lab.internal, got %+v", fws)
+	}
+	// Disabling removes it from the served set (and the hash).
+	if err := s.UpdateForwarder(fid, []string{"10.0.0.2:53"}, false, ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	if fws, _ := s.ListForwardersForNode("n1", "office"); len(fws) != 1 {
+		t.Fatalf("disabled forwarder still served: %+v", fws)
+	}
+
+	// Per-node hashes: different content -> different hash; same node -> stable.
+	h1a, err := s.ConfigVersionForNode("n1", "office")
+	if err != nil || h1a == "" {
+		t.Fatal(err)
+	}
+	h1b, _ := s.ConfigVersionForNode("n1", "office")
+	h3, _ := s.ConfigVersionForNode("n3", "")
+	if h1a != h1b {
+		t.Fatal("per-node hash must be deterministic")
+	}
+	if h1a == h3 {
+		t.Fatal("nodes with different content must hash differently")
+	}
+}
+
+// The agent recomputes the master's per-node hash from its own local state:
+// the applied (filtered) rewrites plus the persisted forwarders blob.
+func TestAgentHashMatchesMasterPerNodeHash(t *testing.T) {
+	master, err := Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	agent, err := Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+
+	if _, err := master.AddRule("deny", "ads.test", "ads"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := master.AddRewriteScoped("nas.home", "A", "2.2.2.2", ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := master.AddForwarder("corp.internal", []string{"10.0.0.2:53"}, ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, _ := master.ReplicatedRules()
+	rws, _ := master.ListRewritesForNode("n1", "office")
+	fws, _ := master.ListForwardersForNode("n1", "office")
+	if err := agent.ApplySnapshot(rules, rws); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SetClusterForwarders(fws); err != nil {
+		t.Fatal(err)
+	}
+
+	want, _ := master.ConfigVersionForNode("n1", "office")
+	got, _ := agent.ConfigVersion()
+	if want == "" || got != want {
+		t.Fatalf("agent hash %q != master per-node hash %q", got, want)
+	}
+}

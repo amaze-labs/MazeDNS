@@ -35,7 +35,10 @@ Operational DNS settings live under **Settings** and apply live across the clust
   DoT (`tls://1.1.1.1:853#cloudflare-dns.com`), or DoH
   (`https://dns.quad9.net/dns-query`). Quick-fill buttons are provided.
 - **Conditional forwarders** — send a domain suffix to specific upstreams
-  (split-horizon), e.g. `corp.internal` → your internal resolver.
+  (split-horizon), e.g. `corp.internal` → your internal resolver. Cluster-wide
+  forwarders are managed on the **Rewrites** tab, can be scoped to specific
+  nodes or sites, and are pushed to the agents automatically; they override a
+  node's own (YAML-seeded) forwarder for the same suffix.
 - **Cache** — enable/size it and clamp TTLs (`min_ttl`/`max_ttl`).
 - **Rate limit** — per-client queries per minute (`REFUSED` beyond).
 - **DNSSEC** — force the DO bit upstream and surface the AD flag.
@@ -70,6 +73,19 @@ Add local answers (LAN hosts, split-horizon overrides) under **Rewrites**:
 - Wildcards — `*.lab.lan → A 10.0.0.9` answers every subdomain.
 
 The most specific match wins (an exact record beats a wildcard).
+
+Rewrites can be **scoped**: to every node (default), to specific nodes, or to
+one or more sites. The same domain may carry different values under different
+scopes — the classic split-horizon setup where `nas.home` resolves to a
+different address per site. When several entries match a node, the most
+specific wins (node > site > all); creating two entries that would tie at the
+same specificity is rejected. Entries scoped to a node or site that no longer
+exists are kept but match nothing (flagged with ⚠ in the UI).
+
+The **Conditional forwarders (cluster)** section on the same tab manages
+suffix → upstream routing with identical scoping. Agents pick changes up on
+their next config poll; the cluster page shows a per-node sync flag (⟳) until
+each node has applied its own expected version.
 
 ## Pause blocking
 

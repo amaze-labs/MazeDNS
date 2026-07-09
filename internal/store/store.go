@@ -279,6 +279,16 @@ CREATE TABLE IF NOT EXISTS reputation_usage (
 	limit_total INTEGER NOT NULL DEFAULT -1,      -- last API-reported daily limit (-1 = unknown)
 	PRIMARY KEY (day, service)
 );
+CREATE TABLE IF NOT EXISTS forwarders (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	suffix TEXT NOT NULL,
+	upstreams TEXT NOT NULL,
+	scope_type TEXT NOT NULL DEFAULT 'all',
+	scope_values TEXT NOT NULL DEFAULT '[]',
+	enabled INTEGER NOT NULL DEFAULT 1,
+	updated_at INTEGER NOT NULL,
+	UNIQUE(suffix, scope_type, scope_values)
+);
 `
 
 func (s *Store) migrate() error {

@@ -451,6 +451,11 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <details className="settings-card" open>
         <summary>Conditional forwarders</summary>
+        <p className="muted">
+          These forwarders are this control plane's local settings. Cluster-wide forwarders for the
+          DNS agents are managed on the <b>Rewrites</b> tab and override a node's local entry for the
+          same suffix.
+        </p>
         <label className="muted">Route queries for a domain suffix to specific upstreams.</label>
         {forwarders.map((g, i) => (
           <div className="row" key={i}>

@@ -56,6 +56,7 @@ export interface Node {
   key_prefix: string
   address: string
   version: string
+  expected_version?: string
   last_seen: number
   created_at: number
   maintenance: boolean

@@ -353,7 +353,17 @@ export default function Cluster() {
                   </td>
                   <td className="num">{n.total.toLocaleString()}</td>
                   <td className="num">{n.blocked.toLocaleString()}</td>
-                  <td>{n.version ? <code>{n.version}</code> : <span className="muted">pending</span>}</td>
+                  <td>
+                    {n.version ? (
+                      n.expected_version && n.version !== n.expected_version ? (
+                        <code title={`syncing: node has ${n.version}, expects ${n.expected_version}`}>{n.version} ⟳</code>
+                      ) : (
+                        <code>{n.version}</code>
+                      )
+                    ) : (
+                      <span className="muted">pending</span>
+                    )}
+                  </td>
                   <td>{ago(n.last_seen)}</td>
                 </tr>
               )
@@ -467,7 +477,7 @@ function AgentModal({
 
       <dl className="kv-grid">
         <div><dt>Address</dt><dd>{nodeIP(node) || '—'}</dd></div>
-        <div><dt>Version</dt><dd>{node.version ? <code>{node.version}</code> : '—'}</dd></div>
+        <div><dt>Version</dt><dd>{node.version ? <code>{node.version}</code> : '—'}{node.expected_version && node.version && node.version !== node.expected_version ? <span className="muted"> (expects <code>{node.expected_version}</code>)</span> : null}</dd></div>
         <div><dt>Last seen</dt><dd>{ago(node.last_seen)}</dd></div>
         <div><dt>Enrolled</dt><dd>{dateStr(node.created_at)}</dd></div>
         <div><dt>Key prefix</dt><dd><code>{node.key_prefix || '—'}</code></dd></div>

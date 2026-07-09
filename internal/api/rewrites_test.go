@@ -74,3 +74,47 @@ func TestUpdateRewrite(t *testing.T) {
 		t.Fatalf("missing id: got %d, want 404", rr.Code)
 	}
 }
+
+// Re-scoping a row onto another row's exact (domain+rrtype+scope) must 409,
+// not fall through the overlap check (which skips identical value lists) and
+// hit the UNIQUE constraint as a raw 500.
+func TestUpdateRewriteExactScopeConflict(t *testing.T) {
+	s, st := newRewriteServer(t)
+	idA, err := st.AddRewriteScoped("nas.lan", "A", "10.0.0.1", store.ScopeSites, []string{"office"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idB, err := st.AddRewriteScoped("nas.lan", "A", "10.0.0.2", store.ScopeSites, []string{"lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/rewrites/%d", idB),
+		strings.NewReader(`{"value":"10.0.0.2","enabled":true,"scope_type":"sites","scope_values":["office"]}`))
+	req.SetPathValue("id", fmt.Sprint(idB))
+	s.updateRewrite(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("re-scope onto identical scope: got %d, want 409 (%s)", rr.Code, rr.Body.String())
+	}
+
+	// Both rows must be unchanged.
+	rws, _ := st.ListRewrites()
+	if len(rws) != 2 {
+		t.Fatalf("want 2 rows, got %+v", rws)
+	}
+	for _, rw := range rws {
+		switch rw.ID {
+		case idA:
+			if rw.Value != "10.0.0.1" || rw.ScopeType != store.ScopeSites || len(rw.ScopeValues) != 1 || rw.ScopeValues[0] != "office" {
+				t.Fatalf("row A mutated: %+v", rw)
+			}
+		case idB:
+			if rw.Value != "10.0.0.2" || rw.ScopeType != store.ScopeSites || len(rw.ScopeValues) != 1 || rw.ScopeValues[0] != "lab" {
+				t.Fatalf("row B mutated: %+v", rw)
+			}
+		default:
+			t.Fatalf("unexpected row: %+v", rw)
+		}
+	}
+}

@@ -104,3 +104,53 @@ func TestForwardersAPI(t *testing.T) {
 		t.Fatalf("row not deleted: %+v", fws)
 	}
 }
+
+// Re-scoping a row onto another row's exact (suffix+scope) must 409, not fall
+// through the overlap check (which skips identical value lists) and hit the
+// UNIQUE constraint as a raw 500.
+func TestUpdateForwarderExactScopeConflict(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{store: st}
+
+	idA, err := st.AddForwarder("corp.internal", []string{"10.0.0.1:53"}, store.ScopeSites, []string{"office"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idB, err := st.AddForwarder("corp.internal", []string{"10.0.0.2:53"}, store.ScopeSites, []string{"lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/forwarders/%d", idB),
+		strings.NewReader(`{"upstreams":["10.0.0.2:53"],"enabled":true,"scope_type":"sites","scope_values":["office"]}`))
+	req.SetPathValue("id", fmt.Sprint(idB))
+	s.updateForwarder(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("re-scope onto identical scope: got %d, want 409 (%s)", rr.Code, rr.Body.String())
+	}
+
+	// Both rows must be unchanged.
+	fws, _ := st.ListForwarders()
+	if len(fws) != 2 {
+		t.Fatalf("want 2 rows, got %+v", fws)
+	}
+	for _, f := range fws {
+		switch f.ID {
+		case idA:
+			if f.Upstreams[0] != "10.0.0.1:53" || f.ScopeType != store.ScopeSites || len(f.ScopeValues) != 1 || f.ScopeValues[0] != "office" {
+				t.Fatalf("row A mutated: %+v", f)
+			}
+		case idB:
+			if f.Upstreams[0] != "10.0.0.2:53" || f.ScopeType != store.ScopeSites || len(f.ScopeValues) != 1 || f.ScopeValues[0] != "lab" {
+				t.Fatalf("row B mutated: %+v", f)
+			}
+		default:
+			t.Fatalf("unexpected row: %+v", f)
+		}
+	}
+}

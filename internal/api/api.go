@@ -1216,6 +1216,19 @@ func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "rewrite not found")
 		return
 	}
+	// RewriteScopeConflict deliberately skips rows whose scope is IDENTICAL to
+	// the new one (that's the correct upsert behavior for POST), so re-scoping
+	// this row onto another row's exact (domain+rrtype+scope) would sail past it
+	// and hit the UNIQUE constraint as a raw 500. Catch that case here.
+	for i := range rws {
+		if rws[i].ID == id || rws[i].Domain != cur.Domain || rws[i].RRType != cur.RRType {
+			continue
+		}
+		if rws[i].ScopeType == scopeType && scopeValuesJSON(rws[i].ScopeValues) == valsJSON {
+			writeError(w, http.StatusConflict, "another rewrite for this domain already has this exact scope")
+			return
+		}
+	}
 	if conflict, err := s.store.RewriteScopeConflict(cur.Domain, cur.RRType, scopeType, valsJSON, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1255,6 +1268,17 @@ func (s *Server) afterChange() {
 	if err := s.reload(); err != nil {
 		slog.Warn("policy reload failed", "err", err)
 	}
+}
+
+// scopeValuesJSON reproduces the canonical JSON encoding of an already-stored
+// (and thus already-canonical) scope values slice, so it can be compared
+// byte-for-byte against a freshly canonicalized scope's JSON encoding.
+func scopeValuesJSON(vals []string) string {
+	if len(vals) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(vals)
+	return string(b)
 }
 
 func normalizeCategory(c string) string {

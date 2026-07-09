@@ -136,6 +136,19 @@ func (s *Server) updateForwarder(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// ForwarderScopeConflict deliberately skips rows whose scope is IDENTICAL to
+	// the new one (that's the correct upsert behavior for POST), so re-scoping
+	// this row onto another row's exact (suffix+scope) would sail past it and
+	// hit the UNIQUE constraint as a raw 500. Catch that case here.
+	for i := range fws {
+		if fws[i].ID == id || fws[i].Suffix != suffix {
+			continue
+		}
+		if fws[i].ScopeType == scopeType && scopeValuesJSON(fws[i].ScopeValues) == valsJSON {
+			writeError(w, http.StatusConflict, "another forwarder for this suffix already has this exact scope")
+			return
+		}
+	}
 	if conflict, err := s.store.ForwarderScopeConflict(suffix, scopeType, valsJSON, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

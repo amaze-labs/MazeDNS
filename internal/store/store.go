@@ -6,6 +6,8 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -35,14 +37,18 @@ type Rule struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
-// Rewrite is a local DNS record override.
+// Rewrite is a local DNS record override. Scope fields exist only on the
+// control plane (agents receive pre-filtered, scope-free entries): ScopeType
+// is all|nodes|sites and ScopeValues the node/site names it applies to.
 type Rewrite struct {
-	ID        int64  `json:"id"`
-	Domain    string `json:"domain"`
-	RRType    string `json:"rrtype"` // "A" | "AAAA" | "CNAME"
-	Value     string `json:"value"`
-	Enabled   bool   `json:"enabled"`
-	UpdatedAt int64  `json:"updated_at"`
+	ID          int64    `json:"id"`
+	Domain      string   `json:"domain"`
+	RRType      string   `json:"rrtype"` // "A" | "AAAA" | "CNAME"
+	Value       string   `json:"value"`
+	Enabled     bool     `json:"enabled"`
+	UpdatedAt   int64    `json:"updated_at"`
+	ScopeType   string   `json:"scope_type,omitempty"`
+	ScopeValues []string `json:"scope_values,omitempty"`
 }
 
 // Open opens (creating if needed) the SQLite database at path and runs migrations.
@@ -129,7 +135,9 @@ CREATE TABLE IF NOT EXISTS rewrites (
 	value TEXT NOT NULL,
 	enabled INTEGER NOT NULL DEFAULT 1,
 	updated_at INTEGER NOT NULL,
-	UNIQUE(domain, rrtype)
+	scope_type TEXT NOT NULL DEFAULT 'all',
+	scope_values TEXT NOT NULL DEFAULT '[]',
+	UNIQUE(domain, rrtype, scope_type, scope_values)
 );
 CREATE TABLE IF NOT EXISTS query_log (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -285,6 +293,9 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+	if err := s.migrateRewritesScope(); err != nil {
+		return err
+	}
 	// Additive column migrations for databases created before a column existed.
 	for _, alter := range []string{
 		`ALTER TABLE rules ADD COLUMN category TEXT NOT NULL DEFAULT 'custom'`,
@@ -314,6 +325,48 @@ func (s *Store) migrate() error {
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateRewritesScope relaxes the pre-scope UNIQUE(domain, rrtype) key to
+// UNIQUE(domain, rrtype, scope_type, scope_values). SQLite can't alter a
+// table constraint, so the table is rebuilt in place; Postgres swaps the
+// constraint directly. Detected by probing for the scope_type column.
+func (s *Store) migrateRewritesScope() error {
+	if _, err := s.db.Exec(`SELECT scope_type FROM rewrites LIMIT 1`); err == nil {
+		return nil // already migrated (or fresh schema)
+	}
+	var stmts []string
+	if s.db.pg {
+		stmts = []string{
+			`ALTER TABLE rewrites ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'all'`,
+			`ALTER TABLE rewrites ADD COLUMN scope_values TEXT NOT NULL DEFAULT '[]'`,
+			`ALTER TABLE rewrites DROP CONSTRAINT IF EXISTS rewrites_domain_rrtype_key`,
+			`ALTER TABLE rewrites ADD CONSTRAINT rewrites_domain_rrtype_scope_key UNIQUE (domain, rrtype, scope_type, scope_values)`,
+		}
+	} else {
+		stmts = []string{
+			`CREATE TABLE rewrites_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				domain TEXT NOT NULL,
+				rrtype TEXT NOT NULL,
+				value TEXT NOT NULL,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				updated_at INTEGER NOT NULL,
+				scope_type TEXT NOT NULL DEFAULT 'all',
+				scope_values TEXT NOT NULL DEFAULT '[]',
+				UNIQUE(domain, rrtype, scope_type, scope_values))`,
+			`INSERT INTO rewrites_new(id, domain, rrtype, value, enabled, updated_at)
+				SELECT id, domain, rrtype, value, enabled, updated_at FROM rewrites`,
+			`DROP TABLE rewrites`,
+			`ALTER TABLE rewrites_new RENAME TO rewrites`,
+		}
+	}
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migrate rewrites scope: %w", err)
 		}
 	}
 	return nil
@@ -405,7 +458,7 @@ func (s *Store) ClearRules() error {
 
 // ListRewrites returns all rewrites ordered by domain.
 func (s *Store) ListRewrites() ([]Rewrite, error) {
-	rows, err := s.read.Query(`SELECT id, domain, rrtype, value, enabled, updated_at FROM rewrites ORDER BY domain`)
+	rows, err := s.read.Query(`SELECT id, domain, rrtype, value, enabled, updated_at, scope_type, scope_values FROM rewrites ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
@@ -413,27 +466,86 @@ func (s *Store) ListRewrites() ([]Rewrite, error) {
 	var out []Rewrite
 	for rows.Next() {
 		var r Rewrite
-		if err := rows.Scan(&r.ID, &r.Domain, &r.RRType, &r.Value, &r.Enabled, &r.UpdatedAt); err != nil {
+		var valsJSON string
+		if err := rows.Scan(&r.ID, &r.Domain, &r.RRType, &r.Value, &r.Enabled, &r.UpdatedAt, &r.ScopeType, &valsJSON); err != nil {
 			return nil, err
 		}
+		_ = json.Unmarshal([]byte(valsJSON), &r.ScopeValues)
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-// AddRewrite inserts or updates a rewrite and returns its id.
-func (s *Store) AddRewrite(domain, rrtype, value string) (int64, error) {
+// AddRewriteScoped inserts or updates a rewrite under a specific scope and
+// returns its id. The scope is canonicalized so equal scopes hit the same row.
+func (s *Store) AddRewriteScoped(domain, rrtype, value, scopeType string, scopeValues []string) (int64, error) {
+	st, vals, err := CanonicalScope(scopeType, scopeValues)
+	if err != nil {
+		return 0, err
+	}
 	now := time.Now().Unix()
 	if _, err := s.db.Exec(
-		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at) VALUES(?,?,?,1,?)
-		 ON CONFLICT(domain, rrtype) DO UPDATE SET value=excluded.value, enabled=1, updated_at=?`,
-		domain, rrtype, value, now, now,
+		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at, scope_type, scope_values) VALUES(?,?,?,1,?,?,?)
+		 ON CONFLICT(domain, rrtype, scope_type, scope_values) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at`,
+		domain, rrtype, value, now, st, vals,
 	); err != nil {
 		return 0, err
 	}
 	var id int64
-	err := s.read.QueryRow(`SELECT id FROM rewrites WHERE domain=? AND rrtype=?`, domain, rrtype).Scan(&id)
+	err = s.read.QueryRow(`SELECT id FROM rewrites WHERE domain=? AND rrtype=? AND scope_type=? AND scope_values=?`,
+		domain, rrtype, st, vals).Scan(&id)
 	return id, err
+}
+
+// AddRewrite inserts or updates a cluster-wide ('all' scope) rewrite.
+func (s *Store) AddRewrite(domain, rrtype, value string) (int64, error) {
+	return s.AddRewriteScoped(domain, rrtype, value, ScopeAll, nil)
+}
+
+// UpdateRewrite edits a rewrite's value, enabled flag, and scope in place.
+func (s *Store) UpdateRewrite(id int64, value string, enabled bool, scopeType string, scopeValues []string) error {
+	st, vals, err := CanonicalScope(scopeType, scopeValues)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE rewrites SET value=?, enabled=?, scope_type=?, scope_values=?, updated_at=? WHERE id=?`,
+		value, boolToInt(enabled), st, vals, time.Now().Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("rewrite not found")
+	}
+	return nil
+}
+
+// RewriteScopeConflict reports whether another rewrite for the same
+// domain+rrtype at the SAME specificity would match an overlapping set of
+// nodes — precedence can't break that tie, so writes must reject it.
+// valuesJSON must already be canonical (from CanonicalScope). excludeID
+// skips the row being edited.
+func (s *Store) RewriteScopeConflict(domain, rrtype, scopeType, valuesJSON string, excludeID int64) (bool, error) {
+	if scopeType == ScopeAll {
+		return false, nil // the UNIQUE key already enforces a single 'all' row
+	}
+	rows, err := s.read.Query(
+		`SELECT id, scope_values FROM rewrites WHERE domain=? AND rrtype=? AND scope_type=?`,
+		domain, rrtype, scopeType)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var vals string
+		if err := rows.Scan(&id, &vals); err != nil {
+			return false, err
+		}
+		if id != excludeID && vals != valuesJSON && scopeValuesIntersect(vals, valuesJSON) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // AddRewritesBulk inserts/updates many rewrites in one transaction, returning the count applied.
@@ -446,8 +558,8 @@ func (s *Store) AddRewritesBulk(rws []Rewrite) (int, error) {
 		return 0, err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at) VALUES(?,?,?,1,?)
-		 ON CONFLICT(domain, rrtype) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at`)
+		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at, scope_type, scope_values) VALUES(?,?,?,1,?,?,?)
+		 ON CONFLICT(domain, rrtype, scope_type, scope_values) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at`)
 	if err != nil {
 		_ = tx.Rollback()
 		return 0, err
@@ -456,7 +568,11 @@ func (s *Store) AddRewritesBulk(rws []Rewrite) (int, error) {
 	now := time.Now().Unix()
 	n := 0
 	for _, r := range rws {
-		if _, err := stmt.Exec(r.Domain, r.RRType, r.Value, now); err != nil {
+		st, vals, cerr := CanonicalScope(r.ScopeType, r.ScopeValues)
+		if cerr != nil {
+			st, vals = ScopeAll, "[]" // tolerate malformed imported scopes: fall back to cluster-wide
+		}
+		if _, err := stmt.Exec(r.Domain, r.RRType, r.Value, now, st, vals); err != nil {
 			_ = tx.Rollback()
 			return 0, err
 		}

@@ -435,10 +435,13 @@ func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 		store.Node
 		ExpectedVersion string `json:"expected_version"`
 	}
+	versions, err := s.store.ConfigVersionsForNodes(nodes)
+	if err != nil {
+		versions = nil // fall back to empty per-node versions, same as today's swallowed error
+	}
 	out := make([]nodeStatus, 0, len(nodes))
 	for _, n := range nodes {
-		ev, _ := s.store.ConfigVersionForNode(n.Name, n.Site)
-		out = append(out, nodeStatus{Node: n, ExpectedVersion: ev})
+		out = append(out, nodeStatus{Node: n, ExpectedVersion: versions[n.Name]})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

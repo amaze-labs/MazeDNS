@@ -319,6 +319,71 @@ func TestPerNodeFilteringAndHash(t *testing.T) {
 	}
 }
 
+// ConfigVersionsForNodes must return, for every node, exactly the hash
+// ConfigVersionForNode would compute individually — batching (shared table
+// loads + memoized hashes for nodes with identical filtered views) must not
+// change the result.
+func TestConfigVersionsForNodes(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if _, err := s.AddRule("deny", "ads.test", "ads"); err != nil {
+		t.Fatal(err)
+	}
+	// nas.home: global fallback, site override, node override (same shape as
+	// TestPerNodeFilteringAndHash, so nodes genuinely differ in served content).
+	if _, err := s.AddRewriteScoped("nas.home", "A", "1.1.1.1", ScopeAll, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRewriteScoped("nas.home", "A", "2.2.2.2", ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRewriteScoped("nas.home", "A", "3.3.3.3", ScopeNodes, []string{"n1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddForwarder("corp.internal", []string{"10.0.0.2:53"}, ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddForwarder("lab.internal", []string{"10.9.0.2:53"}, ScopeAll, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	nodes := []Node{
+		{Name: "n1", Site: "office"}, // node-scoped override applies
+		{Name: "n2", Site: "office"}, // no node-specific scope
+		{Name: "n3", Site: ""},       // unassigned: falls back to 'all'
+		{Name: "n4", Site: "office"}, // identical filtered view to n2
+	}
+	versions, err := s.ConfigVersionsForNodes(nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != len(nodes) {
+		t.Fatalf("want %d versions, got %d (%v)", len(nodes), len(versions), versions)
+	}
+	for _, n := range nodes {
+		want, err := s.ConfigVersionForNode(n.Name, n.Site)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := versions[n.Name]; got != want {
+			t.Fatalf("%s/%s: batch version %q != ConfigVersionForNode %q", n.Name, n.Site, got, want)
+		}
+	}
+	// n2 and n4 have identical filtered views (same site, no node-specific
+	// override) and must share the batch's memoized hash.
+	if versions["n2"] != versions["n4"] {
+		t.Fatalf("n2 and n4 should share identical filtered views: %q vs %q", versions["n2"], versions["n4"])
+	}
+	// n1's node-scoped override must make its hash differ from n2's.
+	if versions["n1"] == versions["n2"] {
+		t.Fatal("n1 should differ from n2 due to its node-scoped override")
+	}
+}
+
 // The agent recomputes the master's per-node hash from its own local state:
 // the applied (filtered) rewrites plus the persisted forwarders blob.
 func TestAgentHashMatchesMasterPerNodeHash(t *testing.T) {

@@ -48,20 +48,35 @@ func (s *Store) ReplicatedRules() ([]Rule, error) {
 	return rules, nil
 }
 
+// ruleLine, rewriteLine, and forwardLine are the single source of truth for
+// the hashed line formats (R|, W|, F|) shared by configHash and the batched
+// ConfigVersionsForNodes — they are frozen: changing them desynchronizes
+// every agent at once.
+func ruleLine(r Rule) string {
+	return fmt.Sprintf("R|%s|%s|%s|%t", r.Action, r.Domain, r.Category, r.Enabled)
+}
+
+func rewriteLine(rw Rewrite) string {
+	return fmt.Sprintf("W|%s|%s|%s|%t", rw.Domain, rw.RRType, rw.Value, rw.Enabled)
+}
+
+func forwardLine(f ForwardSpec) string {
+	return fmt.Sprintf("F|%s|%s", f.Suffix, strings.Join(f.Upstreams, ","))
+}
+
 // configHash is the shared content hash both sides compute from their own
 // data: the master over a node's filtered view, the agent over its local
-// tables + persisted forwarders blob. Line formats are frozen (R|, W|, F|) —
-// changing them desynchronizes every agent at once.
+// tables + persisted forwarders blob.
 func configHash(rules []Rule, rewrites []Rewrite, fws []ForwardSpec) string {
 	lines := make([]string, 0, len(rules)+len(rewrites)+len(fws))
 	for _, r := range rules {
-		lines = append(lines, fmt.Sprintf("R|%s|%s|%s|%t", r.Action, r.Domain, r.Category, r.Enabled))
+		lines = append(lines, ruleLine(r))
 	}
 	for _, rw := range rewrites {
-		lines = append(lines, fmt.Sprintf("W|%s|%s|%s|%t", rw.Domain, rw.RRType, rw.Value, rw.Enabled))
+		lines = append(lines, rewriteLine(rw))
 	}
 	for _, f := range fws {
-		lines = append(lines, fmt.Sprintf("F|%s|%s", f.Suffix, strings.Join(f.Upstreams, ",")))
+		lines = append(lines, forwardLine(f))
 	}
 	sort.Strings(lines) // order-independent: same content -> same hash on every node
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
@@ -106,17 +121,15 @@ func (s *Store) ConfigVersionForNode(nodeName, nodeSite string) (string, error) 
 	return configHash(rules, rws, fws), nil
 }
 
-// ListRewritesForNode returns the rewrites that apply to one node, precedence
-// resolved to a single winner per domain+rrtype, with scope fields zeroed —
-// the served set is scope-free by design, so agents need no scope logic and
-// old agents keep working. The rule: the most specific enabled entry wins; a
-// disabled entry is served only when nothing enabled matches — so disabling
-// an override falls back to the broader scope, matching forwarder behavior.
-func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error) {
-	all, err := s.ListRewrites()
-	if err != nil {
-		return nil, err
-	}
+// filterRewritesForNode is the per-node filtering body shared by
+// ListRewritesForNode and the batched ConfigVersionsForNodes: it resolves
+// precedence over an already-loaded slice to a single winner per
+// domain+rrtype, with scope fields zeroed — the served set is scope-free by
+// design, so agents need no scope logic and old agents keep working. The
+// rule: the most specific enabled entry wins; a disabled entry is served
+// only when nothing enabled matches — so disabling an override falls back
+// to the broader scope, matching forwarder behavior.
+func filterRewritesForNode(all []Rewrite, nodeName, nodeSite string) []Rewrite {
 	type key struct{ domain, rrtype string }
 	best := map[key]Rewrite{}
 	rank := map[key]int{}
@@ -154,16 +167,25 @@ func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error
 		}
 		return out[i].RRType < out[j].RRType
 	})
-	return out, nil
+	return out
 }
 
-// ListForwardersForNode returns the enabled forwarders that apply to one node,
-// precedence resolved to a single winner per suffix, as lean ForwardSpecs.
-func (s *Store) ListForwardersForNode(nodeName, nodeSite string) ([]ForwardSpec, error) {
-	all, err := s.ListForwarders()
+// ListRewritesForNode returns the rewrites that apply to one node, precedence
+// resolved to a single winner per domain+rrtype. See filterRewritesForNode
+// for the precedence rule.
+func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error) {
+	all, err := s.ListRewrites()
 	if err != nil {
 		return nil, err
 	}
+	return filterRewritesForNode(all, nodeName, nodeSite), nil
+}
+
+// filterForwardersForNode is the per-node filtering body shared by
+// ListForwardersForNode and the batched ConfigVersionsForNodes: only enabled
+// entries that match the node are considered, precedence resolved to a
+// single winner per suffix, as lean ForwardSpecs.
+func filterForwardersForNode(all []Forwarder, nodeName, nodeSite string) []ForwardSpec {
 	best := map[string]ForwardSpec{}
 	rank := map[string]int{}
 	for _, f := range all {
@@ -188,6 +210,69 @@ func (s *Store) ListForwardersForNode(nodeName, nodeSite string) ([]ForwardSpec,
 		out = append(out, f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Suffix < out[j].Suffix })
+	return out
+}
+
+// ListForwardersForNode returns the enabled forwarders that apply to one node,
+// precedence resolved to a single winner per suffix, as lean ForwardSpecs.
+func (s *Store) ListForwardersForNode(nodeName, nodeSite string) ([]ForwardSpec, error) {
+	all, err := s.ListForwarders()
+	if err != nil {
+		return nil, err
+	}
+	return filterForwardersForNode(all, nodeName, nodeSite), nil
+}
+
+// ConfigVersionsForNodes computes every node's expected config version in one
+// pass: rules, rewrites, and forwarders are each loaded and formatted once,
+// and nodes that resolve to the same filtered view share one hash computation
+// (the common case — nodes with no node-specific scopes in the same site).
+// The result is byte-identical to calling ConfigVersionForNode(n.Name, n.Site)
+// for each node individually. Returned map is keyed by node name.
+func (s *Store) ConfigVersionsForNodes(nodes []Node) (map[string]string, error) {
+	rules, err := s.ReplicatedRules()
+	if err != nil {
+		return nil, err
+	}
+	rewrites, err := s.ListRewrites()
+	if err != nil {
+		return nil, err
+	}
+	fwds, err := s.ListForwarders()
+	if err != nil {
+		return nil, err
+	}
+
+	ruleLines := make([]string, 0, len(rules))
+	for _, r := range rules {
+		ruleLines = append(ruleLines, ruleLine(r))
+	}
+
+	memo := map[string]string{} // keyed by the node-specific lines, joined
+	out := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		rws := filterRewritesForNode(rewrites, n.Name, n.Site)
+		fws := filterForwardersForNode(fwds, n.Name, n.Site)
+		nodeLines := make([]string, 0, len(rws)+len(fws))
+		for _, rw := range rws {
+			nodeLines = append(nodeLines, rewriteLine(rw))
+		}
+		for _, f := range fws {
+			nodeLines = append(nodeLines, forwardLine(f))
+		}
+		memoKey := strings.Join(nodeLines, "\n")
+		hash, ok := memo[memoKey]
+		if !ok {
+			lines := make([]string, 0, len(ruleLines)+len(nodeLines))
+			lines = append(lines, ruleLines...)
+			lines = append(lines, nodeLines...)
+			sort.Strings(lines)
+			sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+			hash = hex.EncodeToString(sum[:])[:12]
+			memo[memoKey] = hash
+		}
+		out[n.Name] = hash
+	}
 	return out, nil
 }
 

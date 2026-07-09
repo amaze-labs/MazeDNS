@@ -357,12 +357,17 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rewrites, err := s.store.ListRewrites()
+	rewrites, err := s.store.ListRewritesForNode(node.Name, node.Site)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	version, _ := s.store.ConfigVersion()
+	forwarders, err := s.store.ListForwardersForNode(node.Name, node.Site)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	version, _ := s.store.ConfigVersionForNode(node.Name, node.Site)
 	pausedUntil, _ := s.store.GetBlockPausedUntil()
 	if rules == nil {
 		rules = []store.Rule{}
@@ -370,7 +375,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if rewrites == nil {
 		rewrites = []store.Rewrite{}
 	}
-	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
+	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, Forwarders: forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
 }
 
 // nodeFromKey authenticates a worker by its Bearer node key, or returns nil.
@@ -418,16 +423,24 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 
 // clusterNodes lists the enrolled DNS agents. The control plane itself is not a
 // resolver, so it does not appear here — the cluster view is the data plane only.
+// Each node carries its expected (per-node) config version: scoped rewrites and
+// forwarders mean there is no single cluster-wide version to compare against.
 func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	nodes, err := s.store.ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if nodes == nil {
-		nodes = []store.Node{}
+	type nodeStatus struct {
+		store.Node
+		ExpectedVersion string `json:"expected_version"`
 	}
-	writeJSON(w, http.StatusOK, nodes)
+	out := make([]nodeStatus, 0, len(nodes))
+	for _, n := range nodes {
+		ev, _ := s.store.ConfigVersionForNode(n.Name, n.Site)
+		out = append(out, nodeStatus{Node: n, ExpectedVersion: ev})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // setNodeMaintenance toggles an agent's drain (maintenance) flag. The agent picks

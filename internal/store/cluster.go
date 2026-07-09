@@ -372,9 +372,9 @@ func (s *Store) NodeByKeyHash(keyHash string) (*Node, error) {
 	n := &Node{}
 	var maintenance, approved int
 	err := s.read.QueryRow(
-		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance, approved
+		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance, site, role, approved
 		 FROM nodes WHERE key_hash=?`, keyHash).
-		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance, &approved)
+		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance, &n.Site, &n.Role, &approved)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

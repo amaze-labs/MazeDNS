@@ -364,10 +364,18 @@ func (s *Store) migrateRewritesScope() error {
 			`ALTER TABLE rewrites_new RENAME TO rewrites`,
 		}
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate rewrites scope: %w", err)
+	}
 	for _, q := range stmts {
-		if _, err := s.db.Exec(q); err != nil {
+		if _, err := tx.Exec(q); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("migrate rewrites scope: %w", err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate rewrites scope: %w", err)
 	}
 	return nil
 }

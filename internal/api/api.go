@@ -119,6 +119,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
 		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
+		mux.HandleFunc("PUT /api/rewrites/{id}", s.requireRole(roleAdmin, s.updateRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
 
 		// Managed lists + global block-pause ("protection").
@@ -1104,9 +1105,11 @@ func (s *Server) listRewrites(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Domain string `json:"domain"`
-		RRType string `json:"rrtype"`
-		Value  string `json:"value"`
+		Domain      string   `json:"domain"`
+		RRType      string   `json:"rrtype"`
+		Value       string   `json:"value"`
+		ScopeType   string   `json:"scope_type"`
+		ScopeValues []string `json:"scope_values"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -1128,13 +1131,84 @@ func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "wildcards must be a single leading label, e.g. *.example.com")
 		return
 	}
-	id, err := s.store.AddRewrite(domain, in.RRType, in.Value)
+	scopeType, valsJSON, err := store.CanonicalScope(in.ScopeType, in.ScopeValues)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if conflict, err := s.store.RewriteScopeConflict(domain, in.RRType, scopeType, valsJSON, 0); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if conflict {
+		writeError(w, http.StatusConflict, "another rewrite for this domain already targets overlapping "+scopeType)
+		return
+	}
+	id, err := s.store.AddRewriteScoped(domain, in.RRType, in.Value, scopeType, in.ScopeValues)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.afterChange()
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "domain": domain, "rrtype": in.RRType, "value": in.Value})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "domain": domain, "rrtype": in.RRType, "value": in.Value, "scope_type": scopeType, "scope_values": in.ScopeValues})
+}
+
+// updateRewrite edits a rewrite's value, enabled flag, and scope in place, so
+// re-scoping doesn't require delete-and-recreate.
+func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in struct {
+		Value       string   `json:"value"`
+		Enabled     bool     `json:"enabled"`
+		ScopeType   string   `json:"scope_type"`
+		ScopeValues []string `json:"scope_values"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if in.Value == "" {
+		writeError(w, http.StatusBadRequest, "value required")
+		return
+	}
+	scopeType, valsJSON, err := store.CanonicalScope(in.ScopeType, in.ScopeValues)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The domain+rrtype being edited are needed for the overlap check.
+	rws, err := s.store.ListRewrites()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var cur *store.Rewrite
+	for i := range rws {
+		if rws[i].ID == id {
+			cur = &rws[i]
+			break
+		}
+	}
+	if cur == nil {
+		writeError(w, http.StatusNotFound, "rewrite not found")
+		return
+	}
+	if conflict, err := s.store.RewriteScopeConflict(cur.Domain, cur.RRType, scopeType, valsJSON, id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if conflict {
+		writeError(w, http.StatusConflict, "another rewrite for this domain already targets overlapping "+scopeType)
+		return
+	}
+	if err := s.store.UpdateRewrite(id, in.Value, in.Enabled, scopeType, in.ScopeValues); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.afterChange()
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "value": in.Value, "enabled": in.Enabled, "scope_type": scopeType, "scope_values": in.ScopeValues})
 }
 
 func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {

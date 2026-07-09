@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,22 +44,21 @@ func (s *Server) validateForwarderInput(w http.ResponseWriter, suffix string, up
 		return "", "", "", false
 	}
 	for _, u := range upstreams {
-		if _, err := resolver.ParseUpstream(u, 5*time.Second); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid upstream "+u+": "+err.Error())
+		spec := strings.TrimSpace(u)
+		if spec == "" {
+			writeError(w, http.StatusBadRequest, "upstream must not be empty")
 			return "", "", "", false
 		}
-		// Additional validation: ensure the upstream is in a valid format by attempting
-		// to parse it as host:port. This catches malformed addresses like "host::"
-		spec := u
-		if !strings.HasPrefix(spec, "http") && !strings.HasPrefix(spec, "tls://") {
-			// For plain upstreams, validate the host:port after port assignment
-			if idx := strings.LastIndex(spec, ":"); idx >= 0 {
-				// Already has a port-like component
-				if _, _, err := net.SplitHostPort(spec); err != nil {
-					writeError(w, http.StatusBadRequest, "invalid upstream "+u+": "+err.Error())
-					return "", "", "", false
-				}
-			}
+		// Embedded whitespace is unambiguously malformed in every documented format
+		// (plain host:port, udp://, tcp://, tls://host:port#name, https://url) and
+		// ParseUpstream's ensurePort fallback never errors on it, so catch it here.
+		if strings.ContainsAny(spec, " \t") {
+			writeError(w, http.StatusBadRequest, "invalid upstream "+spec)
+			return "", "", "", false
+		}
+		if _, err := resolver.ParseUpstream(spec, 5*time.Second); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid upstream "+u+": "+err.Error())
+			return "", "", "", false
 		}
 	}
 	st, valsJSON, err := store.CanonicalScope(scopeType, scopeValues)

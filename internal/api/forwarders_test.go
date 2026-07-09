@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,6 +38,20 @@ func TestForwardersAPI(t *testing.T) {
 	if rr := post(`{"suffix":"x.internal","upstreams":["not a real upstream::"]}`); rr.Code != http.StatusBadRequest {
 		t.Fatalf("bad upstream: got %d, want 400 (%s)", rr.Code, rr.Body.String())
 	}
+	// Documented upstream formats (plain, udp://, tcp://, tls://#name, https://) must
+	// all be accepted, not just the plain host:port form.
+	if rr := post(`{"suffix":"udp.internal","upstreams":["udp://1.1.1.1:53"]}`); rr.Code != http.StatusCreated {
+		t.Fatalf("udp:// upstream: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
+	if rr := post(`{"suffix":"tcp.internal","upstreams":["tcp://1.1.1.1:53"]}`); rr.Code != http.StatusCreated {
+		t.Fatalf("tcp:// upstream: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
+	if rr := post(`{"suffix":"tls.internal","upstreams":["tls://9.9.9.9:853#dns.quad9.net"]}`); rr.Code != http.StatusCreated {
+		t.Fatalf("tls:// upstream: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
+	if rr := post(`{"suffix":"https.internal","upstreams":["https://dns.quad9.net/dns-query"]}`); rr.Code != http.StatusCreated {
+		t.Fatalf("https:// upstream: got %d, want 201 (%s)", rr.Code, rr.Body.String())
+	}
 	// Wildcards make no sense in a suffix -> 400.
 	if rr := post(`{"suffix":"*.corp.internal","upstreams":["10.0.0.2:53"]}`); rr.Code != http.StatusBadRequest {
 		t.Fatalf("wildcard suffix: got %d, want 400", rr.Code)
@@ -68,6 +83,16 @@ func TestForwardersAPI(t *testing.T) {
 	if fws[0].Enabled || fws[0].Upstreams[0] != "10.0.0.3:53" {
 		t.Fatalf("update not applied: %+v", fws[0])
 	}
+	// PUT against a non-existent id -> 404.
+	nrr := httptest.NewRecorder()
+	nreq := httptest.NewRequest(http.MethodPut, "/api/forwarders/9999",
+		strings.NewReader(`{"upstreams":["10.0.0.3:53"],"enabled":false,"scope_type":"sites","scope_values":["office"]}`))
+	nreq.SetPathValue("id", "9999")
+	s.updateForwarder(nrr, nreq)
+	if nrr.Code != http.StatusNotFound {
+		t.Fatalf("update nonexistent: got %d, want 404 (%s)", nrr.Code, nrr.Body.String())
+	}
+
 	drr := httptest.NewRecorder()
 	dreq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/forwarders/%d", id), nil)
 	dreq.SetPathValue("id", fmt.Sprint(id))
@@ -75,7 +100,7 @@ func TestForwardersAPI(t *testing.T) {
 	if drr.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d", drr.Code)
 	}
-	if fws, _ := st.ListForwarders(); len(fws) != 0 {
+	if fws, _ := st.ListForwarders(); slices.ContainsFunc(fws, func(f store.Forwarder) bool { return f.ID == id }) {
 		t.Fatalf("row not deleted: %+v", fws)
 	}
 }

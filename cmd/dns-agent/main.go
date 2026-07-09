@@ -85,7 +85,7 @@ func main() {
 			})
 		},
 	})
-	res.ApplySettings(boot.LoadOrSeedSettings(st, cfg))
+	res.ApplySettings(boot.EffectiveSettings(st, cfg))
 	go res.MaintainUpstreams(context.Background())
 	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {
 		res.SetBlockPausedUntil(ts)
@@ -264,6 +264,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 	}
 	ag := cluster.NewAgent(cpURL, pinnedIP, nodeKey, cfg.Cluster.AdvertiseAddr,
 		cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
+	ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
 	if cfg.Cluster.JoinToken != "" {
 		ag.SetReenroll(reenroll)
 	}

@@ -147,6 +147,46 @@ func LoadOrSeedSettings(st *store.Store, cfg config.Config) resolver.Settings {
 	return s
 }
 
+// MergeForwarders overlays centrally-pushed conditional forwarders onto a
+// node's local settings. The central entry wins when both define the same
+// normalized suffix; non-conflicting local entries survive. The merge happens
+// at apply time only — central entries are never persisted into the node's
+// saved settings, so deleting one centrally restores local behavior.
+func MergeForwarders(s resolver.Settings, central []store.ForwardSpec) resolver.Settings {
+	if len(central) == 0 {
+		return s
+	}
+	merged := make([]resolver.ForwardGroup, 0, len(central)+len(s.Forwarders))
+	taken := make(map[string]bool, len(central))
+	for _, f := range central {
+		key := filter.Normalize(f.Suffix)
+		if key == "" || taken[key] {
+			continue
+		}
+		taken[key] = true
+		merged = append(merged, resolver.ForwardGroup{Suffix: key, Upstreams: f.Upstreams})
+	}
+	for _, g := range s.Forwarders {
+		if !taken[filter.Normalize(g.Suffix)] {
+			merged = append(merged, g)
+		}
+	}
+	s.Forwarders = merged
+	return s
+}
+
+// EffectiveSettings returns what the resolver should actually run: the node's
+// local (seeded/DB) settings with the centrally-pushed forwarders merged in.
+func EffectiveSettings(st *store.Store, cfg config.Config) resolver.Settings {
+	s := LoadOrSeedSettings(st, cfg)
+	fws, err := st.ClusterForwarders()
+	if err != nil {
+		slog.Warn("load cluster forwarders", "err", err)
+		return s
+	}
+	return MergeForwarders(s, fws)
+}
+
 // ListCategory derives a blocklist's category label from its filename, e.g.
 // "/etc/mazedns/stevenblack.hosts" -> "stevenblack". This keeps file-sourced
 // blocks separate from the user's "custom" rules. Falls back to "blocklist".

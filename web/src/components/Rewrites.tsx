@@ -16,12 +16,15 @@ export default function Rewrites() {
   const [fwdScope, setFwdScope] = useState<Scope>(ALL_SCOPE)
   const [fwdErr, setFwdErr] = useState('')
 
-  const [nodes, setNodes] = useState<string[]>([])
-  const [sites, setSites] = useState<string[]>([])
+  const [nodes, setNodes] = useState<string[] | null>(null)
+  const [sites, setSites] = useState<string[] | null>(null)
 
   const load = () => {
     api.rewrites().then(setRows).catch((e) => setErr(e.message))
-    api.forwarders().then(setFwds).catch(() => setFwds([]))
+    api.forwarders().then((f) => {
+      setFwds(f)
+      setFwdErr('')
+    }).catch((e) => setFwdErr(e.message))
   }
   useEffect(() => {
     load()
@@ -101,7 +104,7 @@ export default function Rewrites() {
           <option>CNAME</option>
         </select>
         <input placeholder="value (IP or target)" value={value} onChange={(e) => setValue(e.target.value)} />
-        <ScopePicker value={scope} onChange={setScope} nodes={nodes} sites={sites} />
+        <ScopePicker value={scope} onChange={setScope} nodes={nodes ?? []} sites={sites ?? []} />
         <button type="submit">Add</button>
       </form>
       <table>
@@ -124,7 +127,7 @@ export default function Rewrites() {
                 {scopeBadge(
                   r.scope_type,
                   r.scope_values,
-                  r.scope_type === 'nodes' ? nodes : r.scope_type === 'sites' ? sites : undefined,
+                  r.scope_type === 'nodes' ? nodes ?? undefined : r.scope_type === 'sites' ? sites ?? undefined : undefined,
                 )}
               </td>
               <td>
@@ -157,7 +160,7 @@ export default function Rewrites() {
           value={upstreams}
           onChange={(e) => setUpstreams(e.target.value)}
         />
-        <ScopePicker value={fwdScope} onChange={setFwdScope} nodes={nodes} sites={sites} />
+        <ScopePicker value={fwdScope} onChange={setFwdScope} nodes={nodes ?? []} sites={sites ?? []} />
         <button type="submit">Add</button>
       </form>
       <table>
@@ -179,7 +182,7 @@ export default function Rewrites() {
                 {scopeBadge(
                   f.scope_type,
                   f.scope_values,
-                  f.scope_type === 'nodes' ? nodes : f.scope_type === 'sites' ? sites : undefined,
+                  f.scope_type === 'nodes' ? nodes ?? undefined : f.scope_type === 'sites' ? sites ?? undefined : undefined,
                 )}
               </td>
               <td>

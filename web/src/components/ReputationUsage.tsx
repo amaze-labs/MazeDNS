@@ -6,6 +6,7 @@ import type { ClassifierStatus, ReputationUsageDay } from '../api'
 const SERVICES: Record<string, { label: string; defaultLimit: number; note: string }> = {
   virustotal: { label: 'VirusTotal', defaultLimit: 500, note: 'free tier ≈ 500 lookups/day' },
   abuseipdb: { label: 'AbuseIPDB', defaultLimit: 1000, note: 'free tier = 1000 checks/day' },
+  opentip: { label: 'Kaspersky OpenTIP', defaultLimit: 200, note: 'free tier ≈ 200 lookups/day' },
 }
 
 const todayUTC = () => new Date().toISOString().slice(0, 10)
@@ -29,7 +30,6 @@ function ServiceQuota({ serviceKey, rows }: { serviceKey: string; rows: Reputati
   const remaining = Math.max(0, limit - used)
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
   const tone = barTone(pct, rateLimited > 0)
-  const maxCalls = mine.reduce((m, r) => Math.max(m, r.calls), 0)
 
   return (
     <div className="quota">
@@ -55,26 +55,18 @@ function ServiceQuota({ serviceKey, rows }: { serviceKey: string; rows: Reputati
         {errors > 0 && <span className="warn-text">{errors.toLocaleString()} errors</span>}
         {rateLimited > 0 && <span className="badge blocked">⚠ rate-limited ×{rateLimited}</span>}
       </div>
-      {maxCalls > 0 && (
-        <div className="quota-history">
-          {[...mine].reverse().map((r) => (
-            <span key={r.day} className="qh-bar" title={`${r.day}: ${r.calls} calls`}>
-              <i style={{ height: `${Math.max(4, (r.calls / maxCalls) * 100)}%` }} className={r.rate_limited > 0 ? 'rl' : ''} />
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
 
-// ReputationUsage shows how close the VirusTotal / AbuseIPDB keys are to their
-// daily quota — rendered only for services the user has enabled.
+// ReputationUsage shows how close the VirusTotal / AbuseIPDB / OpenTIP keys are
+// to their daily quota — rendered only for services the user has enabled.
 export default function ReputationUsage({ info }: { info: ClassifierStatus }) {
   const rows = info.reputation_usage ?? []
   const enabled = [
     info.settings.vt_enabled && 'virustotal',
     info.settings.abuseipdb_enabled && 'abuseipdb',
+    info.settings.opentip_enabled && 'opentip',
   ].filter(Boolean) as string[]
   if (enabled.length === 0) return null
   return (

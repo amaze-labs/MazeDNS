@@ -52,17 +52,21 @@ export interface Forwarder {
 }
 
 export interface Node {
-  name: string
+  id: string // immutable server-generated UUID (identity; read-only)
+  name: string // mutable display label
   key_prefix: string
   address: string
   version: string
   expected_version?: string
+  version: string // replicated-CONFIG hash the node last applied (rules sync state)
+  app_version: string // running binary build version ('' = agent predates version reporting)
   last_seen: number
   created_at: number
+  key_issued_at: number // when the current node key was issued (rotation display)
   maintenance: boolean
   approved: boolean // admitted to the cluster (false = pending admin approval)
   site: string // site grouping ('' = unassigned)
-  role: string // '' | 'primary' | 'backup' (advisory)
+  role: string // '' | 'primary' | 'secondary' | 'backup' (advisory)
   total: number
   blocked: number
   cached: number
@@ -71,10 +75,34 @@ export interface Node {
   errors: number
 }
 
+// EnrollKey is a UI-managed cluster enrollment secret. The secret itself is only
+// ever returned once, at creation.
+export interface EnrollKey {
+  id: string
+  name: string
+  key_prefix: string
+  created_at: number
+  created_by: string
+  expires_at: number // 0 = never
+  max_uses: number // 0 = unlimited
+  use_count: number
+  revoked: boolean
+  status: 'active' | 'expired' | 'exhausted' | 'revoked'
+}
+
 export interface Site {
   name: string
   description: string
   created_at: number
+}
+
+// RevokedNode is a tombstone for a node removed with revocation — its agent is
+// refused at re-enrollment until un-revoked.
+export interface RevokedNode {
+  id: string
+  name: string
+  revoked_at: number
+  revoked_by: string
 }
 
 export interface SessionUser {
@@ -93,6 +121,55 @@ export interface AuthInfo {
   cluster_enabled: boolean
   classifier_available: boolean
   classifier_enabled: boolean
+  setup_required: boolean
+}
+
+// CPSettings mirrors store.CPSettings (control-plane runtime settings). The OIDC
+// client secret is write-only: never returned; send empty to keep it unchanged.
+export interface OIDCSettings {
+  enabled: boolean
+  issuer: string
+  client_id: string
+  client_secret: string
+  redirect_url: string
+  scopes: string[]
+  groups_claim: string
+  admin_group: string
+  admin_email: string
+  disable_password_login: boolean
+  auto_login: boolean
+}
+
+// SetupCompleteRequest is the first-boot wizard payload. method "local" creates a
+// local admin (username+password). method "sso" configures OIDC; break_glass keeps
+// a local admin (username+password) alongside SSO as a recovery account.
+export interface SetupCompleteRequest {
+  method: 'local' | 'sso'
+  username?: string
+  password?: string
+  break_glass?: boolean
+  oidc?: OIDCSettings
+}
+export interface CPSettings {
+  session_ttl_sec: number
+  oidc: OIDCSettings
+  require_approval: boolean
+  key_max_age_sec: number
+  key_grace_sec: number
+  advertise_addr: string
+  login_rate_attempts: number
+  login_rate_window_sec: number
+  // Metrics scrape token: hash is never returned (write-only via generate/clear
+  // endpoints); prefix is display-safe.
+  metrics_scrape_token_hash: string
+  metrics_scrape_token_prefix: string
+  query_log: boolean
+}
+export interface AuditEntry {
+  ts: number
+  user: string
+  action: string
+  detail: string
 }
 
 export interface ScoreFactor {
@@ -176,6 +253,8 @@ export interface ClassifierSettings {
   vt_api_key: string
   abuseipdb_enabled: boolean
   abuseipdb_api_key: string
+  opentip_enabled: boolean
+  opentip_api_key: string
 }
 
 export interface LLMUsageDay {
@@ -196,7 +275,7 @@ export interface ThreatFeed {
 
 export interface ReputationUsageDay {
   day: string
-  service: string // "virustotal" | "abuseipdb"
+  service: string // "virustotal" | "abuseipdb" | "opentip"
   calls: number
   errors: number
   rate_limited: number
@@ -229,6 +308,7 @@ export interface ClassifierStatus {
   has_api_key: boolean
   has_vt_key: boolean
   has_abuseipdb_key: boolean
+  has_opentip_key: boolean
 }
 
 export interface SeriesPoint {
@@ -383,6 +463,32 @@ const nodesParam = (nodes?: string[]) =>
   nodes && nodes.length ? `&nodes=${nodes.map(encodeURIComponent).join(',')}` : ''
 
 export const api = {
+  // first-boot setup wizard
+  setupStatus: () => fetch('/api/setup/status').then(j<{ setup_required: boolean }>),
+  setupComplete: (body: SetupCompleteRequest) =>
+    fetch('/api/setup/complete', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(body),
+    }).then(j<{ username: string; role: string; authenticated: boolean }>),
+  // control-plane runtime settings
+  cpSettings: () =>
+    fetch('/api/settings/cp').then(
+      j<{ settings: CPSettings; oidc_has_client_secret: boolean; has_metrics_scrape_token: boolean }>,
+    ),
+  saveCPSettings: (s: CPSettings) =>
+    fetch('/api/settings/cp', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(
+      j<{ settings: CPSettings; oidc_has_client_secret: boolean; has_metrics_scrape_token: boolean }>,
+    ),
+  generateMetricsToken: () =>
+    fetch('/api/settings/metrics-token', { method: 'POST', headers: jsonHeaders }).then(
+      j<{ token: string; prefix: string }>,
+    ),
+  clearMetricsToken: () =>
+    fetch('/api/settings/metrics-token', { method: 'DELETE' }).then((r) => {
+      if (!r.ok) throw new Error('failed to clear token')
+    }),
+  settingsAudit: () => fetch('/api/settings/audit').then(j<AuditEntry[]>),
   // auth
   authInfo: () => fetch('/api/auth/info').then(j<AuthInfo>),
   me: async (): Promise<SessionUser | null> => {
@@ -627,29 +733,50 @@ export const api = {
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
+  // Control plane's own build version (the up-to-date reference for agents) and
+  // the current replicated-config version (the rules hash agents should carry).
+  serverVersion: () => fetch('/api/version').then(j<{ version: string; config_version: string }>),
   addNode: (name: string) =>
-    fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ name: string; key: string }>),
-  renewNodeKey: (name: string) =>
-    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/key`, { method: 'POST' }).then(j<{ name: string; key: string }>),
-  deleteNode: (name: string) => fetch(`/api/cluster/nodes/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  setNodeMaintenance: (name: string, on: boolean) =>
-    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/maintenance`, {
+    fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ id: string; name: string; key: string }>),
+  renewNodeKey: (id: string) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/key`, { method: 'POST' }).then(j<{ id: string; key: string }>),
+  deleteNode: (id: string, revoke = true) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }),
+  listRevoked: () => fetch('/api/cluster/revoked').then(j<RevokedNode[]>),
+  unrevokeNode: (id: string) => fetch(`/api/cluster/revoked/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  renameNode: (id: string, name: string) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/name`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name }),
+    }).then(j),
+  setNodeMaintenance: (id: string, on: boolean) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/maintenance`, {
       method: 'PUT',
       headers: jsonHeaders,
       body: JSON.stringify({ on }),
     }).then(j),
-  approveNode: (name: string, approved: boolean) =>
-    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/approve`, {
+  approveNode: (id: string, approved: boolean) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/approve`, {
       method: 'PUT',
       headers: jsonHeaders,
       body: JSON.stringify({ approved }),
     }).then(j),
+  // enrollment keys (UI-managed)
+  enrollKeys: () => fetch('/api/cluster/enroll-keys').then(j<EnrollKey[]>),
+  createEnrollKey: (name: string, ttl_hours: number, max_uses: number) =>
+    fetch('/api/cluster/enroll-keys', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, ttl_hours, max_uses }),
+    }).then(j<{ id: string; name: string; key: string; key_prefix: string; expires_at: number; max_uses: number }>),
+  revokeEnrollKey: (id: string) => fetch(`/api/cluster/enroll-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
   createSite: (name: string, description = '') =>
     fetch('/api/cluster/sites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name, description }) }).then(j),
   deleteSite: (name: string) => fetch(`/api/cluster/sites/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(j),
-  setNodeSite: (name: string, site: string, role: string) =>
-    fetch(`/api/cluster/nodes/${encodeURIComponent(name)}/site`, {
+  setNodeSite: (id: string, site: string, role: string) =>
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/site`, {
       method: 'PUT',
       headers: jsonHeaders,
       body: JSON.stringify({ site, role }),

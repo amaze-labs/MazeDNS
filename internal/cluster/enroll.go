@@ -4,11 +4,25 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// ErrNodeRevoked is returned by Enroll when the control plane refuses the presented
+// node id because it was revoked (an admin removed it with revocation). The agent
+// treats this as terminal — it stops re-enrolling instead of retrying every poll.
+var ErrNodeRevoked = errors.New("node was revoked on the control plane")
+
+// ErrNameInUse is returned by Enroll when this agent's name belongs to a node the
+// control plane still considers alive. The agent waits and retries: during an
+// image update the old container stops polling within the control plane's reclaim
+// window, after which the same enrollment reclaims the existing identity instead
+// of creating a "<name>-2" duplicate.
+var ErrNameInUse = errors.New("node name is in use by a live node")
 
 // NewEnrollClient returns an HTTP client suitable for enrollment and, if reused,
 // config polling. When cpIP is set the control plane is dialed at that fixed IP
@@ -20,6 +34,7 @@ func NewEnrollClient(cpIP string) *http.Client {
 
 // EnrollResult is the control plane's reply to a self-enrollment request.
 type EnrollResult struct {
+	ID       string `json:"id"` // the node's immutable server-generated identity
 	Name     string `json:"name"`
 	Key      string `json:"key"`
 	Approved bool   `json:"approved"`
@@ -29,13 +44,22 @@ type EnrollResult struct {
 }
 
 // Enroll self-registers an agent with the control plane using the shared join
-// token, returning the per-node API key the control plane issued. The agent
-// persists that key and authenticates all later config pulls with it. Re-enrolling
-// under the same name rotates the key, which lets an agent that lost its local key
-// recover without operator action.
-func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken string) (EnrollResult, error) {
+// token, returning the node's immutable id and per-node API key. The agent
+// persists both and authenticates all later config pulls with the key.
+//
+// nodeID and nodeKey are the agent's currently-persisted identity, sent so a
+// re-enrollment (after a hostname change or a rejected key) re-attaches to the
+// SAME node: the control plane rotates the existing node's key only when the
+// presented nodeKey proves ownership of nodeID. They are empty on first
+// enrollment, which creates a new node (or reclaims an offline node with the same
+// name). suffixOK opts in to the "<name>-2" de-duplication when the name is held
+// by a live node — pass it only after ErrNameInUse retries are exhausted. See the
+// control plane's clusterEnroll for the full security model.
+func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken, nodeID, nodeKey string, suffixOK bool) (EnrollResult, error) {
 	var res EnrollResult
-	body, err := json.Marshal(map[string]string{"name": name, "token": joinToken})
+	body, err := json.Marshal(map[string]any{
+		"name": name, "token": joinToken, "node_id": nodeID, "node_key": nodeKey, "suffix_ok": suffixOK,
+	})
 	if err != nil {
 		return res, err
 	}
@@ -51,7 +75,19 @@ func Enroll(ctx context.Context, client *http.Client, cpURL, name, joinToken str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return res, statusError(resp)
+		// A revoked node is refused with 403 {"revoked":true}. Surface it as a distinct
+		// terminal error so the agent stops re-enrolling (vs. a transient rejection).
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if resp.StatusCode == http.StatusForbidden && bytes.Contains(body, []byte(`"revoked":true`)) {
+			return res, ErrNodeRevoked
+		}
+		if resp.StatusCode == http.StatusConflict && bytes.Contains(body, []byte(`"name_in_use":true`)) {
+			return res, ErrNameInUse
+		}
+		if msg := strings.TrimSpace(string(body)); msg != "" {
+			return res, fmt.Errorf("master returned status %d: %s", resp.StatusCode, msg)
+		}
+		return res, fmt.Errorf("master returned status %d", resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return res, err

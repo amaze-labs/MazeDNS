@@ -26,8 +26,12 @@ docker logs mazedns-agent --tail 50          # or: kubectl logs -n mazedns ds/dn
 
 Common causes:
 
-- **Join token mismatch.** The agent's `MAZEDNS_JOIN_TOKEN` must equal the control
-  plane's. The control plane must have `MAZEDNS_CLUSTER_ENABLED=true`.
+- **Enrollment key mismatch or missing.** The agent's `MAZEDNS_JOIN_TOKEN` must be a
+  valid enrollment key created on the control plane (Cluster → Enrollment keys).
+  Clustering has no enable flag — the control plane always serves cluster
+  endpoints, and the agent joins automatically once `MAZEDNS_CP_URL` and a
+  credential (an enrollment key, or a per-node key via `MAZEDNS_NODE_KEY`) are set.
+  If neither is set the agent runs standalone and never appears in the cluster.
 - **Can't reach the control plane.** The logs show the CP hostname failing to
   resolve or connect. If the agent is the only DNS on its network it can't resolve
   the CP's FQDN — pin the IP with `MAZEDNS_CP_IP=<cp-ip>` (TLS still verifies the

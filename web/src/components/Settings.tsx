@@ -8,6 +8,7 @@ import {
   type NetbirdSettings,
   type VMExportSettings,
   type VLExportSettings,
+  type CPSettings,
 } from '../api'
 import Spinner from './Spinner'
 
@@ -122,9 +123,54 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [vl, setVl] = useState<VLExportSettings | null>(null)
   const [vlHasPassword, setVlHasPassword] = useState(false)
 
+  // Control-plane runtime settings (SSO / session / cluster policy). Own endpoint.
+  const [cp, setCp] = useState<CPSettings | null>(null)
+  const [oidcHasSecret, setOidcHasSecret] = useState(false)
+  const [hasMetricsToken, setHasMetricsToken] = useState(false)
+  const [newScrapeToken, setNewScrapeToken] = useState('')
+  const [cpSaving, setCpSaving] = useState(false)
+  const [cpMsg, setCpMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
   // Which settings view is shown. The page is split into tabs so each concern
   // has its own focused page; one Save button below still persists them all.
-  const [view, setView] = useState<'resolver' | 'classification' | 'integrations' | 'backup'>('resolver')
+  const [view, setView] = useState<'resolver' | 'access' | 'classification' | 'integrations' | 'backup'>('resolver')
+
+  const saveCP = async () => {
+    if (!cp) return
+    setCpSaving(true)
+    setCpMsg(null)
+    try {
+      const r = await api.saveCPSettings(cp)
+      setCp(r.settings)
+      setOidcHasSecret(r.oidc_has_client_secret)
+      setHasMetricsToken(r.has_metrics_scrape_token)
+      setCpMsg({ ok: true, text: 'Access settings saved and applied.' })
+    } catch (e: any) {
+      setCpMsg({ ok: false, text: e.message })
+    } finally {
+      setCpSaving(false)
+    }
+  }
+
+  const genMetricsToken = async () => {
+    try {
+      const r = await api.generateMetricsToken()
+      setNewScrapeToken(r.token)
+      setHasMetricsToken(true)
+    } catch (e: any) {
+      setCpMsg({ ok: false, text: e.message })
+    }
+  }
+
+  const clearMetricsToken = async () => {
+    try {
+      await api.clearMetricsToken()
+      setNewScrapeToken('')
+      setHasMetricsToken(false)
+    } catch (e: any) {
+      setCpMsg({ ok: false, text: e.message })
+    }
+  }
 
   const load = async () => {
     try {
@@ -151,6 +197,14 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setNbInfo({ has_token: r.has_token, peer_count: r.peer_count })
       })
       .catch(() => setNb(null))
+    api
+      .cpSettings()
+      .then((r) => {
+        setCp(r.settings)
+        setOidcHasSecret(r.oidc_has_client_secret)
+        setHasMetricsToken(r.has_metrics_scrape_token)
+      })
+      .catch(() => setCp(null))
     api
       .metricsExport()
       .then((r) => {
@@ -327,14 +381,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     <div className="settings">
       <h2>Settings</h2>
       <p className="muted">
-        Operational settings are stored in the database and applied live — no restart needed.
-        Bootstrap options (listen addresses, TLS, admin credentials, SSO) stay in the config file / env.
+        Settings are stored in the database and applied live — no restart needed. Only bootstrap options (database,
+        API listen address/port, log level) stay in the config file / env.
       </p>
       {err && <div className="error">{err}</div>}
 
       <div className="settings-subnav" role="tablist">
         {([
           { id: 'resolver', label: 'Resolver' },
+          { id: 'access', label: 'Access & SSO' },
           ...(cls ? [{ id: 'classification', label: 'Classification' }] : []),
           { id: 'integrations', label: 'Integrations' },
           { id: 'backup', label: 'Backup & restore' },
@@ -356,6 +411,158 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           Connect MazeDNS to external services: NetBird for client identity, and VictoriaMetrics / VictoriaLogs for
           long-term metrics and query-log retention.
         </p>
+      )}
+
+      {view === 'access' && cp && (
+        <>
+          {cpMsg && <div className={cpMsg.ok ? 'ok-msg' : 'error'}>{cpMsg.text}</div>}
+          <details className="settings-card" open>
+            <summary>Single sign-on (OIDC / SSO)</summary>
+            <label className="setup-check">
+              <input
+                type="checkbox"
+                checked={cp.oidc.enabled}
+                onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, enabled: e.target.checked } })}
+              />
+              Enable SSO login via an OpenID Connect provider
+            </label>
+            {cp.oidc.enabled && (
+              <div className="form-grid">
+                <label>
+                  Issuer URL
+                  <input value={cp.oidc.issuer} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, issuer: e.target.value } })} />
+                </label>
+                <label>
+                  Client ID
+                  <input value={cp.oidc.client_id} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, client_id: e.target.value } })} />
+                </label>
+                <label>
+                  Client secret
+                  <input
+                    type="password"
+                    placeholder={oidcHasSecret ? '•••••••• (unchanged)' : ''}
+                    value={cp.oidc.client_secret}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, client_secret: e.target.value } })}
+                  />
+                </label>
+                <label>
+                  Redirect URL
+                  <input value={cp.oidc.redirect_url} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, redirect_url: e.target.value } })} />
+                </label>
+                <label>
+                  Groups claim
+                  <input value={cp.oidc.groups_claim} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, groups_claim: e.target.value } })} />
+                </label>
+                <label>
+                  Admin group
+                  <input value={cp.oidc.admin_group} onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, admin_group: e.target.value } })} />
+                </label>
+                <label>
+                  Admin email
+                  <input
+                    value={cp.oidc.admin_email}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, admin_email: e.target.value } })}
+                    placeholder="you@example.com — always granted admin on login"
+                  />
+                </label>
+                <label className="setup-check">
+                  <input
+                    type="checkbox"
+                    checked={cp.oidc.disable_password_login}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, disable_password_login: e.target.checked } })}
+                  />
+                  Disable local password login (SSO only)
+                </label>
+                <label className="setup-check">
+                  <input
+                    type="checkbox"
+                    checked={cp.oidc.auto_login}
+                    onChange={(e) => setCp({ ...cp, oidc: { ...cp.oidc, auto_login: e.target.checked } })}
+                  />
+                  Redirect straight to the SSO provider
+                </label>
+              </div>
+            )}
+          </details>
+
+          <details className="settings-card" open>
+            <summary>Sessions &amp; login</summary>
+            <label>
+              Session lifetime (hours)
+              <input
+                type="number"
+                min={1}
+                value={Math.round(cp.session_ttl_sec / 3600)}
+                onChange={(e) => setCp({ ...cp, session_ttl_sec: Math.max(1, Number(e.target.value)) * 3600 })}
+              />
+            </label>
+            <div className="form-grid">
+              <label>
+                Login attempts per window (0 = no limit)
+                <input
+                  type="number"
+                  min={0}
+                  value={cp.login_rate_attempts}
+                  onChange={(e) => setCp({ ...cp, login_rate_attempts: Math.max(0, Number(e.target.value)) })}
+                />
+              </label>
+              <label>
+                Login window (seconds)
+                <input
+                  type="number"
+                  min={1}
+                  value={cp.login_rate_window_sec}
+                  onChange={(e) => setCp({ ...cp, login_rate_window_sec: Math.max(1, Number(e.target.value)) })}
+                />
+              </label>
+            </div>
+            <p className="muted small">
+              Failed and successful login attempts are throttled per source IP and per username. Applied live.
+            </p>
+          </details>
+
+          <details className="settings-card" open>
+            <summary>Cluster policy</summary>
+            <label className="setup-check">
+              <input
+                type="checkbox"
+                checked={cp.require_approval}
+                onChange={(e) => setCp({ ...cp, require_approval: e.target.checked })}
+              />
+              Require admin approval before a new agent serves DNS
+            </label>
+            <div className="form-grid">
+              <label>
+                Node key max age (days, 0 = 30d default)
+                <input
+                  type="number"
+                  min={0}
+                  value={Math.round(cp.key_max_age_sec / 86400)}
+                  onChange={(e) => setCp({ ...cp, key_max_age_sec: Math.max(0, Number(e.target.value)) * 86400 })}
+                />
+              </label>
+              <label>
+                Key rotation grace (minutes)
+                <input
+                  type="number"
+                  min={0}
+                  value={Math.round(cp.key_grace_sec / 60)}
+                  onChange={(e) => setCp({ ...cp, key_grace_sec: Math.max(0, Number(e.target.value)) * 60 })}
+                />
+              </label>
+              <label>
+                Advertise address (optional)
+                <input value={cp.advertise_addr} onChange={(e) => setCp({ ...cp, advertise_addr: e.target.value })} />
+              </label>
+            </div>
+          </details>
+
+          <div className="settings-actions">
+            <button className="btn primary" onClick={saveCP} disabled={cpSaving}>
+              {cpSaving ? 'Saving…' : 'Save access settings'}
+            </button>
+          </div>
+        </>
       )}
 
       {view === 'resolver' && (
@@ -815,6 +1022,32 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               />
             </div>
           )}
+          <div className="field">
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={cls.opentip_enabled}
+                onChange={(e) => setCls({ ...cls, opentip_enabled: e.target.checked })}
+              />
+              <span className="track">
+                <span className="thumb" />
+              </span>
+              <span className="toggle-label">
+                Kaspersky OpenTIP — check the domain's threat zone (opentip.kaspersky.com)
+              </span>
+            </label>
+          </div>
+          {cls.opentip_enabled && (
+            <div className="field">
+              <label>Kaspersky OpenTIP API key {clsInfo?.has_opentip_key && <span className="badge allow">key set</span>}</label>
+              <input
+                type="password"
+                value={cls.opentip_api_key}
+                onChange={(e) => setCls({ ...cls, opentip_api_key: e.target.value })}
+                placeholder={clsInfo?.has_opentip_key ? '•••••••••••••• (saved — leave blank to keep)' : 'paste your OpenTIP API token'}
+              />
+            </div>
+          )}
 
           <div className="settings-actions">
             <button className="btn" onClick={testClassifier} disabled={testing}>
@@ -869,6 +1102,41 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </button>
           </div>
           {nbMsg && <div className={nbMsg.ok ? 'ok-msg' : 'error'}>{nbMsg.text}</div>}
+        </details>
+      )}
+
+      {cp && (
+        <details className="settings-card" open>
+          <summary>Metrics scrape token (/metrics)</summary>
+          <p className="muted">
+            When set, the control plane's <code>/metrics</code> endpoint requires{' '}
+            <code>Authorization: Bearer &lt;token&gt;</code>. When unset, <code>/metrics</code> is open. The token is shown
+            once on generation and stored hashed.
+          </p>
+          {newScrapeToken ? (
+            <div className="ok-msg">
+              <strong>New scrape token — copy it now, it won't be shown again:</strong>
+              <pre className="keybox">{newScrapeToken}</pre>
+              <p className="muted small">
+                Prometheus: <code>authorization: {'{'} type: Bearer, credentials: &lt;token&gt; {'}'}</code> under the
+                scrape job.
+              </p>
+            </div>
+          ) : (
+            <p className="muted small">
+              Status: {hasMetricsToken ? `set (prefix ${cp.metrics_scrape_token_prefix}…)` : 'not set — /metrics is open'}
+            </p>
+          )}
+          <div className="setup-actions">
+            <button className="btn" onClick={genMetricsToken}>
+              {hasMetricsToken ? 'Regenerate token' : 'Generate token'}
+            </button>
+            {hasMetricsToken && (
+              <button className="btn ghost" onClick={clearMetricsToken}>
+                Clear (reopen /metrics)
+              </button>
+            )}
+          </div>
         </details>
       )}
 
@@ -1021,15 +1289,17 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       )}
 
       {/* One global save for every section above. */}
-      <div className="settings-savebar">
-        {ok && <span className="ok-inline">Saved &amp; applied.</span>}
-        <button className="btn ghost-danger" onClick={load} disabled={saving}>
-          Reset
-        </button>
-        <button className="btn primary" onClick={saveAll} disabled={saving}>
-          {saving ? 'Saving…' : 'Save changes'}
-        </button>
-      </div>
+      {view !== 'access' && view !== 'backup' && (
+        <div className="settings-savebar">
+          {ok && <span className="ok-inline">Saved &amp; applied.</span>}
+          <button className="btn ghost-danger" onClick={load} disabled={saving}>
+            Reset
+          </button>
+          <button className="btn primary" onClick={saveAll} disabled={saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

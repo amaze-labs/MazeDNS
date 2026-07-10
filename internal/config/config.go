@@ -53,6 +53,11 @@ type Config struct {
 	Database   Database    `yaml:"database"`
 	Log        Log         `yaml:"log"`
 	Metrics    Metrics     `yaml:"metrics"`
+
+	// Deprecations holds one-line notices for removed/ignored config keys and env
+	// vars encountered during Load. It is not serialized; callers log it after the
+	// logger is configured (Load runs before that).
+	Deprecations []string `yaml:"-"`
 }
 
 // Listen is the DNS listener address.
@@ -135,16 +140,21 @@ type API struct {
 	Port    int    `yaml:"port"`
 }
 
-// Auth configures authentication for the control plane and UI.
+// Auth configures authentication for the control plane and UI. Enabled is
+// bootstrap; SessionTTL and OIDC are seed-only (they populate the DB on first boot
+// and are edited in the UI thereafter). The first admin is created by the setup
+// wizard, not from config — Admin is retained only so an older file that still has
+// an `auth.admin:` block parses without error.
 type Auth struct {
 	Enabled    bool           `yaml:"enabled"`
 	SessionTTL Duration       `yaml:"session_ttl"`
-	Admin      AdminBootstrap `yaml:"admin"`
+	Admin      AdminBootstrap `yaml:"admin"` // deprecated/ignored: use the setup wizard or `reset-admin`
 	OIDC       OIDC           `yaml:"oidc"`
 }
 
-// AdminBootstrap seeds the first local admin (env overrides:
-// MAZEDNS_ADMIN_USERNAME / MAZEDNS_ADMIN_PASSWORD).
+// AdminBootstrap is a deprecated, ignored field (kept so old config files parse).
+// The first admin is created by the first-boot setup wizard; recover with the
+// `control-plane reset-admin` subcommand.
 type AdminBootstrap struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
@@ -165,6 +175,9 @@ type OIDC struct {
 	Scopes       []string `yaml:"scopes"`
 	GroupsClaim  string   `yaml:"groups_claim"`
 	AdminGroup   string   `yaml:"admin_group"`
+	// AdminEmail is the explicit bootstrap admin identity: the email (or subject)
+	// granted the admin role on every OIDC login, regardless of group membership.
+	AdminEmail string `yaml:"admin_email"`
 	// DisablePasswordLogin removes local username/password login when SSO is
 	// enabled (SSO becomes the only way in). Ignored if OIDC fails to initialize,
 	// so a broken provider can't lock everyone out.
@@ -202,29 +215,34 @@ type Classifier struct {
 	// WhoisEnabled enriches classifications with RDAP/WHOIS registration data
 	// (domain age etc.) as a signal for the model.
 	WhoisEnabled bool `yaml:"whois_enabled"`
-	// Reputation enrichment (optional, key-gated): VirusTotal (domain) + AbuseIPDB
-	// (resolved IP) corroborate verdicts.
+	// Reputation enrichment (optional, key-gated): VirusTotal (domain), AbuseIPDB
+	// (resolved IP), and Kaspersky OpenTIP (domain) corroborate verdicts.
 	VTEnabled        bool   `yaml:"vt_enabled"`
 	VTAPIKey         string `yaml:"vt_api_key"`
 	AbuseIPDBEnabled bool   `yaml:"abuseipdb_enabled"`
 	AbuseIPDBAPIKey  string `yaml:"abuseipdb_api_key"`
+	OpenTIPEnabled   bool   `yaml:"opentip_enabled"`
+	OpenTIPAPIKey    string `yaml:"opentip_api_key"`
 }
 
-// Cluster configures control-plane<->agent configuration replication. The
-// control plane serves cluster endpoints when enabled; each agent authenticates
-// with a per-node API key. Agents obtain that key automatically by self-enrolling
-// with the shared JoinToken, or it can be supplied directly via NodeKey.
+// Cluster configures control-plane<->agent configuration replication.
+// Clustering is core to MazeDNS, not an opt-in: the control plane always serves
+// cluster endpoints, and an agent joins automatically whenever a control plane is
+// configured (cp_url plus a credential). Each agent authenticates with a per-node
+// API key, obtained automatically by self-enrolling with an enrollment key
+// (JoinToken), or supplied directly via NodeKey.
 type Cluster struct {
-	Enabled bool `yaml:"enabled"`
 	// Control-plane side.
-	JoinToken       string `yaml:"join_token"`       // shared secret agents present to self-enroll ('' disables auto-join)
-	RequireApproval bool   `yaml:"require_approval"` // hold self-enrolled agents until an admin approves them
+	JoinToken       string   `yaml:"join_token"`       // DEPRECATED: enrollment keys are now UI-managed. If set, it is auto-imported once as a never-expiring DB enrollment key on boot (log warns). Prefer creating keys in the UI.
+	RequireApproval bool     `yaml:"require_approval"` // hold self-enrolled agents until an admin approves them
+	KeyMaxAge       Duration `yaml:"key_max_age"`      // control-plane: rotate a node's key once older than this (default 720h/30d; unset = default)
+	KeyGrace        Duration `yaml:"key_grace"`        // control-plane: overlap window a rotated-out node key stays valid (default 15m)
 
 	// Agent side.
 	CPURL     string   `yaml:"cp_url"`     // agent: control-plane base URL, e.g. http://control-plane:8080
 	MasterURL string   `yaml:"master_url"` // deprecated alias of cp_url
 	MasterIP  string   `yaml:"master_ip"`  // agent: pin the control-plane IP (skip DNS); TLS still uses the URL host
-	NodeName  string   `yaml:"node_name"`  // agent: name to enroll under (defaults to the hostname)
+	NodeName  string   `yaml:"node_name"`  // agent: INITIAL display label to enroll under (defaults to the hostname). Identity is a server-assigned UUID; this label is editable later in the UI and changing node_name afterwards does not change the node's identity.
 	NodeKey   string   `yaml:"node_key"`   // agent: per-node API key (auto-issued when using join_token)
 	Interval  Duration `yaml:"interval"`   // agent: snapshot poll interval
 	// AdvertiseAddr is the address other hosts use to reach this node's DNS (the
@@ -334,6 +352,17 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config: %w", err)
 	}
+	// cluster.enabled was removed: clustering is now automatic. yaml.Unmarshal
+	// silently drops the unknown key, so probe for it separately to warn.
+	var probe struct {
+		Cluster struct {
+			Enabled *bool `yaml:"enabled"`
+		} `yaml:"cluster"`
+	}
+	if yaml.Unmarshal(data, &probe) == nil && probe.Cluster.Enabled != nil {
+		cfg.Deprecations = append(cfg.Deprecations,
+			"config: cluster.enabled was removed and is ignored — clustering is automatic (an agent joins when cp_url and a credential are set)")
+	}
 	dir := filepath.Dir(path)
 	for i, f := range cfg.Filter.BlocklistFiles {
 		if !filepath.IsAbs(f) {
@@ -362,6 +391,14 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_API_ADDRESS"); v != "" {
 		cfg.API.Address = v
 	}
+	// MAZEDNS_API_PORT moves the HTTP API (/healthz, /metrics, UI on the control
+	// plane) — needed under host networking when :8080 is taken on the host, e.g.
+	// an agent sharing a host with the control plane.
+	if v := os.Getenv("MAZEDNS_API_PORT"); v != "" {
+		if p, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cfg.API.Port = p
+		}
+	}
 	if v := os.Getenv("MAZEDNS_DB_PATH"); v != "" {
 		cfg.Database.Path = v
 	}
@@ -380,22 +417,32 @@ func Load(path string) (Config, error) {
 	// Agent: control-plane URL (MAZEDNS_CP_URL, or the deprecated MAZEDNS_MASTER_URL).
 	if v := firstEnv("MAZEDNS_CP_URL", "MAZEDNS_MASTER_URL"); v != "" {
 		cfg.Cluster.CPURL = v
-		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_NODE_KEY"); v != "" {
 		cfg.Cluster.NodeKey = v
-		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_NODE_NAME"); v != "" {
 		cfg.Cluster.NodeName = v
 	}
-	// Agent: shared join token for self-enrollment.
+	// Agent: enrollment key for self-enrollment. MAZEDNS_JOIN_TOKEN keeps its name
+	// for compatibility; on the control plane its value is now a UI-created
+	// enrollment key (auto-imported if set via config — see cmd/control-plane).
 	if v := os.Getenv("MAZEDNS_JOIN_TOKEN"); v != "" {
 		cfg.Cluster.JoinToken = v
-		cfg.Cluster.Enabled = true
 	}
 	if v := os.Getenv("MAZEDNS_REQUIRE_APPROVAL"); v == "true" || v == "1" {
 		cfg.Cluster.RequireApproval = true
+	}
+	// Control-plane: per-node key rotation policy.
+	if v := os.Getenv("MAZEDNS_KEY_MAX_AGE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Cluster.KeyMaxAge = Duration(d)
+		}
+	}
+	if v := os.Getenv("MAZEDNS_KEY_GRACE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Cluster.KeyGrace = Duration(d)
+		}
 	}
 	if v := firstEnv("MAZEDNS_MASTER_IP", "MAZEDNS_CP_IP"); v != "" {
 		cfg.Cluster.MasterIP = v
@@ -403,8 +450,9 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_ADVERTISE_ADDR"); v != "" {
 		cfg.Cluster.AdvertiseAddr = v
 	}
-	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v == "true" || v == "1" {
-		cfg.Cluster.Enabled = true
+	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v != "" {
+		cfg.Deprecations = append(cfg.Deprecations,
+			"env: MAZEDNS_CLUSTER_ENABLED was removed and is ignored — clustering is automatic (an agent joins when MAZEDNS_CP_URL and a credential are set)")
 	}
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENABLED"); v == "true" || v == "1" {
 		cfg.Classifier.Enabled = true
@@ -454,6 +502,9 @@ func applyOIDCEnv(o *OIDC) {
 	}
 	if v := envClean("MAZEDNS_OIDC_ADMIN_GROUP"); v != "" {
 		o.AdminGroup = v
+	}
+	if v := envClean("MAZEDNS_OIDC_ADMIN_EMAIL"); v != "" {
+		o.AdminEmail = v
 	}
 	switch strings.ToLower(envClean("MAZEDNS_OIDC_DISABLE_PASSWORD_LOGIN")) {
 	case "true", "1":

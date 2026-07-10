@@ -1,11 +1,13 @@
 # Dev compose: builds the two images locally and runs a full cluster — a
 # control-plane (dashboard/API on :8080, no DNS) plus two DNS agents that
-# self-enroll with a shared join token and serve DNS.
+# self-enroll with an enrollment key and serve DNS.
 #
 #   make compose-dev            # or: docker compose up --build
 #
-# The agents auto-join via MAZEDNS_JOIN_TOKEN and appear in the Cluster tab with
-# no manual key handling. The dev token below is NOT secret — local testing only.
+# The control plane imports the dev MAZEDNS_JOIN_TOKEN below as an enrollment key;
+# the agents present it to auto-join and appear in the Cluster tab with no manual key
+# handling (the control plane rotates each node's key for you). Manage enrollment
+# keys in the UI (Cluster → Enrollment keys). The dev token is NOT secret.
 
 name: mazedns
 
@@ -20,10 +22,12 @@ services:
     environment:
       MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind the UI/API inside the container
       MAZEDNS_DB_PATH: "/data/mazedns.db"
-      MAZEDNS_ADMIN_USERNAME: "admin"
-      MAZEDNS_ADMIN_PASSWORD: "change-me-please"
-      MAZEDNS_CLUSTER_ENABLED: "true"
-      MAZEDNS_JOIN_TOKEN: "dev-join-token"    # agents present this to self-enroll
+      # The control plane always serves cluster endpoints (clustering has no enable
+      # flag). Dev seed: imported once as an enrollment key so the agents below can
+      # join. Complete the first-boot setup wizard first (no token — open the UI;
+      # until then the API, including agent enrollment, is locked). After the wizard
+      # the two agents auto-join and demo traffic flows.
+      MAZEDNS_JOIN_TOKEN: "dev-join-token"
       # Dev-only blocklist so the demo traffic shows blocked/category stats. The
       # production image ships no blocklist. (The control plane doesn't resolve,
       # but it seeds the shared rule set the agents replicate.)

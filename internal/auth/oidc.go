@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -16,6 +17,7 @@ type OIDCProvider struct {
 	verifier             *oidc.IDTokenVerifier
 	groupsClaim          string
 	adminGroup           string
+	adminEmail           string
 	disablePasswordLogin bool
 	autoLogin            bool
 }
@@ -60,6 +62,7 @@ func NewOIDC(ctx context.Context, cfg config.OIDC) (*OIDCProvider, error) {
 		verifier:             provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		groupsClaim:          groupsClaim,
 		adminGroup:           cfg.AdminGroup,
+		adminEmail:           strings.ToLower(strings.TrimSpace(cfg.AdminEmail)),
 		disablePasswordLogin: cfg.DisablePasswordLogin,
 		autoLogin:            cfg.AutoLogin,
 	}, nil
@@ -111,17 +114,30 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code string) (*OIDCClaims, 
 		picture, _ = claims["picture"].(string)
 	}
 
-	role := "admin" // no admin group configured -> all SSO users are admins
+	role := p.roleFor(email, sub, toStringSlice(claims[p.groupsClaim]))
+	return &OIDCClaims{Subject: sub, Username: username, Email: email, Role: role, Picture: picture}, nil
+}
+
+// roleFor maps an authenticated identity to a MazeDNS role. With no admin group
+// configured, all SSO users are admins; otherwise only members of the admin group
+// are. The explicit bootstrap admin (the email/subject chosen in setup) is always
+// elevated to admin regardless of groups — matched on email, falling back to
+// subject so it works even for providers that omit the email claim.
+func (p *OIDCProvider) roleFor(email, sub string, groups []string) string {
+	role := "admin"
 	if p.adminGroup != "" {
 		role = "readonly"
-		for _, g := range toStringSlice(claims[p.groupsClaim]) {
+		for _, g := range groups {
 			if g == p.adminGroup {
 				role = "admin"
 				break
 			}
 		}
 	}
-	return &OIDCClaims{Subject: sub, Username: username, Email: email, Role: role, Picture: picture}, nil
+	if p.adminEmail != "" && (strings.EqualFold(email, p.adminEmail) || strings.EqualFold(sub, p.adminEmail)) {
+		role = "admin"
+	}
+	return role
 }
 
 func toStringSlice(v any) []string {

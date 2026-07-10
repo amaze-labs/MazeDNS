@@ -16,7 +16,9 @@ const ACTION_COLORS: Record<string, string> = {
   authoritative: '#56d4dd',
 }
 const actionColor = (a: string) => ACTION_COLORS[a] ?? '#8a93a0'
-const tooltipStyle = { background: '#11151b', border: '1px solid #262d36', borderRadius: 8, fontSize: 12 }
+// Chart chrome follows the active theme via CSS variables (light mode was stuck
+// on dark hex literals otherwise).
+const tooltipStyle = { background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 8, fontSize: 12, color: 'var(--fg)' }
 
 // PieTooltip reads the slice's own colour from the datum so the hover swatch
 // matches the legend/slice — Recharts' default pie tooltip mis-colours them.
@@ -24,7 +26,7 @@ function PieTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null
   const p = payload[0]
   const d = p.payload || {}
-  const color = d.fill || p.color || '#8a93a0'
+  const color = d.fill || p.color || 'var(--muted)'
   return (
     <div style={{ ...tooltipStyle, padding: '6px 10px', fontSize: 13 }}>
       <span style={{ color }}>● </span>
@@ -205,9 +207,9 @@ export default function ClientDetail({
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={cats} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-                    <XAxis dataKey="name" stroke="#8a93a0" fontSize={11} tickLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
-                    <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
-                    <Tooltip contentStyle={tooltipStyle} cursor={{ fill: '#ffffff10' }} />
+                    <XAxis dataKey="name" stroke="var(--muted)" fontSize={11} tickLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
+                    <YAxis stroke="var(--muted)" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
+                    <Tooltip contentStyle={tooltipStyle} cursor={{ fill: 'var(--hover)' }} />
                     <Bar dataKey="value" fill="#ff5d6c" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>

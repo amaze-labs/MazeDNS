@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type SessionUser, type User } from '../api'
+import { PASSWORD_RULE, passwordPolicyError } from '../passwordPolicy'
 
 export default function Account({ me, oidc = false }: { me: SessionUser | null; oidc?: boolean }) {
   // With SSO enabled, accounts and roles are governed by the identity provider's
@@ -35,6 +36,11 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
       setPwErr('New passwords do not match')
       return
     }
+    const policyErr = passwordPolicyError(next)
+    if (policyErr) {
+      setPwErr(policyErr)
+      return
+    }
     try {
       await api.changePassword(cur, next)
       setCur('')
@@ -50,6 +56,11 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
     e.preventDefault()
     setUErr('')
     setUMsg('')
+    const policyErr = passwordPolicyError(nu.password)
+    if (policyErr) {
+      setUErr(policyErr)
+      return
+    }
     try {
       await api.createUser(nu.username.trim(), nu.password, nu.role)
       setNu({ username: '', password: '', role: 'readonly' })
@@ -74,10 +85,15 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
   }
 
   const resetPw = async (u: User) => {
-    const p = window.prompt(`New password for ${u.username} (min 8 characters):`)
+    const p = window.prompt(`New password for ${u.username} (${PASSWORD_RULE}):`)
     if (!p) return
     setUErr('')
     setUMsg('')
+    const policyErr = passwordPolicyError(p)
+    if (policyErr) {
+      setUErr(policyErr)
+      return
+    }
     try {
       await api.resetUserPassword(u.id, p)
       setUMsg(`Password reset for ${u.username}. Their sessions were revoked.`)
@@ -124,7 +140,7 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
               <input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} />
             </div>
             <div className="field">
-              <label>New password (min 8 characters)</label>
+              <label>New password ({PASSWORD_RULE})</label>
               <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
             </div>
             <div className="field">
@@ -223,7 +239,7 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
             <input
               type="password"
               autoComplete="new-password"
-              placeholder="password (min 8)"
+              placeholder="password (min 10, mixed)"
               value={nu.password}
               onChange={(e) => setNu({ ...nu, password: e.target.value })}
             />

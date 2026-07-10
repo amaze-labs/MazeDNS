@@ -26,9 +26,14 @@ remaining wins concentrate.
 
 ## Already applied (verified in code)
 
-- **Upstream connection reuse** — `plainUpstream` builds its clients once;
-  `dotUpstream` keeps a warm TLS pool (`upstream.go`), kept alive by
-  `MaintainUpstreams` (`resolver.go:259`).
+- **Upstream connection reuse** — `dotUpstream` keeps a warm TLS pool, and
+  `plainUpstream` (TCP mode) keeps a warm plain-TCP pool sharing the same
+  `getPooledConn`/`putPooledConn` bounded-pool code (`upstream.go`); both are kept
+  alive by `MaintainUpstreams` (`resolver.go:259`) via a `warmer` interface. UDP
+  needs no pool — `dns.Client.Exchange` opens an unconnected local socket per call,
+  no handshake, so dial-per-query is cheap there. (Previously `plainUpstream` had no
+  pool at all: every plain TCP forward — e.g. a `tcp://` conditional-forwarding
+  spec — paid a full TCP handshake per query. Fixed.)
 - **Request hedging** — primary first, remaining upstreams launched in parallel
   after `hedgeDelay = 30ms`; first real answer wins, SERVFAIL/errors fail over
   immediately (`resolver.go:525`).
@@ -97,12 +102,31 @@ On a cache miss the forwarded message was copied by `cache.Set` (to store) and a
 `Resolve` before returning. **Strategy:** store once and return a single copy (mind
 single-flight sharing — the stored copy must not be mutated by a coalesced caller).
 
-### P4 — Cheaper cache hits *(high effort, high impact on cache-heavy loads)*
-Every hit does `e.msg.Copy()` (a full RR deep copy, `cache.go:125`) plus a key
-allocation — the single biggest per-hit cost. **Strategy:** store the packed wire
-bytes alongside the message and rewrite TTLs on the wire (or serve from a
-`sync.Pool` of messages), so a hit re-packs from bytes instead of deep-copying the
-RR tree. Biggest potential win, biggest change — profile first.
+### P4 — Cheaper cache hits *(high effort, high impact on cache-heavy loads)* — investigated, deferred
+Every hit does `e.msg.Copy()` (a full RR deep copy, `cache.go:152`) plus a key
+allocation. Measured: `BenchmarkCacheGetParallel` is **6 allocs/op, 272 B/op**
+(single-CPU) for a 1-RR answer — the key buffer, the `dns.Msg` struct, the RR
+backing-array slice, and one allocation per copied RR.
+
+The deep copy is load-bearing, not incidental: `cache.Get` hands out the copy
+specifically so callers can mutate it in place — `adjustTTL` rewrites RR TTLs
+in-place, and downstream `finalize`/`stripDNSSEC`/`Truncate` (`resolver.go`) all
+mutate the message's Answer/Ns/Extra slices in place. Skip the copy and any of
+those would corrupt the shared cache entry for every concurrent reader (a data
+race, not just a logic bug).
+
+The two ways to actually avoid the RR-level allocations both require bypassing
+`dns.Msg` for the fast path entirely — caching packed wire bytes and patching the
+TTL/ID fields directly in a byte copy, then writing those bytes straight to the
+connection instead of building a `dns.Msg` and calling `WriteMsg`. That's a real
+architectural change (a parallel raw-bytes path through `Handle`, correct only
+when DNSSEC-stripping/EDNS-rewriting/truncation aren't needed) for a modest win
+per hit. Pooling just the outer `*dns.Msg` (via `CopyTo`) saves only 1 of the 6
+allocations, and doing so safely needs explicit pool-return plumbed through
+`Handle`/the DoT/DoH handlers with no risk of a message being reused while still
+referenced. Given the risk/reward, this is deliberately left open rather than
+implemented — revisit if profiling a real deployment shows cache-hit GC pressure
+actually dominates.
 
 ### P5 — Trim per-query metric/log overhead — DONE (counters) *(low effort, low–medium impact)*
 Implemented: the fixed set of action counters is pre-resolved once in `metrics.New`
@@ -110,8 +134,14 @@ and `record` increments them through `Metrics.IncQuery` (a plain map read) inste
 `Queries.WithLabelValues(action)` (which re-hashes the label set under an internal
 lock) on every query. `BenchmarkIncQuery` vs the old path (parallel, 0 allocs both):
 118.7ns/op → **40.0ns/op** (~2.9× faster under contention). Off the client latency
-path, but cuts CPU/lock traffic on the record path at high QPS. Pooling the
-per-query `QueryEvent` is left as a smaller follow-up. Original analysis:
+path, but cuts CPU/lock traffic on the record path at high QPS. The per-query
+`QueryEvent` is now pooled too (`queryEventPool` in `resolver.go`): escape analysis
+confirmed it heap-escapes on every call because it's passed through the
+user-supplied `OnQuery` func value, so `record` now gets one from a `sync.Pool`,
+fills it, calls `OnQuery`, and returns it — `OnQuery` implementations must not
+retain the pointer past the call (the dns-agent's callback already only copies
+fields into a `store.QueryLogEntry`, so this was a non-breaking, contained change).
+Original analysis:
 
 `Queries.WithLabelValues(action).Inc()` did a labelled map lookup every query; the
 `QueryEvent` is allocated per query. **Strategy:** pre-resolve the handful of action
@@ -120,6 +150,17 @@ counters once at startup; optionally pool `QueryEvent`.
 ### P6 — Make dropped query-log entries observable — DONE *(trivial)*
 Implemented: `QueryLogWriter` counts drops and exposes
 `mazedns_querylog_dropped_total` (registered by the dns-agent).
+
+### P8 — Shard the rate limiter and singleflight locks — DONE *(low effort, high-QPS-only impact)*
+Implemented: both `rateLimiter` (`ratelimit.go`) and `singleflight` (`singleflight.go`)
+now use the same 16-way lock-striped sharding as the cache (`cache.shardFor`'s
+FNV-1a hash pattern, duplicated per-package per the existing in-package convention),
+instead of one global mutex + map each. Previously every query with rate limiting
+enabled contended on a single lock regardless of how many distinct clients were
+querying, and every cache-miss forward's dedup bookkeeping contended on a single
+lock regardless of how many distinct names were in flight. Only matters at high QPS
+with many distinct clients/names — `-race` clean, existing behavior (limits,
+bounded cleanup sweep, coalescing) unchanged, just scoped to a shard.
 
 ### P7 — Bounded UDP worker pool + buffer pooling *(medium–high effort, high-load only)*
 `miekg/dns` spawns a goroutine per packet. Under extreme bursts this is scheduler/

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (registers "pgx")
 	_ "modernc.org/sqlite"             // pure-Go SQLite driver (registers "sqlite")
 )
@@ -215,7 +217,8 @@ CREATE TABLE IF NOT EXISTS lists (
 	updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS nodes (
-	name TEXT PRIMARY KEY,
+	id TEXT PRIMARY KEY,                      -- UUIDv4, server-generated, immutable
+	name TEXT NOT NULL DEFAULT '' UNIQUE,     -- mutable display label
 	key_hash TEXT NOT NULL DEFAULT '',
 	key_prefix TEXT NOT NULL DEFAULT '',
 	address TEXT NOT NULL DEFAULT '',
@@ -230,8 +233,25 @@ CREATE TABLE IF NOT EXISTS nodes (
 	q_errors INTEGER NOT NULL DEFAULT 0,
 	insights TEXT NOT NULL DEFAULT '',
 	maintenance INTEGER NOT NULL DEFAULT 0,  -- node is drained (answers SERVFAIL)
-	approved INTEGER NOT NULL DEFAULT 1      -- token-enrolled node is admitted to the cluster
+	approved INTEGER NOT NULL DEFAULT 1,     -- token-enrolled node is admitted to the cluster
+	key_issued_at INTEGER NOT NULL DEFAULT 0,      -- when the current key_hash was issued (for periodic rotation)
+	prev_key_hash TEXT NOT NULL DEFAULT '',        -- previous key, still accepted during the rotation grace window
+	prev_key_expires_at INTEGER NOT NULL DEFAULT 0, -- grace deadline for prev_key_hash (0 = none)
+	app_version TEXT NOT NULL DEFAULT ''           -- running binary build version the node last reported
 );
+CREATE TABLE IF NOT EXISTS enroll_keys (
+	id TEXT PRIMARY KEY,                     -- uuid
+	name TEXT NOT NULL DEFAULT '',           -- admin-facing description
+	key_hash TEXT NOT NULL,                  -- sha256 of the secret (the secret itself is never stored)
+	key_prefix TEXT NOT NULL DEFAULT '',     -- first 8 chars, for display
+	created_at INTEGER NOT NULL DEFAULT 0,
+	created_by TEXT NOT NULL DEFAULT '',     -- username that created it
+	expires_at INTEGER NOT NULL DEFAULT 0,   -- unix secs, 0 = never
+	max_uses INTEGER NOT NULL DEFAULT 0,     -- 0 = unlimited
+	use_count INTEGER NOT NULL DEFAULT 0,
+	revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enroll_keys_hash ON enroll_keys(key_hash);
 CREATE TABLE IF NOT EXISTS settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	data TEXT NOT NULL
@@ -288,6 +308,14 @@ CREATE TABLE IF NOT EXISTS forwarders (
 	enabled INTEGER NOT NULL DEFAULT 1,
 	updated_at INTEGER NOT NULL,
 	UNIQUE(suffix, scope_type, scope_values)
+-- Tombstones for revoked nodes: an admin "remove and revoke" writes the deleted
+-- node's id here so a still-running agent presenting that id at re-enrollment is
+-- refused (instead of self-healing into a brand-new node). Un-revoke deletes the row.
+CREATE TABLE IF NOT EXISTS revoked_nodes (
+	id TEXT PRIMARY KEY,                          -- the revoked node's immutable UUID
+	name TEXT NOT NULL DEFAULT '',                -- its display name at revocation (for the UI/log)
+	revoked_at INTEGER NOT NULL DEFAULT 0,
+	revoked_by TEXT NOT NULL DEFAULT ''           -- admin username that revoked it
 );
 `
 
@@ -332,9 +360,88 @@ func (s *Store) migrate() error {
 		`ALTER TABLE nodes ADD COLUMN site TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN role TEXT NOT NULL DEFAULT ''`, // '' | 'primary' | 'backup'
 		`ALTER TABLE nodes ADD COLUMN approved INTEGER NOT NULL DEFAULT 1`,
+		// Immutable UUID identity. Existing rows are backfilled below (fresh DBs get
+		// id as the PRIMARY KEY from the canonical schema); name becomes a mutable,
+		// unique display label rather than the identifier.
+		`ALTER TABLE nodes ADD COLUMN id TEXT NOT NULL DEFAULT ''`,
+		// Per-node key rotation: age of the current key + a grace overlap for the
+		// previous key so a server-driven rotation is zero-downtime.
+		`ALTER TABLE nodes ADD COLUMN key_issued_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN prev_key_hash TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE nodes ADD COLUMN prev_key_expires_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE nodes ADD COLUMN app_version TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)
+		}
+	}
+	if err := s.backfillNodeIDs(); err != nil {
+		return fmt.Errorf("migrate node ids: %w", err)
+	}
+	// Start the key-rotation clock at upgrade time for nodes that already have a key
+	// (key_issued_at defaults to 0 = epoch, which would make every existing node
+	// rotate-due on its first poll). Idempotent: once set (non-zero) it is skipped.
+	if _, err := s.db.Exec(
+		`UPDATE nodes SET key_issued_at=? WHERE key_issued_at=0 AND key_hash<>''`, time.Now().Unix()); err != nil {
+		return fmt.Errorf("migrate key_issued_at: %w", err)
+	}
+	// A node's id is its identity; name is now a mutable unique label. On DBs
+	// created before the id column existed, name is still the declared PRIMARY KEY —
+	// these indexes give id and name the same UNIQUE guarantees the canonical schema
+	// declares, so all id-keyed queries behave identically on old and new DBs.
+	// Collapse duplicate OIDC accounts sharing a subject — an artifact of the old
+	// username-keyed upsert (the same IdP identity could spawn multiple rows) — so
+	// the unique subject index below can be created. Keep the newest row per subject
+	// (MAX(id)); rows with an empty subject (pathological) are left untouched.
+	// Idempotent: with no duplicates it deletes nothing.
+	if _, err := s.db.Exec(
+		`DELETE FROM users WHERE source='oidc' AND subject <> '' AND id NOT IN (
+			SELECT MAX(id) FROM users WHERE source='oidc' AND subject <> '' GROUP BY subject)`); err != nil {
+		return fmt.Errorf("migrate dedupe oidc users: %w", err)
+	}
+	for _, idx := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_id ON nodes(id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name)`,
+		// SSO identities are keyed on the stable subject, not the mutable username.
+		// A partial unique index enforces one account per (non-empty) OIDC subject
+		// while leaving local users (source='local', subject='') unconstrained.
+		// Portable across SQLite and Postgres.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(subject) WHERE source='oidc' AND subject <> ''`,
+	} {
+		if _, err := s.db.Exec(idx); err != nil {
+			return fmt.Errorf("migrate node index: %w", err)
+		}
+	}
+	return nil
+}
+
+// backfillNodeIDs assigns a UUIDv4 to any node row that predates the id column
+// (id=”), preserving the row's key/stats/site/role/approval. Idempotent: once a
+// row has an id the WHERE clause skips it, so re-running across restarts is a
+// no-op. UUIDs are generated in Go because SQLite/Postgres have no portable
+// built-in.
+func (s *Store) backfillNodeIDs() error {
+	rows, err := s.read.Query(`SELECT name FROM nodes WHERE id = ''`)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, name := range names {
+		if _, err := s.db.Exec(`UPDATE nodes SET id = ? WHERE name = ? AND id = ''`, uuid.NewString(), name); err != nil {
+			return err
 		}
 	}
 	return nil

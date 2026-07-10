@@ -34,7 +34,9 @@ const sourceColors: Record<string, string> = {
   Rewritten: '#c48aff',
 }
 const ONLINE_WINDOW = 120
-const tooltipStyle = { background: '#171c23', border: '1px solid #262d36', borderRadius: 8 }
+// Chart chrome follows the active theme via CSS variables (light mode was stuck
+// on dark hex literals otherwise).
+const tooltipStyle = { background: 'var(--panel-2)', border: '1px solid var(--line)', borderRadius: 8, color: 'var(--fg)' }
 
 const fmt = (n?: number) => (n == null ? '—' : n.toLocaleString())
 
@@ -81,7 +83,7 @@ function PieTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null
   const p = payload[0]
   const d = p.payload || {}
-  const color = d.fill || p.color || '#8a93a0'
+  const color = d.fill || p.color || 'var(--muted)'
   const name = d.name ?? d.category ?? d.node ?? p.name
   return (
     <div style={{ ...tooltipStyle, padding: '6px 10px', fontSize: 13 }}>
@@ -275,8 +277,8 @@ export default function Dashboard() {
   const kpiDefs: KpiDef[] = [
     { id: 'total', label: 'Total queries', value: fmt(tt?.total), available: true },
     { id: 'blocked', label: 'Blocked', value: fmt(tt?.blocked), accent: 'danger', sub: wpct(tt?.blocked, tt?.total), available: true },
-    { id: 'cached', label: 'Cached', value: fmt(tt?.cached), sub: tt && tt.total ? `${Math.round((tt.cached / tt.total) * 100)}% hit rate` : undefined, available: true },
-    { id: 'forwarded', label: 'Forwarded', value: fmt(tt?.forwarded), available: true },
+    { id: 'cached', label: 'Cached', value: fmt(tt?.cached), accent: 'cached', sub: tt && tt.total ? `${Math.round((tt.cached / tt.total) * 100)}% hit rate` : undefined, available: true },
+    { id: 'forwarded', label: 'Forwarded', value: fmt(tt?.forwarded), accent: 'forwarded', available: true },
     { id: 'clients', label: 'Unique clients', value: fmt(ins?.unique_clients), available: true },
     { id: 'latency', label: 'Avg latency', value: ins ? `${ins.avg_latency_ms.toFixed(1)} ms` : '—', available: true },
   ]
@@ -395,9 +397,9 @@ export default function Dashboard() {
                     <stop offset="100%" stopColor="#ff5d6c" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid stroke="#262d36" vertical={false} />
-                <XAxis dataKey="time" stroke="#8a93a0" fontSize={11} tickLine={false} minTickGap={32} />
-                <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
+                <CartesianGrid stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="time" stroke="var(--muted)" fontSize={11} tickLine={false} minTickGap={32} />
+                <YAxis stroke="var(--muted)" fontSize={11} tickLine={false} width={40} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Area type="monotone" dataKey="forwarded" stackId="1" stroke="#4ea1ff" fill="url(#gForwarded)" strokeWidth={2} />
                 <Area type="monotone" dataKey="cached" stackId="1" stroke="#3ecf8e" fill="url(#gCached)" strokeWidth={2} />
@@ -414,9 +416,9 @@ export default function Dashboard() {
             <h2>Avg latency (ms)</h2>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart syncId="dash-time" data={latData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="#262d36" vertical={false} />
-                <XAxis dataKey="time" stroke="#8a93a0" fontSize={11} tickLine={false} minTickGap={32} />
-                <YAxis stroke="#8a93a0" fontSize={11} tickLine={false} width={40} />
+                <CartesianGrid stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="time" stroke="var(--muted)" fontSize={11} tickLine={false} minTickGap={32} />
+                <YAxis stroke="var(--muted)" fontSize={11} tickLine={false} width={40} />
                 <Tooltip contentStyle={tooltipStyle} />
                 <Line type="monotone" dataKey="overall" name="overall" stroke={OVERALL_COLOR} strokeWidth={2.5} dot={false} connectNulls />
                 {latNodes.map((n) => (

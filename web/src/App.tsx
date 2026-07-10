@@ -9,22 +9,25 @@ import Settings from './components/Settings'
 import Account from './components/Account'
 import AccountMenu from './components/AccountMenu'
 import Login, { SKIP_AUTOLOGIN_KEY } from './components/Login'
+import Setup from './components/Setup'
 import Spinner from './components/Spinner'
+import { Icon, type IconName } from './components/icons'
+import { useTheme } from './theme'
 import { api, type SessionUser, type AuthInfo } from './api'
 
 type Tab = 'dashboard' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'cluster' | 'settings' | 'account'
 const ALL_TABS: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites', 'cluster', 'settings', 'account']
 
 // Sidebar presentation: icon + human label per tab.
-const TAB_META: Record<Tab, { icon: string; label: string }> = {
-  dashboard: { icon: '📊', label: 'Dashboard' },
-  queries: { icon: '🔎', label: 'Requests' },
-  clients: { icon: '💻', label: 'Clients' },
-  filtering: { icon: '🛡️', label: 'Filtering' },
-  rewrites: { icon: '🔀', label: 'Rewrites' },
-  cluster: { icon: '🌐', label: 'Cluster' },
-  settings: { icon: '⚙️', label: 'Settings' },
-  account: { icon: '👤', label: 'Account' },
+const TAB_META: Record<Tab, { icon: IconName; label: string }> = {
+  dashboard: { icon: 'dashboard', label: 'Dashboard' },
+  queries: { icon: 'queries', label: 'Requests' },
+  clients: { icon: 'clients', label: 'Clients' },
+  filtering: { icon: 'filtering', label: 'Filtering' },
+  rewrites: { icon: 'rewrites', label: 'Rewrites' },
+  cluster: { icon: 'cluster', label: 'Cluster' },
+  settings: { icon: 'settings', label: 'Settings' },
+  account: { icon: 'account', label: 'Account' },
 }
 
 // The current tab is reflected in the URL path (/dashboard, /queries, …) so
@@ -42,6 +45,7 @@ export default function App() {
   const [info, setInfo] = useState<AuthInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('mazedns.sidebar.collapsed') === '1')
+  const { theme, toggle } = useTheme()
 
   const toggleSidebar = () => {
     setCollapsed((c) => {
@@ -59,6 +63,12 @@ export default function App() {
   const refresh = async () => {
     const inf = await api.authInfo()
     setInfo(inf)
+    // In first-boot setup mode no admin exists yet — don't call the (gated) me().
+    if (inf.setup_required) {
+      setUser(null)
+      setLoading(false)
+      return
+    }
     setUser(inf.auth_enabled ? await api.me() : { id: 0, username: 'anonymous', role: 'admin' })
     setLoading(false)
   }
@@ -89,6 +99,10 @@ export default function App() {
     )
   }
 
+  if (info?.setup_required) {
+    return <Setup onDone={() => refresh()} />
+  }
+
   if (info?.auth_enabled && !user) {
     return (
       <Login
@@ -110,7 +124,9 @@ export default function App() {
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="side-brand">
-          <span className="brand-logo">🧭</span>
+          <span className="brand-logo">
+            <Icon name="brand" size={22} />
+          </span>
           <span className="brand-name">MazeDNS</span>
         </div>
         <nav className="side-nav">
@@ -121,7 +137,9 @@ export default function App() {
               onClick={() => navigate(t)}
               title={TAB_META[t].label}
             >
-              <span className="side-ic">{TAB_META[t].icon}</span>
+              <span className="side-ic">
+                <Icon name={TAB_META[t].icon} />
+              </span>
               <span className="side-label">{TAB_META[t].label}</span>
             </button>
           ))}
@@ -129,10 +147,22 @@ export default function App() {
         <div className="spacer" />
         <button
           className="side-collapse"
+          onClick={toggle}
+          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+        >
+          <span className="side-ic">
+            <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+          </span>
+          <span className="side-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
+        </button>
+        <button
+          className="side-collapse"
           onClick={toggleSidebar}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          <span className="side-ic">{collapsed ? '»' : '«'}</span>
+          <span className="side-ic">
+            <Icon name={collapsed ? 'chevrons-right' : 'chevrons-left'} />
+          </span>
           <span className="side-label">Collapse</span>
         </button>
         {user && (

@@ -5,8 +5,9 @@ import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import Spinner from './Spinner'
+import { PAGE_SIZE } from './tableKit'
 
-const PAGE = 50
+const PAGE = PAGE_SIZE
 const ACTIONS = ['forward', 'cache', 'blocked', 'rewrite', 'authoritative', 'error', 'refused']
 const QTYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'PTR', 'SOA', 'SRV', 'HTTPS', 'SVCB', 'CAA', 'ANY']
 // The full classification taxonomy (security + content), so the filter offers

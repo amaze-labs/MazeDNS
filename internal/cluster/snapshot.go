@@ -14,4 +14,11 @@ type Snapshot struct {
 	Forwarders  []store.ForwardSpec `json:"forwarders,omitempty"`
 	PausedUntil int64               `json:"paused_until"` // cluster-wide block pause deadline (unix)
 	Maintenance bool                `json:"maintenance"`  // this node is drained (answers SERVFAIL)
+	NodeID      string          `json:"node_id"`      // this node's immutable id (so an id-less agent can learn+persist it)
+	NewNodeKey  string          `json:"new_node_key"` // set when the control plane rotated this node's key on this poll ('' otherwise)
+	Version     string          `json:"version"`
+	Rules       []store.Rule    `json:"rules"`
+	Rewrites    []store.Rewrite `json:"rewrites"`
+	PausedUntil int64           `json:"paused_until"` // cluster-wide block pause deadline (unix)
+	Maintenance bool            `json:"maintenance"`  // this node is drained (answers SERVFAIL)
 }

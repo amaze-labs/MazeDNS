@@ -82,15 +82,20 @@ only when its own hash differs, so steady state is a cheap no-op. Query logs and
 counters flow the other way via `POST /api/cluster/log`. None of this touches the
 DNS hot path.
 
-**Enrollment (token auto-join).** The control plane holds a shared **join token**
-(`MAZEDNS_JOIN_TOKEN`). An agent boots with the control-plane URL, the join token,
-and a node name, and self-registers at `POST /api/cluster/enroll`; the control
-plane validates the token (constant-time), issues a per-node key, and the agent
-persists that key locally (in its `app_meta`) for all later polls. If the control
-plane sets `require_approval`, the node is created **pending** and cannot pull
-config until an admin approves it in the Cluster tab. An agent that loses its key
-(or whose key is revoked) re-enrolls automatically with the join token. A per-node
-key can also be issued manually from the UI when no join token is used.
+**Enrollment (key-based auto-join).** Agents self-register with an **enrollment key**
+— created in the UI (Cluster → Enrollment keys), each with an optional expiry and
+max-uses and stored hashed (a deprecated `cluster.join_token` in config is imported
+once as a never-expiring key). The env var `MAZEDNS_JOIN_TOKEN` carries the key. An
+agent boots with the control-plane URL, an enrollment key, and a node name, and
+self-registers at `POST /api/cluster/enroll`; the control plane validates the key by
+SHA-256 hash lookup (checking expiry / use count / revocation), assigns the node an
+immutable **UUID identity**, issues a per-node API key, and returns both. The agent
+persists its node id + key locally (in its `app_meta`) for all later polls. If the
+control plane sets `require_approval`, the node is created **pending** and cannot
+pull config until an admin approves it in the Cluster tab. An agent that loses its
+key (or whose key is revoked/rotated) re-enrolls automatically by presenting its
+stored node id + current key, so it re-attaches to the SAME node. A fixed per-node
+key can also be issued manually from the UI and supplied via `MAZEDNS_NODE_KEY`.
 
 - Transport over a **WireGuard mesh**; deploy on Docker + k3s; HA via multiple
   agents (and later anycast). The row-versioned schema above is what makes this

@@ -28,13 +28,81 @@ For every setting referenced below, see **[configuration.md](configuration.md)**
 
 ---
 
+## First-boot setup wizard
+
+The control plane is configured through its **web UI**, not env vars or YAML. A
+fresh control plane starts in **setup mode**: the API is locked to everything
+except the wizard until setup completes. There is **no setup token** — the wizard
+uses *trust-on-first-use* (like Grafana): whoever reaches the fresh control plane
+first completes setup. **Do not expose the control plane publicly until you have
+finished the wizard.** The log prints a plain reminder that setup mode is active.
+
+The wizard first asks **how operators sign in**:
+
+- **Local accounts** — create an admin username + password (no
+  `MAZEDNS_ADMIN_PASSWORD`, no config file, no restart).
+- **Single sign-on (OIDC)** — configure an external identity provider right there.
+  You paste the issuer URL, client ID/secret, and the **admin email** that is
+  granted the admin role on its first (and every) SSO login. The wizard shows the
+  **redirect URI** to register with your provider and verifies the issuer's
+  discovery document before finishing. A local **break-glass admin** is created
+  alongside SSO by default so a misconfigured or unreachable IdP can never lock you
+  out (you can opt out and rely on the `reset-admin` CLI below instead).
+
+It then walks you through basic DNS defaults and your first enrollment key. The
+auth choice isn't final — switch or repair it later under **Settings → Access**.
+
+```bash
+docker logs mazedns-control-plane   # confirms setup mode is active; no token needed
+# open http://<host>:8080 and complete the wizard
+```
+
+Only **bootstrap** options stay in the environment/YAML: the database
+(`MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN`), the API bind
+(`MAZEDNS_API_ADDRESS`, `api.port`), and `MAZEDNS_LOG_LEVEL`. Everything else —
+DNS defaults, SSO, metrics export, classifier, cluster policy — is edited live under
+**Settings** and stored in the database (the single source of truth). An existing
+deployment upgrades transparently: its current env/YAML values seed the database
+once on first boot of the new version, then are ignored.
+
+Lost the admin password? Reset it directly against the DB (break-glass, not an env
+var read on every boot):
+
+```bash
+docker compose exec control-plane /control-plane reset-admin --username admin
+# prints a generated password if --password is omitted
+```
+
 ## Enrollment in one paragraph
 
-The control plane holds a shared **join token** (`MAZEDNS_JOIN_TOKEN`). An agent
-starts with the control-plane URL + the token + a node name, self-registers, and
-receives a per-node key it stores locally — it then appears in the **Cluster** tab
-automatically, with no key to copy. Set `MAZEDNS_REQUIRE_APPROVAL=true` on the
-control plane to hold new agents until you approve them.
+You create **enrollment keys** in the UI (Cluster → Enrollment keys), each with an
+optional expiry and maximum number of uses. An agent starts with the control-plane
+URL + an enrollment key (passed as `MAZEDNS_JOIN_TOKEN`) + a node name,
+self-registers, and receives a per-node key it stores locally and the control plane
+rotates automatically — it then appears in the **Cluster** tab automatically, with
+no key to copy. (A `MAZEDNS_JOIN_TOKEN` set on the control plane's own config is
+deprecated but still honored: it's imported once as a never-expiring enrollment
+key.) Toggle **require approval** in the setup wizard or under Settings → Access to
+hold new agents until you approve them.
+
+### Removing an agent: revoke vs. remove-only
+
+In the **Cluster** tab, deleting an agent offers two intents:
+
+- **Remove and revoke** (default) — tombstones the node's identity. A still-running
+  agent presenting that identity is refused at re-enrollment (it keeps serving DNS
+  standalone but cannot rejoin), and the attempt consumes **no** enrollment-key use.
+  Use this to decommission or lock out a compromised agent. Reverse it with
+  **Un-revoke** (the agent then rejoins as a *new* node on its next attempt).
+- **Remove only** — deletes the row without a tombstone, so the agent may re-enroll
+  as a brand-new node. Use it for intentional replacement, and it's also the path a
+  control-plane database reset takes (the CP self-heals every agent back in).
+
+**Residual limitation:** revocation is keyed on the node's stored identity (in its
+`/data`). An agent whose `/data` was **wiped** enrolls with *no* identity, so it
+can't be matched to a tombstone and would join as a new node. To keep such an agent
+out, **revoke the enrollment key it holds** (Cluster → Enrollment keys) and/or turn
+on **require approval** so new joins wait for an admin.
 
 ---
 
@@ -47,15 +115,17 @@ the published images and runs a control plane plus one DNS agent.
 
 ```bash
 curl -O https://raw.githubusercontent.com/IPMaze/MazeDNS/main/docker-compose.prod.yml
-
-MAZEDNS_ADMIN_PASSWORD='choose-a-strong-one' \
-MAZEDNS_JOIN_TOKEN="$(openssl rand -hex 16)" \
-  docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 That's it:
 
-- Dashboard → `http://localhost:8080` (log in as `admin` with the password above).
+- Open `http://localhost:8080` and complete the wizard (choose local or SSO auth,
+  create your admin,
+  DNS defaults, and first enrollment key).
+- The wizard shows an agent snippet. Paste the enrollment key it gives you into the
+  agent's `MAZEDNS_JOIN_TOKEN` (or set it before `up -d` and re-run) so the bundled
+  agent joins. Create more enrollment keys anytime under Cluster → Enrollment keys.
 - DNS → the agent listens on the host's `:53` (UDP + TCP). Test it:
 
   ```bash
@@ -72,20 +142,20 @@ plane over your private overlay (VPN/WireGuard) — see
 > via a `CAP_NET_BIND_SERVICE` file capability baked into the binary — no root and no
 > `cap_add` needed with Docker's default capabilities.
 
-### Seeing real client IPs (host networking)
+### Real client IPs and node IPs (host networking)
 
-With the default bridge port mapping (`53:53`), Docker's NAT rewrites every query's
-source to the Docker gateway, so the dashboard collapses all clients into one. To
-preserve real client IPs on a Linux host, run the agent with **host networking**.
-In `docker-compose.prod.yml`, replace the agent's `ports:` block with:
+The agent in `docker-compose.prod.yml` runs with **`network_mode: host`** (the
+recommended production setup): it binds the host's `:53` directly, so the resolver
+sees each client's real source IP (per-client dashboard stats) and the control
+plane records the node's real host IP. With bridge port mapping (`53:53`) instead,
+Docker's NAT rewrites every query's source to the Docker gateway, the dashboard
+collapses all clients into one, and nodes show up with bridge addresses like
+`172.18.0.2`.
 
-```yaml
-    network_mode: host
-```
-
-Host networking ignores port mappings (the agent binds the host's `:53` directly),
-and there is no Compose-provided DNS, so tell the agent how to reach the control
-plane by IP — see below. This is the recommended production setup.
+Host networking has no Compose-provided DNS, so the control plane's IP must be
+pinned with **`MAZEDNS_CP_IP`** (required by the compose file) — see below. The
+agent's HTTP API is moved to `:9090` via `MAZEDNS_API_PORT` so it doesn't collide
+with a control plane sharing the host on `:8080`.
 
 ### Reaching the control plane from an agent
 
@@ -120,30 +190,57 @@ plane) and persists it across restarts.
 If you prefer plain `docker run`:
 
 ```bash
-# 1. Control plane — dashboard/API only, never serves DNS.
+# 1. Control plane — dashboard/API only, never serves DNS. Configure it in the
+#    browser: open the UI and complete the setup wizard (no token — trust-on-first-
+#    use; don't expose it publicly until setup is done). The wizard sets up auth
+#    (local or SSO), your admin, and first enrollment key.
 docker run -d --name mazedns-control-plane \
   -p 8080:8080 -v cp-data:/data \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
-  -e MAZEDNS_ADMIN_PASSWORD=change-me \
-  -e MAZEDNS_CLUSTER_ENABLED=true \
-  -e MAZEDNS_JOIN_TOKEN=a-shared-secret \
+  -e MAZEDNS_DB_PATH=/data/mazedns.db \
   ghcr.io/ipmaze/mazedns-control-plane:latest
 
-# 2. DNS agent — self-enrolls with the join token, then serves DNS on :53.
+# 2. DNS agent — self-enrolls with an enrollment key, then serves DNS on :53.
+#    Host networking (recommended): real client IPs in the dashboard and the
+#    node's real host IP at the control plane; MAZEDNS_CP_IP is required because
+#    there is no Docker DNS (it pins the dial — TLS still verifies the URL host).
 docker run -d --name mazedns-agent \
-  -p 53:53/udp -p 53:53/tcp -v agent-data:/data \
-  -e MAZEDNS_API_ADDRESS=0.0.0.0 \
+  --network host -v agent-data:/data \
   -e MAZEDNS_CP_URL=http://<control-plane-host>:8080 \
-  -e MAZEDNS_JOIN_TOKEN=a-shared-secret \
+  -e MAZEDNS_CP_IP=<control-plane-ip> \
+  -e MAZEDNS_JOIN_TOKEN=<enrollment-key> \
   -e MAZEDNS_NODE_NAME=agent-1 \
+  -e MAZEDNS_DB_PATH=/data/mazedns.db \
+  -e MAZEDNS_API_ADDRESS=0.0.0.0 \
+  -e MAZEDNS_API_PORT=9090 \
   ghcr.io/ipmaze/mazedns-dns-agent:latest
-  # Agent can't resolve the control plane's hostname? Pin its IP (DNS bypassed,
-  # TLS still verifies the URL host):  -e MAZEDNS_CP_IP=10.0.0.5
-  # Real client IPs on Linux: use --network host instead of the -p mappings.
+  # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Cluster →
+  # Enrollment keys), not a shared password. It only lets an agent enroll; the
+  # control plane then issues a per-node key it rotates automatically.
+  # MAZEDNS_NODE_NAME is only the initial display label. The control plane assigns
+  # the node an immutable UUID at first enrollment (stored on the -v agent-data
+  # volume); you can rename the node later in the UI without re-identifying it.
+  # Keep the volume: it holds the node's identity + key, so restarts/renames map
+  # back to the SAME node instead of enrolling a duplicate.
+  # Prefer bridge networking? Replace --network host with
+  #   -p 53:53/udp -p 53:53/tcp -p 9090:8080
+  # and drop MAZEDNS_CP_IP + MAZEDNS_API_PORT — but the dashboard then shows the
+  # docker bridge IP for all clients and for this node.
 ```
 
+> **Keep the agent's `/data` volume across image updates.** It stores the node's
+> identity (its server-assigned UUID + rotating key), so a recreated container
+> rejoins instantly as the same node. If the volume is lost anyway, a stable and
+> unique `MAZEDNS_NODE_NAME` is the safety net: the new container waits for the
+> old one to be marked offline (~2 minutes) and then **reclaims** the same node —
+> history, site, and role included — instead of duplicating it. Only two *live*
+> agents claiming the same name still produce a de-duplicated `-2` entry.
+
 `MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/metrics` port reachable
-from outside the container (it defaults to loopback).
+from outside the container (it defaults to loopback). The control plane's `/metrics`
+can be locked behind a bearer token (**Settings → Integrations → Metrics scrape
+token**); see [configuration.md](configuration.md#scraping-metrics-prometheus) for
+the Prometheus scrape job.
 
 ---
 
@@ -163,8 +260,10 @@ kind: Secret
 metadata: { name: mazedns-secrets, namespace: mazedns }
 type: Opaque
 stringData:
-  admin-password: "change-me"
-  join-token: "a-shared-secret"
+  # An enrollment key created in the UI (Cluster → Enrollment keys). Agents present
+  # it to self-enroll; it is never used to serve DNS. (The first admin is created in
+  # the setup wizard, not via an env var — there is no admin-password secret.)
+  join-token: "<enrollment-key-from-the-wizard>"
 ```
 
 ### Control plane
@@ -190,14 +289,14 @@ spec:
       containers:
         - name: control-plane
           image: ghcr.io/ipmaze/mazedns-control-plane:latest
+          # Configured via the first-boot web wizard (no token — trust-on-first-use;
+          # keep it off the public internet until setup completes). Only bootstrap
+          # values live here. Recover a lost admin with
+          # `kubectl exec deploy/mazedns-control-plane -- /control-plane reset-admin`.
+          # The control plane always serves cluster endpoints — no enable flag.
           env:
             - { name: MAZEDNS_API_ADDRESS, value: "0.0.0.0" }
             - { name: MAZEDNS_DB_PATH, value: "/data/mazedns.db" }
-            - { name: MAZEDNS_CLUSTER_ENABLED, value: "true" }
-            - name: MAZEDNS_ADMIN_PASSWORD
-              valueFrom: { secretKeyRef: { name: mazedns-secrets, key: admin-password } }
-            - name: MAZEDNS_JOIN_TOKEN
-              valueFrom: { secretKeyRef: { name: mazedns-secrets, key: join-token } }
           ports: [{ containerPort: 8080 }]
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 5 }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
@@ -219,8 +318,11 @@ spec:
 
 Agents connect back to `control-plane:8080` inside the cluster and serve DNS to
 clients. A **DaemonSet** (one agent per node) is a common fit; a Deployment behind a
-`LoadBalancer` Service also works. Each pod keeps a small local database — an agent
-that loses it simply re-enrolls with the join token, so `emptyDir` is fine.
+`LoadBalancer` Service also works. Each pod keeps a small local database holding the
+node's identity + key — an agent that loses it re-enrolls with its enrollment key
+and comes back as a *new* node (its old row is orphaned). `emptyDir` is fine if the
+enrollment key is unlimited-use; to keep a stable identity across restarts, mount a
+`PersistentVolumeClaim` for the agent's data directory instead.
 
 ```yaml
 apiVersion: apps/v1
@@ -249,6 +351,10 @@ spec:
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 } }
           readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
           volumeMounts: [{ name: data, mountPath: /data }]
+      # emptyDir loses the node's identity when the pod is recreated, so the agent
+      # re-enrolls as a NEW node (a duplicate, -2-suffixed entry). Fine only with an
+      # unlimited-use enrollment key. For a stable identity across restarts, back the
+      # `data` volume with a PersistentVolumeClaim (or a per-node hostPath) instead.
       volumes: [{ name: data, emptyDir: {} }]
 ---
 apiVersion: v1

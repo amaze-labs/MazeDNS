@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -168,5 +169,63 @@ auth:
 	}
 	if cfg.Auth.OIDC.Enabled {
 		t.Error("MAZEDNS_OIDC_ENABLED=false should disable OIDC")
+	}
+}
+
+// contains reports whether any notice mentions the given substring.
+func containsNotice(notices []string, sub string) bool {
+	for _, n := range notices {
+		if strings.Contains(n, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// A legacy cluster.enabled key in YAML is ignored (the field is gone) but recorded
+// as a deprecation notice; the config still loads.
+func TestLegacyClusterEnabledYAMLIgnored(t *testing.T) {
+	p := writeConfig(t, minimalConfig+`
+cluster:
+  enabled: false
+  cp_url: "http://cp:8080"
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load should succeed with legacy cluster.enabled: %v", err)
+	}
+	if cfg.Cluster.CPURL != "http://cp:8080" {
+		t.Errorf("cp_url should still parse: %q", cfg.Cluster.CPURL)
+	}
+	if !containsNotice(cfg.Deprecations, "cluster.enabled") {
+		t.Errorf("expected a cluster.enabled deprecation notice, got %v", cfg.Deprecations)
+	}
+}
+
+// Config without cluster.enabled produces no deprecation notice for it.
+func TestNoLegacyClusterEnabledNoNotice(t *testing.T) {
+	p := writeConfig(t, minimalConfig+`
+cluster:
+  cp_url: "http://cp:8080"
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if containsNotice(cfg.Deprecations, "cluster.enabled") {
+		t.Errorf("did not expect a cluster.enabled notice, got %v", cfg.Deprecations)
+	}
+}
+
+// MAZEDNS_CLUSTER_ENABLED is ignored but recorded as a deprecation notice.
+func TestLegacyClusterEnabledEnvIgnored(t *testing.T) {
+	p := writeConfig(t, minimalConfig)
+	t.Setenv("MAZEDNS_CLUSTER_ENABLED", "true")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !containsNotice(cfg.Deprecations, "MAZEDNS_CLUSTER_ENABLED") {
+		t.Errorf("expected a MAZEDNS_CLUSTER_ENABLED deprecation notice, got %v", cfg.Deprecations)
 	}
 }

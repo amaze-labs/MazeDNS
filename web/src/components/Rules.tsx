@@ -1,7 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Rule } from '../api'
+import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
 const categories = ['custom', 'ads', 'trackers', 'malware', 'phishing', 'not-found']
+
+const COLS: SortAccessors<Rule> = {
+  action: (r) => r.action,
+  domain: (r) => r.domain,
+  category: (r) => r.category,
+}
 
 export default function Rules() {
   const [rules, setRules] = useState<Rule[]>([])
@@ -33,6 +40,8 @@ export default function Rules() {
     load()
   }
 
+  const table = useTable(rules, COLS, 'domain')
+
   return (
     <div>
       <h2>Manual rules</h2>
@@ -62,14 +71,14 @@ export default function Rules() {
       <table>
         <thead>
           <tr>
-            <th>Action</th>
-            <th>Domain</th>
-            <th>Category</th>
+            <Th table={table} col="action">Action</Th>
+            <Th table={table} col="domain">Domain</Th>
+            <Th table={table} col="category">Category</Th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {rules.map((r) => (
+          {table.rows.map((r) => (
             <tr key={r.id}>
               <td>
                 <span className={`badge ${r.action === 'deny' ? 'blocked' : 'allow'}`}>{r.action}</span>
@@ -83,7 +92,7 @@ export default function Rules() {
               </td>
             </tr>
           ))}
-          {rules.length === 0 && (
+          {table.rows.length === 0 && (
             <tr>
               <td colSpan={4} className="muted">
                 No manual rules
@@ -92,6 +101,7 @@ export default function Rules() {
           )}
         </tbody>
       </table>
+      <Pager table={table} unit="rules" />
     </div>
   )
 }

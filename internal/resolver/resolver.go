@@ -107,7 +107,11 @@ type Options struct {
 	Zones    []ZoneSpec
 	QueryLog bool
 	Metrics  *metrics.Metrics
-	OnQuery  func(QueryEvent)
+	// OnQuery is called synchronously once per handled query. The *QueryEvent is
+	// pooled and reused after the call returns, so OnQuery must not retain the
+	// pointer — copy out whatever fields it needs (e.g. into a queue entry) before
+	// returning.
+	OnQuery func(*QueryEvent)
 }
 
 // Stats holds atomic query counters.
@@ -142,7 +146,7 @@ type Resolver struct {
 	zones    *Zones
 	queryLog bool
 	metrics  *metrics.Metrics
-	onQuery  func(QueryEvent)
+	onQuery  func(*QueryEvent)
 	stats    Stats
 	rt       atomic.Pointer[runtime]
 	pol      atomic.Pointer[Policy]
@@ -261,8 +265,8 @@ func (r *Resolver) MaintainUpstreams(ctx context.Context) {
 	defer t.Stop()
 	warm := func(ups []Upstream) {
 		for _, u := range ups {
-			if d, ok := u.(*dotUpstream); ok {
-				go d.keepWarm() // independent so one slow/dead upstream can't delay the others
+			if w, ok := u.(warmer); ok {
+				go w.keepWarm() // independent so one slow/dead upstream can't delay the others
 			}
 		}
 	}
@@ -477,12 +481,20 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 			"action", action, "category", category, "rcode", rcode, "client", client)
 	}
 	if r.onQuery != nil {
-		r.onQuery(QueryEvent{
+		ev := queryEventPool.Get().(*QueryEvent)
+		*ev = QueryEvent{
 			TS: start, Client: client, Name: q.Name, QType: dns.TypeToString[q.Qtype],
 			Action: action, Category: category, Rcode: rcode, Elapsed: time.Since(start),
-		})
+		}
+		r.onQuery(ev)
+		queryEventPool.Put(ev)
 	}
 }
+
+// queryEventPool reuses QueryEvent allocations across calls to record(), which
+// runs on every single handled query when logging/OnQuery is enabled. OnQuery
+// implementations must copy any fields they need before returning (see Options.OnQuery).
+var queryEventPool = sync.Pool{New: func() any { return new(QueryEvent) }}
 
 // refreshStale fetches a fresh answer for a stale (expired-but-served) cache entry
 // in the background, so the next query gets a current record. Exactly one refresh

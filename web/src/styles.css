@@ -2846,3 +2846,7 @@ img.acct-avatar.lg {
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
+
+/* Scope picker: inline chips next to the type select */
+.scope-picker { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.scope-chip { display: inline-flex; align-items: center; gap: 0.2rem; font-size: 0.85em; padding: 0.1rem 0.4rem; border: 1px solid var(--border, #4444); border-radius: 999px; cursor: pointer; }

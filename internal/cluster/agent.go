@@ -32,6 +32,7 @@ type Agent struct {
 	stats          func() store.NodeStats
 	setPause       func(int64)
 	setMaintenance func(bool)
+	applySettings  func() // re-merge local + central settings after an applied snapshot (may be nil)
 	client         *http.Client
 	lastShipped    int64
 	reenroll       func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
@@ -46,6 +47,12 @@ type Agent struct {
 // rotation and self-healing after a control-plane DB reset.
 func (a *Agent) SetReenroll(fn func(ctx context.Context) (string, error)) { a.reenroll = fn }
 
+<<<<<<< feature/scoped-rewrites-forwarders
+// SetApplySettings installs a callback invoked after every applied snapshot,
+// so the node rebuilds its effective settings (local settings + centrally
+// pushed forwarders, central winning per suffix).
+func (a *Agent) SetApplySettings(fn func()) { a.applySettings = fn }
+=======
 // SetNodeID gives the agent its currently-persisted node id (may be empty) and a
 // sink to persist one learned later. When empty, the agent adopts the id the
 // control plane reports in the config snapshot and persists it via save — the
@@ -62,6 +69,7 @@ func (a *Agent) SetNodeID(current string, save func(string)) {
 // control plane for a grace window, so a crash between receiving and persisting it
 // cannot lock the node out.
 func (a *Agent) SetSaveNodeKey(save func(string)) { a.saveNodeKey = save }
+>>>>>>> main
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
 // the master; stats (may be nil) reports this node's query counters each poll;
@@ -232,14 +240,23 @@ func (a *Agent) syncOnce(ctx context.Context) {
 	if snap.Version == cur {
 		return // rules already up to date
 	}
+	// Persist the central forwarders first: they are part of this node's
+	// ConfigVersion, so the next poll's drift check sees the full payload.
+	if err := a.store.SetClusterForwarders(snap.Forwarders); err != nil {
+		slog.Warn("cluster apply failed (forwarders)", "err", err)
+		return
+	}
 	if err := a.store.ApplySnapshot(snap.Rules, snap.Rewrites); err != nil {
 		slog.Warn("cluster apply failed", "err", err)
 		return
 	}
+	if a.applySettings != nil {
+		a.applySettings()
+	}
 	if a.reload != nil {
 		_ = a.reload()
 	}
-	slog.Info("cluster synced", "version", snap.Version, "rules", len(snap.Rules), "rewrites", len(snap.Rewrites))
+	slog.Info("cluster synced", "version", snap.Version, "rules", len(snap.Rules), "rewrites", len(snap.Rewrites), "forwarders", len(snap.Forwarders))
 }
 
 func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {

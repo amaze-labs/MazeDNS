@@ -17,6 +17,9 @@ func TestAgentSync(t *testing.T) {
 		Version:  "pending", // any value != the worker's empty-config hash triggers the first apply
 		Rules:    []store.Rule{{Action: "deny", Domain: "ads.test", Enabled: true, UpdatedAt: 1}},
 		Rewrites: []store.Rewrite{{Domain: "nas.lan", RRType: "A", Value: "10.0.0.5", Enabled: true, UpdatedAt: 1}},
+		Forwarders: []store.ForwardSpec{
+			{Suffix: "corp.internal", Upstreams: []string{"10.0.0.2:53"}},
+		},
 	}
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
@@ -34,7 +37,9 @@ func TestAgentSync(t *testing.T) {
 	defer st.Close()
 
 	reloaded := false
+	settingsApplied := false
 	ag := NewAgent(ts.URL, "", "tok", "", time.Second, st, func() error { reloaded = true; return nil }, func() store.NodeStats { return store.NodeStats{} }, nil, nil)
+	ag.SetApplySettings(func() { settingsApplied = true })
 	ag.syncOnce(context.Background())
 
 	rules, _ := st.ListRules()
@@ -45,8 +50,15 @@ func TestAgentSync(t *testing.T) {
 	if len(rws) != 1 || rws[0].Value != "10.0.0.5" {
 		t.Fatalf("rewrites not applied: %+v", rws)
 	}
+	fws, _ := st.ClusterForwarders()
+	if len(fws) != 1 || fws[0].Suffix != "corp.internal" {
+		t.Fatalf("forwarders not persisted: %+v", fws)
+	}
 	if !reloaded {
 		t.Fatal("reload was not called after a change")
+	}
+	if !settingsApplied {
+		t.Fatal("applySettings was not called after a change")
 	}
 	applied, _ := st.ConfigVersion()
 	if applied == "" {
@@ -59,6 +71,18 @@ func TestAgentSync(t *testing.T) {
 	ag.syncOnce(context.Background())
 	if reloaded {
 		t.Fatal("reload fired again despite unchanged version")
+	}
+
+	// An emptied central forwarder list clears the persisted blob on the agent.
+	snap.Version = "changed-again"
+	snap.Forwarders = nil
+	settingsApplied = false
+	ag.syncOnce(context.Background())
+	if fws, _ := st.ClusterForwarders(); len(fws) != 0 {
+		t.Fatalf("forwarders blob not cleared: %+v", fws)
+	}
+	if !settingsApplied {
+		t.Fatal("applySettings must fire when forwarders are removed")
 	}
 
 	// Wrong token -> fetch error.

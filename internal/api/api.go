@@ -155,7 +155,12 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
 		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
+		mux.HandleFunc("PUT /api/rewrites/{id}", s.requireRole(roleAdmin, s.updateRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+		mux.HandleFunc("GET /api/forwarders", s.requireRole(roleReadonly, s.listForwarders))
+		mux.HandleFunc("POST /api/forwarders", s.requireRole(roleAdmin, s.addForwarder))
+		mux.HandleFunc("PUT /api/forwarders/{id}", s.requireRole(roleAdmin, s.updateForwarder))
+		mux.HandleFunc("DELETE /api/forwarders/{id}", s.requireRole(roleAdmin, s.deleteForwarder))
 
 		// Managed lists + global block-pause ("protection").
 		mux.HandleFunc("GET /api/lists", s.requireRole(roleReadonly, s.listLists))
@@ -737,12 +742,17 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rewrites, err := s.store.ListRewrites()
+	rewrites, err := s.store.ListRewritesForNode(node.Name, node.Site)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	version, _ := s.store.ConfigVersion()
+	forwarders, err := s.store.ListForwardersForNode(node.Name, node.Site)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	version, _ := s.store.ConfigVersionForNode(node.Name, node.Site)
 	pausedUntil, _ := s.store.GetBlockPausedUntil()
 	if rules == nil {
 		rules = []store.Rule{}
@@ -750,6 +760,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if rewrites == nil {
 		rewrites = []store.Rewrite{}
 	}
+	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, Forwarders: forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
 	// NodeID lets an already-deployed agent that has a key but no stored id (upgraded
 	// from a pre-UUID build) learn its id transparently and persist it, without
 	// re-enrolling — so it can prove ownership on a future re-enroll. NewNodeKey is
@@ -872,16 +883,27 @@ func (s *Server) serverVersion(w http.ResponseWriter, _ *http.Request) {
 
 // clusterNodes lists the enrolled DNS agents. The control plane itself is not a
 // resolver, so it does not appear here — the cluster view is the data plane only.
+// Each node carries its expected (per-node) config version: scoped rewrites and
+// forwarders mean there is no single cluster-wide version to compare against.
 func (s *Server) clusterNodes(w http.ResponseWriter, _ *http.Request) {
 	nodes, err := s.store.ListNodes()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if nodes == nil {
-		nodes = []store.Node{}
+	type nodeStatus struct {
+		store.Node
+		ExpectedVersion string `json:"expected_version"`
 	}
-	writeJSON(w, http.StatusOK, nodes)
+	versions, err := s.store.ConfigVersionsForNodes(nodes)
+	if err != nil {
+		versions = nil // fall back to empty per-node versions, same as today's swallowed error
+	}
+	out := make([]nodeStatus, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeStatus{Node: n, ExpectedVersion: versions[n.Name]})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // setNodeMaintenance toggles an agent's drain (maintenance) flag. The agent picks
@@ -1640,9 +1662,11 @@ func (s *Server) listRewrites(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Domain string `json:"domain"`
-		RRType string `json:"rrtype"`
-		Value  string `json:"value"`
+		Domain      string   `json:"domain"`
+		RRType      string   `json:"rrtype"`
+		Value       string   `json:"value"`
+		ScopeType   string   `json:"scope_type"`
+		ScopeValues []string `json:"scope_values"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -1664,13 +1688,97 @@ func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "wildcards must be a single leading label, e.g. *.example.com")
 		return
 	}
-	id, err := s.store.AddRewrite(domain, in.RRType, in.Value)
+	scopeType, valsJSON, err := store.CanonicalScope(in.ScopeType, in.ScopeValues)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if conflict, err := s.store.RewriteScopeConflict(domain, in.RRType, scopeType, valsJSON, 0); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if conflict {
+		writeError(w, http.StatusConflict, "another rewrite for this domain already targets overlapping "+scopeType)
+		return
+	}
+	id, err := s.store.AddRewriteScoped(domain, in.RRType, in.Value, scopeType, in.ScopeValues)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.afterChange()
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "domain": domain, "rrtype": in.RRType, "value": in.Value})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "domain": domain, "rrtype": in.RRType, "value": in.Value, "scope_type": scopeType, "scope_values": in.ScopeValues})
+}
+
+// updateRewrite edits a rewrite's value, enabled flag, and scope in place, so
+// re-scoping doesn't require delete-and-recreate.
+func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var in struct {
+		Value       string   `json:"value"`
+		Enabled     bool     `json:"enabled"`
+		ScopeType   string   `json:"scope_type"`
+		ScopeValues []string `json:"scope_values"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if in.Value == "" {
+		writeError(w, http.StatusBadRequest, "value required")
+		return
+	}
+	scopeType, valsJSON, err := store.CanonicalScope(in.ScopeType, in.ScopeValues)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The domain+rrtype being edited are needed for the overlap check.
+	rws, err := s.store.ListRewrites()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var cur *store.Rewrite
+	for i := range rws {
+		if rws[i].ID == id {
+			cur = &rws[i]
+			break
+		}
+	}
+	if cur == nil {
+		writeError(w, http.StatusNotFound, "rewrite not found")
+		return
+	}
+	// RewriteScopeConflict deliberately skips rows whose scope is IDENTICAL to
+	// the new one (that's the correct upsert behavior for POST), so re-scoping
+	// this row onto another row's exact (domain+rrtype+scope) would sail past it
+	// and hit the UNIQUE constraint as a raw 500. Catch that case here.
+	for i := range rws {
+		if rws[i].ID == id || rws[i].Domain != cur.Domain || rws[i].RRType != cur.RRType {
+			continue
+		}
+		if rws[i].ScopeType == scopeType && scopeValuesJSON(rws[i].ScopeValues) == valsJSON {
+			writeError(w, http.StatusConflict, "another rewrite for this domain already has this exact scope")
+			return
+		}
+	}
+	if conflict, err := s.store.RewriteScopeConflict(cur.Domain, cur.RRType, scopeType, valsJSON, id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if conflict {
+		writeError(w, http.StatusConflict, "another rewrite for this domain already targets overlapping "+scopeType)
+		return
+	}
+	if err := s.store.UpdateRewrite(id, in.Value, in.Enabled, scopeType, in.ScopeValues); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.afterChange()
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "value": in.Value, "enabled": in.Enabled, "scope_type": scopeType, "scope_values": in.ScopeValues})
 }
 
 func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {
@@ -1697,6 +1805,17 @@ func (s *Server) afterChange() {
 	if err := s.reload(); err != nil {
 		slog.Warn("policy reload failed", "err", err)
 	}
+}
+
+// scopeValuesJSON reproduces the canonical JSON encoding of an already-stored
+// (and thus already-canonical) scope values slice, so it can be compared
+// byte-for-byte against a freshly canonicalized scope's JSON encoding.
+func scopeValuesJSON(vals []string) string {
+	if len(vals) == 0 {
+		return "[]"
+	}
+	b, _ := json.Marshal(vals)
+	return string(b)
 }
 
 func normalizeCategory(c string) string {

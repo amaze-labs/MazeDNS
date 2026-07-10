@@ -547,6 +547,15 @@ ${bridgeAlt}`
                   <td className="num">{n.total.toLocaleString()}</td>
                   <td className="num">{n.blocked.toLocaleString()}</td>
                   <td>
+                    {n.version ? (
+                      n.expected_version && n.version !== n.expected_version ? (
+                        <code title={`syncing: node has ${n.version}, expects ${n.expected_version}`}>{n.version} ⟳</code>
+                      ) : (
+                        <code>{n.version}</code>
+                      )
+                    ) : (
+                      <span className="muted">pending</span>
+                    )}
                     <AppVersion v={n.app_version} cp={cpVer?.version} />
                   </td>
                   <td>{ago(n.last_seen)}</td>
@@ -728,6 +737,7 @@ function AgentModal({
 
       <dl className="kv-grid">
         <div><dt>Address</dt><dd>{nodeIP(node) || '—'}</dd></div>
+        <div><dt>Version</dt><dd>{node.version ? <code>{node.version}</code> : '—'}{node.expected_version && node.version && node.version !== node.expected_version ? <span className="muted"> (expects <code>{node.expected_version}</code>)</span> : null}</dd></div>
         <div><dt>App version</dt><dd><AppVersion v={node.app_version} cp={cpVer?.version} /></dd></div>
         <div>
           <dt>Config sync</dt>

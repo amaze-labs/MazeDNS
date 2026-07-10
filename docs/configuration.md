@@ -189,7 +189,7 @@ take rules/rewrites from the control plane via replication.
 | Section | Keys |
 |---|---|
 | `upstreams` | Ordered list; plain `1.1.1.1:53`, `tls://1.1.1.1:853#cloudflare-dns.com`, or `https://dns.quad9.net/dns-query`. |
-| `forwarders` | Split-horizon per suffix: `- { suffix: "corp.internal", upstreams: [...] }`. |
+| `forwarders` | Split-horizon per suffix: `- { suffix: "corp.internal", upstreams: [...] }`. Seeds this node's local forwarders; cluster-wide scoped forwarders managed in the UI override a local entry with the same suffix. |
 | `cache` | `enabled` (`true`), `max_entries` (`10000`), `min_ttl` (`10s`), `max_ttl` (`24h`). |
 | `rate_limit` | `enabled` (`false`), `qpm` (`600`). |
 | `dnssec` | `enabled` (`false`) — force the DO bit upstream and surface AD. |

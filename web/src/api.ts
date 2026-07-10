@@ -37,6 +37,18 @@ export interface Rewrite {
   value: string
   enabled: boolean
   updated_at: number
+  scope_type?: string
+  scope_values?: string[]
+}
+
+export interface Forwarder {
+  id: number
+  suffix: string
+  upstreams: string[]
+  scope_type: string
+  scope_values: string[]
+  enabled: boolean
+  updated_at: number
 }
 
 export interface Node {
@@ -44,6 +56,8 @@ export interface Node {
   name: string // mutable display label
   key_prefix: string
   address: string
+  version: string
+  expected_version?: string
   version: string // replicated-CONFIG hash the node last applied (rules sync state)
   app_version: string // running binary build version ('' = agent predates version reporting)
   last_seen: number
@@ -609,9 +623,35 @@ export const api = {
   enableProtection: () => fetch('/api/protection/enable', { method: 'POST' }).then(j<Protection>),
 
   rewrites: () => fetch('/api/rewrites').then(j<Rewrite[]>),
-  addRewrite: (domain: string, rrtype: string, value: string) =>
-    fetch('/api/rewrites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ domain, rrtype, value }) }).then(j),
+  addRewrite: (domain: string, rrtype: string, value: string, scopeType = 'all', scopeValues: string[] = []) =>
+    fetch('/api/rewrites', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ domain, rrtype, value, scope_type: scopeType, scope_values: scopeValues }),
+    }).then(j),
+  updateRewrite: (id: number, value: string, enabled: boolean, scopeType: string, scopeValues: string[]) =>
+    fetch(`/api/rewrites/${id}`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ value, enabled, scope_type: scopeType, scope_values: scopeValues }),
+    }).then(j),
   deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }),
+
+  // Centrally-managed conditional forwarders (pushed to agents via the snapshot).
+  forwarders: () => fetch('/api/forwarders').then(j<Forwarder[]>),
+  addForwarder: (suffix: string, upstreams: string[], scopeType = 'all', scopeValues: string[] = []) =>
+    fetch('/api/forwarders', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ suffix, upstreams, scope_type: scopeType, scope_values: scopeValues }),
+    }).then(j),
+  updateForwarder: (id: number, upstreams: string[], enabled: boolean, scopeType: string, scopeValues: string[]) =>
+    fetch(`/api/forwarders/${id}`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ upstreams, enabled, scope_type: scopeType, scope_values: scopeValues }),
+    }).then(j),
+  deleteForwarder: (id: number) => fetch(`/api/forwarders/${id}`, { method: 'DELETE' }),
 
   // LLM classifier
   classifier: () => fetch('/api/classifier').then(j<ClassifierStatus>),

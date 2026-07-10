@@ -23,6 +23,7 @@ type ConfigBundle struct {
 	Settings   *resolver.Settings `json:"settings,omitempty"`
 	Rules      []store.Rule       `json:"rules"`
 	Rewrites   []store.Rewrite    `json:"rewrites"`
+	Forwarders []store.Forwarder  `json:"forwarders,omitempty"`
 }
 
 // exportConfig returns the full mutable config as one downloadable JSON bundle.
@@ -60,6 +61,13 @@ func (s *Server) exportConfig(w http.ResponseWriter, _ *http.Request) {
 		rws = []store.Rewrite{}
 	}
 	bundle.Rewrites = rws
+
+	fws, err := s.store.ListForwarders()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bundle.Forwarders = fws
 
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf(`attachment; filename="mazedns-config-%s.json"`, time.Now().UTC().Format("20060102-150405")))
@@ -103,6 +111,10 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if err := s.store.ClearForwarders(); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	nr, err := s.store.AddRulesBulk(b.Rules)
@@ -111,6 +123,11 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nw, err := s.store.AddRewritesBulk(b.Rewrites)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nf, err := s.store.AddForwardersBulk(b.Forwarders)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -141,9 +158,10 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 	// Bump the cluster config version (workers re-sync) and reload the policy.
 	s.afterChange()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":     mode,
-		"rules":    nr,
-		"rewrites": nw,
-		"settings": b.Settings != nil,
+		"mode":       mode,
+		"rules":      nr,
+		"rewrites":   nw,
+		"forwarders": nf,
+		"settings":   b.Settings != nil,
 	})
 }

@@ -547,16 +547,10 @@ ${bridgeAlt}`
                   <td className="num">{n.total.toLocaleString()}</td>
                   <td className="num">{n.blocked.toLocaleString()}</td>
                   <td>
-                    {n.version ? (
-                      n.expected_version && n.version !== n.expected_version ? (
-                        <code title={`syncing: node has ${n.version}, expects ${n.expected_version}`}>{n.version} ⟳</code>
-                      ) : (
-                        <code>{n.version}</code>
-                      )
-                    ) : (
-                      <span className="muted">pending</span>
-                    )}
                     <AppVersion v={n.app_version} cp={cpVer?.version} />
+                    {n.version && n.expected_version && n.version !== n.expected_version && (
+                      <span className="muted" title={`config syncing: node has ${n.version}, expects ${n.expected_version}`}> ⟳</span>
+                    )}
                   </td>
                   <td>{ago(n.last_seen)}</td>
                 </tr>
@@ -737,14 +731,13 @@ function AgentModal({
 
       <dl className="kv-grid">
         <div><dt>Address</dt><dd>{nodeIP(node) || '—'}</dd></div>
-        <div><dt>Version</dt><dd>{node.version ? <code>{node.version}</code> : '—'}{node.expected_version && node.version && node.version !== node.expected_version ? <span className="muted"> (expects <code>{node.expected_version}</code>)</span> : null}</dd></div>
         <div><dt>App version</dt><dd><AppVersion v={node.app_version} cp={cpVer?.version} /></dd></div>
         <div>
           <dt>Config sync</dt>
-          <dd title="Whether this agent has applied the control plane's current rules/rewrites (replicated-config hash — not the software version).">
+          <dd title="Whether this agent has applied the control plane's current rules/rewrites for this node (per-node replicated-config hash — scoped entries make it differ between nodes).">
             {!node.version ? (
               '—'
-            ) : cpVer && node.version === cpVer.config_version ? (
+            ) : node.version === (node.expected_version ?? cpVer?.config_version) ? (
               <span className="badge allow">in sync</span>
             ) : (
               <span className="badge info">syncing…</span>

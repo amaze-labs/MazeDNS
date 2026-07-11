@@ -308,6 +308,7 @@ CREATE TABLE IF NOT EXISTS forwarders (
 	enabled INTEGER NOT NULL DEFAULT 1,
 	updated_at INTEGER NOT NULL,
 	UNIQUE(suffix, scope_type, scope_values)
+);
 -- Tombstones for revoked nodes: an admin "remove and revoke" writes the deleted
 -- node's id here so a still-running agent presenting that id at re-enrollment is
 -- refused (instead of self-healing into a brand-new node). Un-revoke deletes the row.

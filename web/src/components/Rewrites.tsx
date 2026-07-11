@@ -1,9 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-<<<<<<< feature/scoped-rewrites-forwarders
 import { api, type Forwarder, type Rewrite } from '../api'
 import ScopePicker, { ALL_SCOPE, scopeBadge, type Scope } from './ScopePicker'
-=======
-import { api, type Rewrite } from '../api'
 import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
 const COLS: SortAccessors<Rewrite> = {
@@ -11,7 +8,6 @@ const COLS: SortAccessors<Rewrite> = {
   rrtype: (r) => r.rrtype,
   value: (r) => r.value,
 }
->>>>>>> main
 
 export default function Rewrites() {
   const [rows, setRows] = useState<Rewrite[]>([])
@@ -65,7 +61,6 @@ export default function Rewrites() {
     load()
   }
 
-<<<<<<< feature/scoped-rewrites-forwarders
   const addFwd = async (e: FormEvent) => {
     e.preventDefault()
     const ups = upstreams
@@ -98,9 +93,8 @@ export default function Rewrites() {
     await api.deleteForwarder(id)
     load()
   }
-=======
+
   const table = useTable(rows, COLS, 'domain')
->>>>>>> main
 
   return (
     <div>
@@ -125,16 +119,10 @@ export default function Rewrites() {
       <table>
         <thead>
           <tr>
-<<<<<<< feature/scoped-rewrites-forwarders
-            <th>Domain</th>
-            <th>Type</th>
-            <th>Value</th>
-            <th>Scope</th>
-=======
             <Th table={table} col="domain">Domain</Th>
             <Th table={table} col="rrtype">Type</Th>
             <Th table={table} col="value">Value</Th>
->>>>>>> main
+            <th>Scope</th>
             <th></th>
           </tr>
         </thead>
@@ -167,7 +155,7 @@ export default function Rewrites() {
           )}
         </tbody>
       </table>
-<<<<<<< feature/scoped-rewrites-forwarders
+      <Pager table={table} unit="rewrites" />
 
       <h2>Conditional forwarders (cluster)</h2>
       <p className="muted">
@@ -226,9 +214,6 @@ export default function Rewrites() {
           )}
         </tbody>
       </table>
-=======
-      <Pager table={table} unit="rewrites" />
->>>>>>> main
     </div>
   )
 }

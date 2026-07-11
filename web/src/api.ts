@@ -56,9 +56,8 @@ export interface Node {
   name: string // mutable display label
   key_prefix: string
   address: string
-  version: string
-  expected_version?: string
   version: string // replicated-CONFIG hash the node last applied (rules sync state)
+  expected_version?: string // per-node expected config hash (differs per node once entries are scoped)
   app_version: string // running binary build version ('' = agent predates version reporting)
   last_seen: number
   created_at: number

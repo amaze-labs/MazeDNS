@@ -47,12 +47,11 @@ type Agent struct {
 // rotation and self-healing after a control-plane DB reset.
 func (a *Agent) SetReenroll(fn func(ctx context.Context) (string, error)) { a.reenroll = fn }
 
-<<<<<<< feature/scoped-rewrites-forwarders
 // SetApplySettings installs a callback invoked after every applied snapshot,
 // so the node rebuilds its effective settings (local settings + centrally
 // pushed forwarders, central winning per suffix).
 func (a *Agent) SetApplySettings(fn func()) { a.applySettings = fn }
-=======
+
 // SetNodeID gives the agent its currently-persisted node id (may be empty) and a
 // sink to persist one learned later. When empty, the agent adopts the id the
 // control plane reports in the config snapshot and persists it via save — the
@@ -69,7 +68,6 @@ func (a *Agent) SetNodeID(current string, save func(string)) {
 // control plane for a grace window, so a crash between receiving and persisting it
 // cannot lock the node out.
 func (a *Agent) SetSaveNodeKey(save func(string)) { a.saveNodeKey = save }
->>>>>>> main
 
 // NewAgent builds a replication agent. nodeKey is the per-node API key issued by
 // the master; stats (may be nil) reports this node's query counters each poll;

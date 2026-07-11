@@ -301,6 +301,9 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		}
 		ag := cluster.NewAgent(cpURL, ip, nodeKey, cfg.Cluster.AdvertiseAddr,
 			cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
+		// Re-merge local + centrally pushed settings after every applied snapshot
+		// (central forwarders win per suffix).
+		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
 		if cfg.Cluster.JoinToken != "" {
 			ag.SetReenroll(reenroll)
 		}
@@ -327,11 +330,6 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		launch(k)
 		return
 	}
-	ag := cluster.NewAgent(cpURL, pinnedIP, nodeKey, cfg.Cluster.AdvertiseAddr,
-		cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
-	ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
-	if cfg.Cluster.JoinToken != "" {
-		ag.SetReenroll(reenroll)
 	if cfg.Cluster.JoinToken == "" {
 		slog.Error("no node key: set MAZEDNS_JOIN_TOKEN (auto-enroll) or MAZEDNS_NODE_KEY; running standalone")
 		return

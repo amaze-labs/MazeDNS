@@ -616,17 +616,11 @@ func (s *Store) nodeBy(where string, args ...any) (*Node, error) {
 	n := &Node{}
 	var maintenance, approved int
 	err := s.read.QueryRow(
-<<<<<<< feature/scoped-rewrites-forwarders
-		`SELECT name, key_prefix, address, version, last_seen, created_at, maintenance, site, role, approved
-		 FROM nodes WHERE key_hash=?`, keyHash).
-		Scan(&n.Name, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance, &n.Site, &n.Role, &approved)
-=======
-		`SELECT id, name, key_hash, key_prefix, address, version, last_seen, created_at, maintenance, approved,
+		`SELECT id, name, key_hash, key_prefix, address, version, last_seen, created_at, maintenance, site, role, approved,
 		        key_issued_at, prev_key_hash, prev_key_expires_at
 		 FROM nodes WHERE `+where, args...).
-		Scan(&n.ID, &n.Name, &n.KeyHash, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance, &approved,
+		Scan(&n.ID, &n.Name, &n.KeyHash, &n.KeyPrefix, &n.Address, &n.Version, &n.LastSeen, &n.CreatedAt, &maintenance, &n.Site, &n.Role, &approved,
 			&n.KeyIssuedAt, &n.PrevKeyHash, &n.PrevKeyExpiresAt)
->>>>>>> main
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

@@ -760,13 +760,12 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	if rewrites == nil {
 		rewrites = []store.Rewrite{}
 	}
-	writeJSON(w, http.StatusOK, cluster.Snapshot{Version: version, Rules: rules, Rewrites: rewrites, Forwarders: forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
 	// NodeID lets an already-deployed agent that has a key but no stored id (upgraded
 	// from a pre-UUID build) learn its id transparently and persist it, without
 	// re-enrolling — so it can prove ownership on a future re-enroll. NewNodeKey is
 	// set only when the control plane rotated the key on this poll; the agent
 	// persists it and authenticates with it from the next request.
-	writeJSON(w, http.StatusOK, cluster.Snapshot{NodeID: node.ID, NewNodeKey: newNodeKey, Version: version, Rules: rules, Rewrites: rewrites, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
+	writeJSON(w, http.StatusOK, cluster.Snapshot{NodeID: node.ID, NewNodeKey: newNodeKey, Version: version, Rules: rules, Rewrites: rewrites, Forwarders: forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
 }
 
 // maybeRotateNodeKey implements server-driven per-node key rotation on an

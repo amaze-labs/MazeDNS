@@ -501,7 +501,11 @@ func TestClusterSnapshotPerNodeScoping(t *testing.T) {
 		return out.Key
 	}
 	keyA, keyB := enroll("node-a"), enroll("node-b")
-	if err := st.SetNodeSite("node-a", "office", ""); err != nil {
+	nodeA, err := st.NodeByName("node-a")
+	if err != nil || nodeA == nil {
+		t.Fatalf("node-a lookup: %v", err)
+	}
+	if err := st.SetNodeSite(nodeA.ID, "office", ""); err != nil {
 		t.Fatal(err)
 	}
 

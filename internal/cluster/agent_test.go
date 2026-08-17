@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -131,5 +133,157 @@ func TestAgentStopsReenrollOnRevoked(t *testing.T) {
 	ag.syncOnce(context.Background())
 	if calls != 1 {
 		t.Fatalf("reenroll must not be retried after revocation, got %d total calls", calls)
+	}
+}
+
+func TestAgentShipsProcessLogs(t *testing.T) {
+	type recv struct {
+		auth string
+		body procLogBody
+	}
+	var got []recv
+	fail := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/cluster/proclog" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if fail {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var b procLogBody
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		got = append(got, recv{auth: r.Header.Get("Authorization"), body: b})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ag := NewAgent(ts.URL, "", "tok", "", time.Second, st, nil, nil, nil, nil)
+	ring := logbuf.New(10)
+	ag.SetProcessLogs(ring)
+
+	// Nothing buffered: no request is made.
+	ag.shipProcLogs(context.Background())
+	if len(got) != 0 {
+		t.Fatalf("empty ring should ship nothing, got %d posts", len(got))
+	}
+
+	ring.Append(time.UnixMilli(1), "info", "started")
+	ring.Append(time.UnixMilli(2), "warn", "slow upstream")
+	ag.shipProcLogs(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("want 1 post, got %d", len(got))
+	}
+	if got[0].auth != "Bearer tok" {
+		t.Fatalf("auth = %q", got[0].auth)
+	}
+	if got[0].body.BootID == "" || len(got[0].body.Entries) != 2 || got[0].body.Entries[1].Msg != "slow upstream" {
+		t.Fatalf("payload = %+v", got[0].body)
+	}
+
+	// The cursor advanced: nothing new means no request.
+	ag.shipProcLogs(context.Background())
+	if len(got) != 1 {
+		t.Fatalf("already-shipped lines must not re-ship, got %d posts", len(got))
+	}
+
+	// A failed post leaves the cursor so the lines re-ship next cycle.
+	ring.Append(time.UnixMilli(3), "error", "sync failed")
+	fail = true
+	ag.shipProcLogs(context.Background())
+	fail = false
+	ag.shipProcLogs(context.Background())
+	if len(got) != 2 || len(got[1].body.Entries) != 1 || got[1].body.Entries[0].Msg != "sync failed" {
+		t.Fatalf("retry after failure: %+v", got)
+	}
+}
+
+func TestAgentProcLogBatchByteBudget(t *testing.T) {
+	var batches [][]logbuf.Entry
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b procLogBody
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		batches = append(batches, b.Entries)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ag := NewAgent(ts.URL, "", "tok", "", time.Second, st, nil, nil, nil, nil)
+	ring := logbuf.New(300)
+	ag.SetProcessLogs(ring)
+
+	// 100 max-size lines (~800KB total) exceed the 512KB budget: shipping must
+	// split into multiple in-order batches instead of one oversized post.
+	big := strings.Repeat("x", logbuf.MaxMsgLen)
+	for i := 0; i < 100; i++ {
+		ring.Append(time.UnixMilli(int64(i)), "info", big)
+	}
+	for i := 0; i < 10 && ag.procLogCursor < 100; i++ {
+		ag.shipProcLogs(context.Background())
+	}
+	if len(batches) < 2 {
+		t.Fatalf("oversized backlog should ship in >1 batch, got %d", len(batches))
+	}
+	total := 0
+	for _, b := range batches {
+		size := 0
+		for _, e := range b {
+			size += len(e.Msg) + 64
+		}
+		if size > procLogByteBudget+logbuf.MaxMsgLen+64 {
+			t.Fatalf("batch of %d entries (%d bytes) exceeds the byte budget", len(b), size)
+		}
+		total += len(b)
+	}
+	if total != 100 {
+		t.Fatalf("shipped %d entries in total, want all 100", total)
+	}
+	if batches[0][0].Seq != 1 || batches[len(batches)-1][len(batches[len(batches)-1])-1].Seq != 100 {
+		t.Fatal("batches must cover the backlog in order without gaps")
+	}
+}
+
+func TestAgentProcLogSkipsRejectedBatch(t *testing.T) {
+	status := http.StatusBadRequest
+	posts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		posts++
+		w.WriteHeader(status)
+	}))
+	defer ts.Close()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ag := NewAgent(ts.URL, "", "tok", "", time.Second, st, nil, nil, nil, nil)
+	ring := logbuf.New(10)
+	ag.SetProcessLogs(ring)
+	ring.Append(time.UnixMilli(1), "info", "poison")
+
+	// A 400 means the master will never take this batch: skip it so shipping
+	// can't wedge re-sending it forever.
+	ag.shipProcLogs(context.Background())
+	if ag.procLogCursor != 1 {
+		t.Fatalf("cursor = %d after rejected batch, want 1 (skipped)", ag.procLogCursor)
+	}
+	ag.shipProcLogs(context.Background())
+	if posts != 1 {
+		t.Fatalf("rejected batch must not re-ship, got %d posts", posts)
 	}
 }

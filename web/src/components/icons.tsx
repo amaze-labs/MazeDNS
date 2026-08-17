@@ -10,6 +10,7 @@ type IconName =
   | 'filtering'
   | 'rewrites'
   | 'cluster'
+  | 'logs'
   | 'settings'
   | 'account'
   | 'brand'
@@ -62,6 +63,13 @@ const PATHS: Record<IconName, JSX.Element> = {
       <circle cx="5" cy="19" r="2.5" />
       <circle cx="19" cy="19" r="2.5" />
       <path d="M12 7.5V12M12 12l-5.2 4.8M12 12l5.2 4.8" />
+    </>
+  ),
+  // scroll-with-lines / logs
+  logs: (
+    <>
+      <path d="M6 3h12a1 1 0 011 1v16a1 1 0 01-1 1H6a1 1 0 01-1-1V4a1 1 0 011-1z" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
     </>
   ),
   // sliders / settings

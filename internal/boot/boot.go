@@ -15,12 +15,15 @@ import (
 
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/filter"
+	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
-// NewLogger returns a text logger at the given level (info by default).
-func NewLogger(level string) *slog.Logger {
+// NewLogger returns a text logger at the given level (info by default). When
+// ring is non-nil, every emitted line is also captured there so recent process
+// logs can be served to (control plane) or shipped to (agent) the dashboard.
+func NewLogger(level string, ring *logbuf.Buffer) *slog.Logger {
 	var lvl slog.Level
 	switch level {
 	case "debug":
@@ -32,7 +35,11 @@ func NewLogger(level string) *slog.Logger {
 	default:
 		lvl = slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
+	var h slog.Handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	if ring != nil {
+		h = logbuf.NewHandler(h, ring)
+	}
+	return slog.New(h)
 }
 
 // TuneGC applies a less aggressive default GC unless the operator set GOGC. The

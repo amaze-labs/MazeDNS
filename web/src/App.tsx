@@ -5,6 +5,7 @@ import Clients from './components/Clients'
 import Filtering from './components/Filtering'
 import Rewrites from './components/Rewrites'
 import Cluster from './components/Cluster'
+import Logs from './components/Logs'
 import Settings from './components/Settings'
 import Account from './components/Account'
 import AccountMenu from './components/AccountMenu'
@@ -15,8 +16,8 @@ import { Icon, type IconName } from './components/icons'
 import { useTheme } from './theme'
 import { api, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'dashboard' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'cluster' | 'settings' | 'account'
-const ALL_TABS: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites', 'cluster', 'settings', 'account']
+type Tab = 'dashboard' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'cluster' | 'logs' | 'settings' | 'account'
+const ALL_TABS: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites', 'cluster', 'logs', 'settings', 'account']
 
 // Sidebar presentation: icon + human label per tab.
 const TAB_META: Record<Tab, { icon: IconName; label: string }> = {
@@ -26,6 +27,7 @@ const TAB_META: Record<Tab, { icon: IconName; label: string }> = {
   filtering: { icon: 'filtering', label: 'Filtering' },
   rewrites: { icon: 'rewrites', label: 'Rewrites' },
   cluster: { icon: 'cluster', label: 'Cluster' },
+  logs: { icon: 'logs', label: 'Logs' },
   settings: { icon: 'settings', label: 'Settings' },
   account: { icon: 'account', label: 'Account' },
 }
@@ -118,6 +120,9 @@ export default function App() {
   const classifierOn = !!(info?.classifier_available && info?.classifier_enabled)
   const tabs: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites']
   if (info?.cluster_enabled) tabs.push('cluster')
+  // Process logs are admin-only server-side (they can carry client IPs and
+  // usernames), so don't offer the tab to readonly users at all.
+  if (user?.role === 'admin') tabs.push('logs')
   tabs.push('settings')
 
   return (
@@ -184,6 +189,7 @@ export default function App() {
         {tab === 'filtering' && <Filtering classifier={classifierOn} />}
         {tab === 'rewrites' && <Rewrites />}
         {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
+        {tab === 'logs' && user?.role === 'admin' && <Logs />}
         {tab === 'settings' && <Settings onClassifierChange={() => refresh()} />}
         {tab === 'account' && info?.auth_enabled && <Account me={user} oidc={!!info.oidc_enabled} />}
       </main>

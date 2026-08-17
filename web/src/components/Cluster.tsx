@@ -225,6 +225,20 @@ export default function Cluster() {
     }
   }
 
+  const purgeRevoked = async (r: RevokedNode) => {
+    const msg =
+      `Permanently delete revoked agent “${r.name || r.id}”? ` +
+      `Its record disappears from this list and cannot be restored. If the agent is still running somewhere, ` +
+      `it is no longer blocked — but rejoining still requires a valid enrollment key.`
+    if (!window.confirm(msg)) return
+    try {
+      await api.purgeRevokedNode(r.id)
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   const renew = async (n: Node) => {
     if (!window.confirm(`Rotate the key for “${n.name}”? The old key stops working immediately.`)) return
     try {
@@ -576,7 +590,8 @@ ${bridgeAlt}`
           </summary>
           <p className="muted" style={{ textAlign: 'left' }}>
             These node identities are tombstoned — their agents are refused at re-enrollment (no enrollment-key use is
-            spent). <strong>Un-revoke</strong> lets an agent rejoin as a new node on its next attempt.
+            spent). <strong>Un-revoke</strong> lets an agent rejoin as a new node on its next attempt;{' '}
+            <strong>Delete forever</strong> permanently removes the record.
           </p>
           <div className="table-scroll">
             <table className="agents-table">
@@ -599,9 +614,14 @@ ${bridgeAlt}`
                     <td>{r.revoked_at ? new Date(r.revoked_at * 1000).toLocaleString() : '—'}</td>
                     <td>{r.revoked_by || <span className="muted">—</span>}</td>
                     <td>
-                      <button className="btn ghost" onClick={() => unrevoke(r)}>
-                        Un-revoke
-                      </button>
+                      <div className="agent-remove-btns">
+                        <button className="btn ghost" onClick={() => unrevoke(r)}>
+                          Un-revoke
+                        </button>
+                        <button className="del" onClick={() => purgeRevoked(r)}>
+                          Delete forever
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

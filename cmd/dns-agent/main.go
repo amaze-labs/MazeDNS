@@ -23,6 +23,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/boot"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
+	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -56,7 +57,10 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
-	slog.SetDefault(boot.NewLogger(cfg.Log.Level))
+	// Keep recent log lines in memory; the cluster agent ships them to the
+	// control plane so the dashboard's Logs page can show this node.
+	procRing := logbuf.New(2000)
+	slog.SetDefault(boot.NewLogger(cfg.Log.Level, procRing))
 	for _, d := range cfg.Deprecations {
 		slog.Warn(d)
 	}
@@ -117,7 +121,7 @@ func main() {
 	// order) the locally-persisted key, self-enrollment with the join token, or an
 	// explicitly-supplied key.
 	agentCtx, agentCancel := context.WithCancel(context.Background())
-	startAgent(agentCtx, st, cfg, res, reload)
+	startAgent(agentCtx, st, cfg, res, reload, procRing)
 
 	// Bound local query-log growth: the agent only needs a short buffer before
 	// shipping to the control plane.
@@ -212,7 +216,7 @@ func main() {
 
 // startAgent resolves this node's API key and launches the replication agent. It
 // no-ops (serving standalone DNS) when no control plane is configured.
-func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error) {
+func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer) {
 	cpURL := cfg.Cluster.ControlPlaneURL()
 	if cpURL == "" {
 		slog.Info("standalone mode: no control plane configured (set MAZEDNS_CP_URL)")
@@ -301,6 +305,8 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		}
 		ag := cluster.NewAgent(cpURL, ip, nodeKey, cfg.Cluster.AdvertiseAddr,
 			cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
+		// Ship recent process-log lines to the control plane's Logs page.
+		ag.SetProcessLogs(procRing)
 		// Re-merge local + centrally pushed settings after every applied snapshot
 		// (central forwarders win per suffix).
 		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })

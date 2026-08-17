@@ -71,6 +71,9 @@ type Server struct {
 	// rebuildOIDC swaps the running OIDC provider when SSO settings change (nil =
 	// unsupported). Set by main, which owns the config→provider construction.
 	rebuildOIDC func(store.OIDCSettings) error
+	// procLogs holds recent process-log lines: the control plane's own slog ring
+	// plus one shipped ring per agent (see logs.go).
+	procLogs *procLogStore
 }
 
 // SetClusterEnrollment configures agent self-enrollment and per-node key rotation.
@@ -115,7 +118,7 @@ func (s *Server) SetEnricher(e *netbird.Enricher) { s.enricher = e }
 // cluster endpoints when clusterEnabled. reload rebuilds the resolver policy
 // after every mutation.
 func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, refresher *lists.Refresher, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
-	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker}
+	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker, procLogs: newProcLogStore()}
 	s.setupDone.Store(true) // no gating unless main calls EnableSetupMode
 	// Login rate limiting seeded to the default; live-updated via applyCPSettings.
 	s.loginRate = newKeyedLimiter()
@@ -207,6 +210,9 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("PUT /api/metrics/export", s.requireRole(roleAdmin, s.putMetricsExport))
 		mux.HandleFunc("GET /api/logs/export", s.requireRole(roleReadonly, s.getLogsExport))
 		mux.HandleFunc("PUT /api/logs/export", s.requireRole(roleAdmin, s.putLogsExport))
+		// Process logs (control plane + shipped agent rings). Admin: the lines can
+		// contain client IPs and login usernames.
+		mux.HandleFunc("GET /api/logs", s.requireRole(roleAdmin, s.getLogs))
 
 		// Config backup / restore (admin): export everything as one JSON bundle.
 		mux.HandleFunc("GET /api/config/export", s.requireRole(roleAdmin, s.exportConfig))
@@ -239,9 +245,10 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("GET /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.listEnrollKeys))
 			mux.HandleFunc("POST /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.createEnrollKey))
 			mux.HandleFunc("DELETE /api/cluster/enroll-keys/{id}", s.requireRole(roleAdmin, s.revokeEnrollKey))
-			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)    // enrollment-key auth
-			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
-			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
+			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)      // enrollment-key auth
+			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot)   // per-node key auth
+			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)            // per-node key auth
+			mux.HandleFunc("POST /api/cluster/proclog", s.clusterProcLog)    // per-node key auth
 		}
 
 		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
@@ -1023,6 +1030,7 @@ func (s *Server) deleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.procLogs.forget(id)
 	action := "removed"
 	if revoke {
 		action = "removed and revoked"
@@ -1045,10 +1053,15 @@ func (s *Server) listRevoked(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, revoked)
 }
 
-// unrevokeNode deletes a node's tombstone so its agent can rejoin (as a new node)
-// on the next enrollment attempt. Admin only, audit-logged.
+// unrevokeNode deletes a node's revocation tombstone. Two intents share the
+// route: the default un-revoke (the agent may rejoin as a new node on its next
+// enrollment attempt), and ?forever=true, which permanently deletes the revoked
+// agent's record — same tombstone removal, but audited as a purge and meant as
+// "forget this agent", not "let it back in". Either way, re-joining requires a
+// valid enrollment key. Admin only, audit-logged.
 func (s *Server) unrevokeNode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	forever := r.URL.Query().Get("forever") == "true"
 	rn, _ := s.store.RevokedNodeByID(id)
 	removed, err := s.store.UnrevokeNode(id)
 	if err != nil {
@@ -1059,15 +1072,24 @@ func (s *Server) unrevokeNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no revocation for that node")
 		return
 	}
+	s.procLogs.forget(id)
 	name := id
 	if rn != nil {
 		name = rn.Name
 	}
-	_ = s.store.AppendAudit(store.AuditEntry{
-		User: auditUser(s, r), Action: "cluster.node.unrevoke",
-		Detail: fmt.Sprintf("un-revoked node %s (%s)", name, id),
-	})
-	slog.Info("cluster node un-revoked", "id", id, "name", name)
+	if forever {
+		_ = s.store.AppendAudit(store.AuditEntry{
+			User: auditUser(s, r), Action: "cluster.node.purge",
+			Detail: fmt.Sprintf("permanently deleted revoked node %s (%s)", name, id),
+		})
+		slog.Info("cluster revoked node permanently deleted", "id", id, "name", name)
+	} else {
+		_ = s.store.AppendAudit(store.AuditEntry{
+			User: auditUser(s, r), Action: "cluster.node.unrevoke",
+			Detail: fmt.Sprintf("un-revoked node %s (%s)", name, id),
+		})
+		slog.Info("cluster node un-revoked", "id", id, "name", name)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -72,7 +72,12 @@ Add local answers (LAN hosts, split-horizon overrides) under **Rewrites**:
 - Exact records — `nas.lan → A 10.0.0.5`, plus `AAAA` and `CNAME`.
 - Wildcards — `*.lab.lan → A 10.0.0.9` answers every subdomain.
 
-The most specific match wins (an exact record beats a wildcard).
+The most specific match wins (an exact record beats a wildcard). This also
+holds across rewrites and conditional forwarders: a forwarder whose suffix
+matches the queried name more specifically than a wildcard rewrite takes the
+query (e.g. with `*.lab.lan → 10.0.0.9` and a forwarder for `ha.lab.lan`,
+names under `ha.lab.lan` are forwarded, every other `*.lab.lan` name is
+rewritten). An exact rewrite always wins, as does a tie.
 
 Rewrites can be **scoped**: to every node (default), to specific nodes, or to
 one or more sites. The same domain may carry different values under different
@@ -109,6 +114,15 @@ so its dashboard/classifier load can't affect resolver latency.
 - **Node health** — the Cluster tab shows each node's address, status, and counters.
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
+- **Removing agents** — *Remove & revoke* tombstones the node so the still-running
+  agent can't rejoin; *Remove only* lets it re-enroll as a new node. Revoked agents
+  are listed in a collapsible panel where you can *Un-revoke* (the agent may rejoin
+  as a new node) or *Delete forever* (permanently remove the record — rejoining
+  would still need a valid enrollment key).
+- **Logs** — the **Logs** tab shows recent process logs from the control plane and
+  every agent (admin only). Agents ship new lines with their config poll, so agent
+  logs can lag by up to ~30s. Logs are kept in a bounded in-memory buffer — history
+  is lost on restart; use VictoriaLogs export for durable, searchable query logs.
 
 Create enrollment keys with an expiry and a maximum number of uses; the full secret
 is shown once and then stored hashed. Multisite networking (e.g. a WireGuard mesh so

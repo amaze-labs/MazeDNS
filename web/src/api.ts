@@ -440,6 +440,14 @@ export interface Settings {
   cache: CacheSettings
 }
 
+// One process-log line from the control plane's or an agent's in-memory ring.
+export interface LogEntry {
+  seq: number
+  ts: number
+  level: string
+  msg: string
+}
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
     const body = await r.json().catch(() => ({}))
@@ -742,7 +750,21 @@ export const api = {
   deleteNode: (id: string, revoke = true) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }),
   listRevoked: () => fetch('/api/cluster/revoked').then(j<RevokedNode[]>),
-  unrevokeNode: (id: string) => fetch(`/api/cluster/revoked/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  unrevokeNode: (id: string) => fetch(`/api/cluster/revoked/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(ok),
+  // Permanently delete a revoked agent's record (audited as a purge, not an
+  // un-revoke; the agent is no longer blocked from re-joining, but re-joining
+  // still requires a valid enrollment key).
+  purgeRevokedNode: (id: string) =>
+    fetch(`/api/cluster/revoked/${encodeURIComponent(id)}?forever=true`, { method: 'DELETE' }).then(ok),
+  // Process logs: source is 'control-plane' (default) or a node id.
+  processLogs: (opts: { source?: string; level?: string; search?: string; limit?: number } = {}) => {
+    const p = new URLSearchParams()
+    if (opts.source) p.set('source', opts.source)
+    if (opts.level) p.set('level', opts.level)
+    if (opts.search) p.set('search', opts.search)
+    if (opts.limit) p.set('limit', String(opts.limit))
+    return fetch(`/api/logs?${p}`).then(j<{ entries: LogEntry[] }>)
+  },
   renameNode: (id: string, name: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/name`, {
       method: 'PUT',

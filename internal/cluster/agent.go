@@ -2,6 +2,8 @@ package cluster
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,11 +14,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/store"
 	"github.com/IPMaze/MazeDNS/internal/version"
 )
 
-const shipBatch = 5000 // max query-log entries shipped to the master per cycle
+const (
+	shipBatch    = 5000 // max query-log entries shipped to the master per cycle
+	procLogBatch = 1000 // max process-log lines shipped to the master per cycle
+	// procLogByteBudget bounds one proc-log batch's payload so it stays well
+	// under the master's 1MB request-body cap — a rejected batch would re-ship
+	// identically every cycle and wedge shipping for good.
+	procLogByteBudget = 512 << 10
+)
 
 // Agent runs on a worker: each cycle it pulls the config snapshot from the
 // master (authenticating with this node's API key), applies it, reports this
@@ -39,7 +49,18 @@ type Agent struct {
 	nodeID         string                                    // persisted immutable node id ('' until learned)
 	saveNodeID     func(string)                              // persist a newly-learned node id (nil = disabled)
 	saveNodeKey    func(string)                              // persist a control-plane-rotated node key (nil = disabled)
+	// Process-log shipping (nil = disabled): recent slog lines from procLogs are
+	// forwarded to the master each cycle so the dashboard can show agent logs.
+	// The cursor is in-memory only — the ring is per-boot, and bootID lets the
+	// master dedupe across our restarts.
+	procLogs      *logbuf.Buffer
+	procLogCursor uint64
+	bootID        string
 }
+
+// SetProcessLogs installs the ring buffer of this process's recent log lines;
+// new lines are shipped to the master on every poll cycle.
+func (a *Agent) SetProcessLogs(buf *logbuf.Buffer) { a.procLogs = buf }
 
 // SetReenroll installs a callback the agent uses to recover when the control
 // plane rejects its key (HTTP 401): it re-enrolls with the shared join token,
@@ -86,6 +107,8 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 			_ = st.SetMetaInt("shipped_log_id", last)
 		}
 	}
+	nonce := make([]byte, 8)
+	_, _ = rand.Read(nonce)
 	return &Agent{
 		masterURL:      strings.TrimRight(masterURL, "/"),
 		nodeKey:        nodeKey,
@@ -98,6 +121,7 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 		setMaintenance: setMaintenance,
 		client:         &http.Client{Timeout: 15 * time.Second, Transport: masterTransport(masterIP)},
 		lastShipped:    last,
+		bootID:         hex.EncodeToString(nonce),
 	}
 }
 
@@ -146,6 +170,66 @@ func (a *Agent) Run(ctx context.Context) {
 func (a *Agent) cycle(ctx context.Context) {
 	a.syncOnce(ctx)
 	a.shipLogs(ctx)
+	a.shipProcLogs(ctx)
+}
+
+// procLogBody is the payload of POST /api/cluster/proclog. BootID identifies
+// this process boot so the master can dedupe re-shipped lines (seq numbers
+// restart at every boot).
+type procLogBody struct {
+	BootID  string         `json:"boot_id"`
+	Entries []logbuf.Entry `json:"entries"`
+}
+
+// shipProcLogs forwards new process-log lines to the master. The cursor lives
+// in memory: the ring is empty on every boot, and a lost response merely
+// re-ships lines the master dedupes by (boot_id, seq).
+func (a *Agent) shipProcLogs(ctx context.Context) {
+	if a.procLogs == nil {
+		return
+	}
+	entries := a.procLogs.Since(a.procLogCursor, procLogBatch)
+	if len(entries) == 0 {
+		return
+	}
+	// Bound the batch by payload size, not just count: what doesn't fit ships
+	// next cycle. Lines are already capped at logbuf.MaxMsgLen, so at least one
+	// entry always fits the budget.
+	bytes := 0
+	for i, e := range entries {
+		if bytes += len(e.Msg) + 64; i > 0 && bytes > procLogByteBudget {
+			entries = entries[:i]
+			break
+		}
+	}
+	body, err := json.Marshal(procLogBody{BootID: a.bootID, Entries: entries})
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.masterURL+"/api/cluster/proclog", strings.NewReader(string(body)))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		slog.Warn("ship process logs: post failed", "err", err)
+		return
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		a.procLogCursor = entries[len(entries)-1].Seq
+	case http.StatusNotFound, http.StatusBadRequest, http.StatusRequestEntityTooLarge:
+		// Skip what this master can't take — an older control plane without the
+		// endpoint, or a batch it rejects — and don't let the backlog wedge
+		// behind an impossible ship (a rejected batch would re-ship identically
+		// forever).
+		a.procLogCursor = entries[len(entries)-1].Seq
+	default:
+		slog.Warn("ship process logs: post failed", "err", statusError(resp))
+	}
 }
 
 // shipLogs forwards new query-log entries to the master in batches, advancing a

@@ -28,6 +28,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/lists"
+	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
@@ -54,7 +55,9 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
-	slog.SetDefault(boot.NewLogger(cfg.Log.Level))
+	// Keep recent log lines in memory so the dashboard's Logs page can show them.
+	procRing := logbuf.New(2000)
+	slog.SetDefault(boot.NewLogger(cfg.Log.Level, procRing))
 	for _, d := range cfg.Deprecations {
 		slog.Warn(d)
 	}
@@ -185,6 +188,7 @@ func main() {
 	// Live-apply all DB-backed CP settings at boot (cluster policy, session TTL,
 	// login rate limits) so runtime services match the store without a restart.
 	apiSrv.ApplyCPSettings(cpset)
+	apiSrv.SetProcessLogs(procRing)
 	apiSrv.SetClassifierStatus(clsWorker)
 	apiSrv.SetClassifierEnqueue(clsWorker.Enqueue)
 	apiSrv.SetEnricher(enricher)
@@ -375,7 +379,7 @@ func resetAdminCmd(args []string) {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
-	slog.SetDefault(boot.NewLogger(cfg.Log.Level))
+	slog.SetDefault(boot.NewLogger(cfg.Log.Level, nil))
 	st, err := boot.OpenStore(cfg)
 	if err != nil {
 		slog.Error("open store", "err", err)

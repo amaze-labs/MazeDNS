@@ -43,13 +43,14 @@ type Policy struct {
 }
 
 // lookupRewrite returns the rewrite records for name: an exact match first, then
-// the most specific wildcard ("*.suffix") whose suffix is a parent of name.
-func (p *Policy) lookupRewrite(name string) ([]RewriteRR, bool) {
+// the most specific wildcard ("*.suffix") whose suffix is a parent of name. The
+// returned wildSuffix is the matched wildcard's suffix, or "" for an exact match.
+func (p *Policy) lookupRewrite(name string) (rrs []RewriteRR, wildSuffix string, ok bool) {
 	if rrs, ok := p.Rewrites[name]; ok {
-		return rrs, true
+		return rrs, "", true
 	}
 	if len(p.Wildcards) == 0 {
-		return nil, false
+		return nil, "", false
 	}
 	// Walk parent suffixes, most specific first: a.b.c -> b.c -> c.
 	for rest := name; ; {
@@ -59,10 +60,10 @@ func (p *Policy) lookupRewrite(name string) ([]RewriteRR, bool) {
 		}
 		rest = rest[i+1:]
 		if rrs, ok := p.Wildcards[rest]; ok {
-			return rrs, true
+			return rrs, rest, true
 		}
 	}
-	return nil, false
+	return nil, "", false
 }
 
 // QueryEvent is emitted for every handled query (for async logging).
@@ -396,11 +397,24 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 
 	pol := r.pol.Load()
 
-	// 2. Local rewrite (exact match, then "*.suffix" wildcard).
-	if rrs, ok := pol.lookupRewrite(name); ok {
-		if resp := r.rewriteResponse(req, q, rrs); resp != nil {
-			r.stats.Rewritten.Add(1)
-			return resp, "rewrite", ""
+	// 2. Local rewrite (exact match, then "*.suffix" wildcard). A wildcard match
+	// yields to a conditional forwarder whose suffix matches name more
+	// specifically (e.g. forwarder "ha.corp.example" beats rewrite
+	// "*.corp.example" for names under ha.corp.example); an exact rewrite always
+	// wins. Both suffixes sit on label boundaries of the same name, so the longer
+	// string is the more specific one.
+	if rrs, wildSuffix, ok := pol.lookupRewrite(name); ok {
+		override := false
+		if wildSuffix != "" {
+			if cf, ok := conditionalFor(rt, name); ok && len(cf.suffix) > len(wildSuffix) {
+				override = true
+			}
+		}
+		if !override {
+			if resp := r.rewriteResponse(req, q, rrs); resp != nil {
+				r.stats.Rewritten.Add(1)
+				return resp, "rewrite", ""
+			}
 		}
 	}
 
@@ -522,11 +536,22 @@ func (r *Resolver) refreshStale(rt *runtime, req *dns.Msg, q dns.Question, name 
 	}()
 }
 
-func upstreamsFor(rt *runtime, name string) []Upstream {
+// conditionalFor returns the most specific conditional forwarder matching name
+// (rt.conditional is sorted longest-suffix-first). Forwarders whose upstreams
+// all failed to parse are skipped, so a match here is one that can actually
+// serve the query.
+func conditionalFor(rt *runtime, name string) (condForward, bool) {
 	for _, cf := range rt.conditional {
 		if (name == cf.suffix || strings.HasSuffix(name, cf.dotSuffix)) && len(cf.ups) > 0 {
-			return cf.ups
+			return cf, true
 		}
+	}
+	return condForward{}, false
+}
+
+func upstreamsFor(rt *runtime, name string) []Upstream {
+	if cf, ok := conditionalFor(rt, name); ok {
+		return cf.ups
 	}
 	return rt.defaultUpstreams
 }

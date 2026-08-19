@@ -106,11 +106,14 @@ so its dashboard/classifier load can't affect resolver latency.
 
 - **Enrollment** — agents self-register with an **enrollment key** (created under
   Cluster → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
-  **Cluster** tab automatically, no key to copy. Set `MAZEDNS_REQUIRE_APPROVAL=true`
-  on the control plane to hold new agents until you approve them there.
-- **Per-node keys** — issued automatically when an agent enrolls with a key. You can
-  also issue one manually in the Cluster tab (used via `MAZEDNS_NODE_KEY`). A revoked
-  agent re-enrolls automatically.
+  **Cluster** tab automatically, no key to copy. Toggle **require approval**
+  (setup wizard, or Settings → Access → Cluster policy) to hold new agents until you
+  approve them there — `MAZEDNS_REQUIRE_APPROVAL` only seeds this on first boot.
+- **Per-node keys** — issued automatically when an agent enrolls with a key, and
+  rotated by the control plane. You can also issue one manually in the Cluster tab
+  (used via `MAZEDNS_NODE_KEY`). An agent whose key was *rotated* re-attaches to the
+  same node by itself; a *revoked* node is refused at re-enrollment until you
+  un-revoke it (see [install.md](install.md#removing-an-agent-revoke-vs-remove-only)).
 - **Node health** — the Cluster tab shows each node's address, status, and counters.
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
@@ -138,11 +141,14 @@ setup wizard where you create the first admin (or configure SSO) — there are n
 `control-plane reset-admin` CLI. Passwords are argon2id-hashed and sessions are
 server-side and revocable. Roles: **admin** (full) and **readonly** (GET only).
 
-For single sign-on, set the `MAZEDNS_OIDC_*` variables (see
-[configuration.md](configuration.md#control-plane)) — setting `MAZEDNS_OIDC_ISSUER`
-is enough to add a "Sign in with SSO" button. You can map a provider group to admin,
-force SSO-only login, or auto-redirect to the provider. The `redirect_url` must match
-your provider's registration exactly; it's logged at startup so you can compare.
+Configure single sign-on in the setup wizard or later under **Settings → Access &
+SSO**: paste the issuer URL, client ID/secret, and the admin email or group. You can
+map a provider group to admin, force SSO-only login, or auto-redirect to the
+provider. The redirect URI must match your provider's registration exactly — the UI
+shows the exact value to register, and it's logged at startup so you can compare.
+(The `MAZEDNS_OIDC_*` variables still exist, but they only **seed** the database on
+first boot and are ignored afterwards — see
+[configuration.md](configuration.md#control-plane).)
 
 ## Backup and restore
 
@@ -170,7 +176,7 @@ the DNS port through Docker's NAT (`-p 53:53`), the source is rewritten to the D
 gateway, so per-client stats collapse to one client. To preserve real client IPs:
 
 - **Docker (Linux):** run the agent with `network_mode: host` — see
-  [install.md](install.md#seeing-real-client-ips-host-networking).
+  [install.md](install.md#real-client-ips-and-node-ips-host-networking).
 - **Kubernetes:** give the DNS pod `hostNetwork: true`, or expose it via a Service
   with `externalTrafficPolicy: Local`.
 - **Docker Desktop (macOS/Windows):** the VM can't pass the original client IP

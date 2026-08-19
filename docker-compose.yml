@@ -42,7 +42,7 @@ services:
     build:
       context: .
       target: dns-agent
-    image: mazedns-dns-agent:dev
+    image: mazedns-agent:dev
     container_name: mazedns-agent-a
     restart: unless-stopped
     depends_on: [control-plane]
@@ -65,7 +65,7 @@ services:
     build:
       context: .
       target: dns-agent
-    image: mazedns-dns-agent:dev
+    image: mazedns-agent:dev
     container_name: mazedns-agent-b
     restart: unless-stopped
     depends_on: [control-plane]

@@ -6,7 +6,7 @@
 #
 # Build:
 #   docker build --target control-plane -t mazedns-control-plane .
-#   docker build --target dns-agent     -t mazedns-dns-agent .
+#   docker build --target dns-agent     -t mazedns-agent .
 
 ARG VERSION=dev
 

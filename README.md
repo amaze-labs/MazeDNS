@@ -24,8 +24,8 @@ MazeDNS is two containers:
 
 | Image | Serves | Run |
 |-------|--------|-----|
-| `ghcr.io/ipmaze/mazedns-control-plane` | web UI + API + `/metrics` (**no DNS**) | **one**, on the host you manage |
-| `ghcr.io/ipmaze/mazedns-dns-agent` | DNS (UDP/TCP, opt. DoT/DoH) + `/healthz` + `/metrics` | **one or more**, wherever you serve DNS |
+| `ghcr.io/amaze-labs/mazedns-control-plane` | web UI + API + `/metrics` (**no DNS**) | **one**, on the host you manage |
+| `ghcr.io/amaze-labs/mazedns-agent` | DNS (UDP/TCP, opt. DoT/DoH) + `/healthz` + `/metrics` | **one or more**, wherever you serve DNS |
 
 Clients point at the **agents**. Agents keep resolving from their local copy even
 if the control plane is briefly down. This split keeps dashboard load off the
@@ -34,17 +34,23 @@ resolver hot path.
 ## Fast deploy (Docker Compose)
 
 ```bash
-curl -O https://raw.githubusercontent.com/IPMaze/MazeDNS/main/docker-compose.prod.yml
+# 1. Get the compose file. (The repo is private for now — until it's public, copy
+#    docker-compose.prod.yml out of a checkout instead of curl'ing it.)
+curl -O https://raw.githubusercontent.com/amaze-labs/MazeDNS/main/docker-compose.prod.yml
 
-# 1. Bring up the control plane, then open http://localhost:8080 and complete the
+# 2. Tell the agent where to reach the control plane. The compose file requires this
+#    (host networking has no Docker DNS); on a single host it's this host's LAN IP.
+echo 'MAZEDNS_CP_IP=192.168.1.10' > .env
+
+# 3. Bring up the control plane, then open http://localhost:8080 and complete the
 #    setup wizard (create your admin or configure SSO, then create an enrollment key).
-#    There is no admin password env var, and no setup token — don't expose 8080
-#    publicly until the wizard is done. (The placeholder just satisfies the agent
-#    service's required var while the control plane starts.)
-MAZEDNS_JOIN_TOKEN=placeholder docker compose -f docker-compose.prod.yml up -d control-plane
+#    There is no admin password env var and no setup token — the first visitor owns
+#    setup, so don't expose 8080 publicly until the wizard is done.
+docker compose -f docker-compose.prod.yml up -d control-plane
 
-# 2. Start the agent with the enrollment key the wizard gave you:
-MAZEDNS_JOIN_TOKEN='<enrollment-key>' docker compose -f docker-compose.prod.yml up -d
+# 4. Add the enrollment key the wizard gave you, then start the agent:
+echo "MAZEDNS_JOIN_TOKEN=<enrollment-key>" >> .env
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 This runs a control plane (dashboard on `http://localhost:8080`) and one DNS agent
@@ -75,5 +81,8 @@ Start at the **[documentation index](docs/README.md)**.
   network or VPN, behind a TLS reverse proxy.
 - The agent's `/metrics` + `/healthz` endpoint is unauthenticated — bind it to a
   private address (it defaults to loopback).
-- The resolver answers recursion only for its configured clients (no open
-  resolver); per-client rate limiting is on by default.
+- **The resolver has no client ACL** — anything that can reach an agent's `:53`
+  gets answers. Keep agents on a private network or firewall the port; never
+  publish `:53` to the internet.
+- Per-client rate limiting is available but ships **disabled** — turn it on under
+  **Settings → Rate limit** (queries per minute per client IP; `REFUSED` beyond).

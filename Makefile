@@ -2,8 +2,8 @@
 CP_PKG    := ./cmd/control-plane
 AGENT_PKG := ./cmd/dns-agent
 BIN_DIR   := bin
-CP_IMAGE    ?= ghcr.io/ipmaze/mazedns-control-plane
-AGENT_IMAGE ?= ghcr.io/ipmaze/mazedns-dns-agent
+CP_IMAGE    ?= ghcr.io/amaze-labs/mazedns-control-plane
+AGENT_IMAGE ?= ghcr.io/amaze-labs/mazedns-agent
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=$(VERSION)
 

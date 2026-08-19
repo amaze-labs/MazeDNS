@@ -131,8 +131,10 @@ database:
 
 auth:
   # Control-plane auth is configured in the web UI. On first boot the control plane
-  # runs a setup wizard (token printed to the log) that creates the first admin —
-  # there is no admin username/password here. session_ttl and oidc below are
+  # runs a setup wizard that creates the first admin — there is NO setup token
+  # (trust-on-first-use: whoever reaches the fresh control plane first completes
+  # setup, so keep the port private until you're done) and no admin username or
+  # password here. session_ttl and oidc below are
   # SEED-ONLY (first boot); afterwards edit them under Settings → Access & SSO.
   # Reset a lost admin:  control-plane reset-admin --username admin
   enabled: true                # require login for the API + UI (enforced by default)

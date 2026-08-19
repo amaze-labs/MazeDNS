@@ -4,7 +4,10 @@
 # host/site (reaching the control plane over your private overlay); here both are
 # shown on one host for illustration.
 #
-#   docker compose -f docker-compose.prod.yml up -d
+#   echo 'MAZEDNS_CP_IP=<this-host-lan-ip>' > .env
+#   docker compose -f docker-compose.prod.yml up -d control-plane   # then run the wizard
+#   echo 'MAZEDNS_JOIN_TOKEN=<enrollment-key>' >> .env
+#   docker compose -f docker-compose.prod.yml up -d                 # starts the agent
 #
 # On first boot the control plane starts in setup mode — there is NO setup token.
 # It uses trust-on-first-use: whoever reaches the fresh control plane first completes
@@ -15,16 +18,19 @@
 # restart. The agent below presents MAZEDNS_JOIN_TOKEN as its enrollment key; paste
 # the key from the wizard into your environment (or into the agent service) to join.
 #
-# Required environment (set in your shell or a .env file next to this compose file):
-#   MAZEDNS_CP_IP       IP where the agent host reaches the control plane
-#                       (single-host setup: this host's own LAN IP)
-#   MAZEDNS_JOIN_TOKEN  enrollment key from the setup wizard / Cluster page
+# Environment (set in your shell or a .env file next to this compose file):
+#   MAZEDNS_CP_IP       REQUIRED — compose refuses to start without it. The IP where
+#                       the agent host reaches the control plane (single-host setup:
+#                       this host's own LAN IP).
+#   MAZEDNS_JOIN_TOKEN  enrollment key from the setup wizard / Cluster page. May be
+#                       empty on the first `up -d control-plane` (the wizard hasn't
+#                       issued a key yet); the agent needs it to join.
 
 name: mazedns
 
 services:
   control-plane:
-    image: ghcr.io/ipmaze/mazedns-control-plane:latest
+    image: ghcr.io/amaze-labs/mazedns-control-plane:latest
     container_name: mazedns-control-plane
     restart: unless-stopped
     # The control plane is configured entirely through the web UI (first-boot wizard
@@ -40,7 +46,7 @@ services:
       - control-plane-data:/data
 
   dns-agent:
-    image: ghcr.io/ipmaze/mazedns-dns-agent:latest
+    image: ghcr.io/amaze-labs/mazedns-agent:latest
     container_name: mazedns-agent
     restart: unless-stopped
     depends_on: [control-plane]
@@ -63,7 +69,7 @@ services:
       MAZEDNS_CP_URL: "http://${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}:8080"
       MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}"
       # Enrollment key created in the setup wizard / Cluster → Enrollment keys.
-      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN:?paste the enrollment key from the setup wizard}"
+      MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN}"
       MAZEDNS_NODE_NAME: "agent-1"
     volumes:
       - agent-data:/data

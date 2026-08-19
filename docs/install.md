@@ -14,8 +14,8 @@ from their local copy even if the control plane is briefly unreachable.
 Images (multi-arch `linux/amd64` + `linux/arm64`):
 
 ```
-ghcr.io/ipmaze/mazedns-control-plane:latest
-ghcr.io/ipmaze/mazedns-dns-agent:latest
+ghcr.io/amaze-labs/mazedns-control-plane:latest
+ghcr.io/amaze-labs/mazedns-agent:latest
 ```
 
 Pick a path:
@@ -58,8 +58,10 @@ docker logs mazedns-control-plane   # confirms setup mode is active; no token ne
 ```
 
 Only **bootstrap** options stay in the environment/YAML: the database
-(`MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN`), the API bind
-(`MAZEDNS_API_ADDRESS`, `api.port`), and `MAZEDNS_LOG_LEVEL`. Everything else —
+(`MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN`), the HTTP bind
+(`MAZEDNS_API_ADDRESS` / `MAZEDNS_API_PORT`), the agent's DNS listener
+(`MAZEDNS_LISTEN_ADDRESS` / `MAZEDNS_LISTEN_PORT`, plus the `dot`/`doh`/`tls`
+YAML sections), and `MAZEDNS_LOG_LEVEL`. Everything else —
 DNS defaults, SSO, metrics export, classifier, cluster policy — is edited live under
 **Settings** and stored in the database (the single source of truth). An existing
 deployment upgrades transparently: its current env/YAML values seed the database
@@ -114,18 +116,30 @@ The repo ships [`docker-compose.prod.yml`](../docker-compose.prod.yml): it pulls
 the published images and runs a control plane plus one DNS agent.
 
 ```bash
-curl -O https://raw.githubusercontent.com/IPMaze/MazeDNS/main/docker-compose.prod.yml
-docker compose -f docker-compose.prod.yml up -d
+# The repo is private for now — until it's public, copy docker-compose.prod.yml out
+# of a checkout instead of curl'ing it.
+curl -O https://raw.githubusercontent.com/amaze-labs/MazeDNS/main/docker-compose.prod.yml
+
+# MAZEDNS_CP_IP is REQUIRED: the agent runs with host networking, which has no
+# Docker DNS, so it needs the IP where it reaches the control plane (on a single
+# host, that host's own LAN IP). Compose refuses to start without it.
+echo 'MAZEDNS_CP_IP=192.168.1.10' > .env
+
+docker compose -f docker-compose.prod.yml up -d control-plane
 ```
 
-That's it:
+Then:
 
 - Open `http://localhost:8080` and complete the wizard (choose local or SSO auth,
-  create your admin,
-  DNS defaults, and first enrollment key).
-- The wizard shows an agent snippet. Paste the enrollment key it gives you into the
-  agent's `MAZEDNS_JOIN_TOKEN` (or set it before `up -d` and re-run) so the bundled
-  agent joins. Create more enrollment keys anytime under Cluster → Enrollment keys.
+  create your admin, DNS defaults, and your first enrollment key).
+- Add the enrollment key it gives you and start the agent. Create more keys anytime
+  under Cluster → Enrollment keys:
+
+  ```bash
+  echo "MAZEDNS_JOIN_TOKEN=<enrollment-key>" >> .env
+  docker compose -f docker-compose.prod.yml up -d
+  ```
+
 - DNS → the agent listens on the host's `:53` (UDP + TCP). Test it:
 
   ```bash
@@ -198,7 +212,7 @@ docker run -d --name mazedns-control-plane \
   -p 8080:8080 -v cp-data:/data \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
   -e MAZEDNS_DB_PATH=/data/mazedns.db \
-  ghcr.io/ipmaze/mazedns-control-plane:latest
+  ghcr.io/amaze-labs/mazedns-control-plane:latest
 
 # 2. DNS agent — self-enrolls with an enrollment key, then serves DNS on :53.
 #    Host networking (recommended): real client IPs in the dashboard and the
@@ -213,7 +227,7 @@ docker run -d --name mazedns-agent \
   -e MAZEDNS_DB_PATH=/data/mazedns.db \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
   -e MAZEDNS_API_PORT=9090 \
-  ghcr.io/ipmaze/mazedns-dns-agent:latest
+  ghcr.io/amaze-labs/mazedns-agent:latest
   # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Cluster →
   # Enrollment keys), not a shared password. It only lets an agent enroll; the
   # control plane then issues a per-node key it rotates automatically.
@@ -288,7 +302,7 @@ spec:
     spec:
       containers:
         - name: control-plane
-          image: ghcr.io/ipmaze/mazedns-control-plane:latest
+          image: ghcr.io/amaze-labs/mazedns-control-plane:latest
           # Configured via the first-boot web wizard (no token — trust-on-first-use;
           # keep it off the public internet until setup completes). Only bootstrap
           # values live here. Recover a lost admin with
@@ -329,13 +343,13 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata: { name: dns-agent, namespace: mazedns }
 spec:
-  selector: { matchLabels: { app: mazedns-dns-agent } }
+  selector: { matchLabels: { app: mazedns-agent } }
   template:
-    metadata: { labels: { app: mazedns-dns-agent } }
+    metadata: { labels: { app: mazedns-agent } }
     spec:
       containers:
         - name: dns-agent
-          image: ghcr.io/ipmaze/mazedns-dns-agent:latest
+          image: ghcr.io/amaze-labs/mazedns-agent:latest
           env:
             - { name: MAZEDNS_API_ADDRESS, value: "0.0.0.0" }   # required for kubelet probes + scraping
             - { name: MAZEDNS_DB_PATH, value: "/data/mazedns.db" }
@@ -363,7 +377,7 @@ metadata: { name: dns, namespace: mazedns }
 spec:
   type: LoadBalancer            # give clients a stable DNS address
   externalTrafficPolicy: Local  # preserve real client IPs for per-client stats
-  selector: { app: mazedns-dns-agent }
+  selector: { app: mazedns-agent }
   ports:
     - { name: dns-udp, port: 53, targetPort: 53, protocol: UDP }
     - { name: dns-tcp, port: 53, targetPort: 53, protocol: TCP }

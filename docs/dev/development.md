@@ -88,7 +88,7 @@ One multi-stage [`Dockerfile`](../../Dockerfile) produces both images, selected 
 
 ```bash
 docker build --target control-plane -t mazedns-control-plane .
-docker build --target dns-agent     -t mazedns-dns-agent .
+docker build --target dns-agent     -t mazedns-agent .
 # or: make docker
 ```
 
@@ -109,7 +109,20 @@ go test -bench . -benchmem ./internal/resolver/ ./internal/cache/ ./internal/fil
 ## CI
 
 `.github/workflows/build-containers.yml` builds **multi-arch** images
-(`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/ipmaze/mazedns-control-plane`
-and `ghcr.io/ipmaze/mazedns-dns-agent` (`:latest`, plus the version tag on `v*`
+(`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/amaze-labs/mazedns-control-plane`
+and `ghcr.io/amaze-labs/mazedns-agent` (`:latest`, plus the version tag on `v*`
 releases) on push to `main`, tags, or manual dispatch. The source version is baked
-into each binary via `-ldflags -X github.com/IPMaze/MazeDNS/internal/version.Version`.
+into each binary via `-ldflags -X github.com/IPMaze/MazeDNS/internal/version.Version`
+(the Go module path still uses the original org).
+
+The matrix axis `image` is the Dockerfile **target** (`control-plane`, `dns-agent`);
+the published name comes from the separate `suffix` value, which is why the agent
+image is `mazedns-agent` while its build target stays `dns-agent`.
+
+Pushes that only touch `docs/**`, any `**.md`, or `docker-compose*.yml` are skipped
+via `paths-ignore` — a push mixing docs with code still builds, and tag pushes always
+build (GitHub does not evaluate path filters for tags). `configs/` is deliberately
+*not* ignored: it is baked into both images.
+
+`.github/workflows/release.yml` (manual only) publishes the standalone binaries to a
+rolling `latest` GitHub Release.

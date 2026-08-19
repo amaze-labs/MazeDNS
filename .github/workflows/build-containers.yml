@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    # Skip rebuilds for files that cannot change an image. Note `configs/` is
+    # baked in (COPY configs /etc/mazedns), so it is deliberately not listed.
+    # A push touching both docs and code still builds: the run is skipped only
+    # when *every* changed file matches. Tag pushes ignore path filters, so
+    # `v*` releases always build.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'docker-compose*.yml'
   workflow_dispatch:
 
 permissions:

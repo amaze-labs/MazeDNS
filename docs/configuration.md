@@ -14,8 +14,10 @@ for a stateless resolver.
 Two classes of settings behave differently:
 
 - **Bootstrap settings** — read on **every start**, env/YAML only, because they're
-  needed before the database or UI exist: the database (`MAZEDNS_DB_*`), the API
-  bind (`MAZEDNS_API_ADDRESS`, `api.port`), and `MAZEDNS_LOG_LEVEL`.
+  needed before the database or UI exist: the database (`MAZEDNS_DB_*`), the HTTP
+  bind (`MAZEDNS_API_ADDRESS` / `MAZEDNS_API_PORT`), the agent's DNS listener
+  (`MAZEDNS_LISTEN_*`, plus the `dot` / `doh` / `tls` YAML sections), and
+  `MAZEDNS_LOG_LEVEL`.
 - **Runtime settings** — everything else on the control plane (DNS defaults, SSO,
   session TTL, cluster policy, classifier, metrics/logs export). These are **seeded
   once** from env/YAML on first boot (so an existing deployment upgrades with no
@@ -51,7 +53,7 @@ The variable that applies to a component depends on which image it is:
 
 - **Control plane** (`mazedns-control-plane`) — UI, API, auth, classifier, cluster
   coordination. No DNS listener.
-- **DNS agent** (`mazedns-dns-agent`) — the resolver. Rules and rewrites are
+- **DNS agent** (`mazedns-agent`) — the resolver. Rules and rewrites are
   replicated from the control plane, not configured here.
 
 ---
@@ -67,6 +69,7 @@ The variable that applies to a component depends on which image it is:
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | HTTP bind address (set `0.0.0.0` in containers). |
+| `MAZEDNS_API_PORT` | No | `8080` | HTTP port for the UI + API + `/metrics` + `/healthz`. |
 | `MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN` | No | sqlite `mazedns.db` | Datastore location (see [Shared](#shared-both-components)). |
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`/`info`/`warn`/`error`. |
 
@@ -120,6 +123,7 @@ never the secret values), viewable at `GET /api/settings/audit`.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | Bind address of the HTTP server. Control plane: UI + API + `/metrics` (optionally token-gated — see [Scraping /metrics](#scraping-metrics-prometheus)) + `/healthz`. Agent: `/healthz` + `/metrics` only (unauthenticated). Set to `0.0.0.0` so a mapped port is reachable; for an agent, prefer the node's private/overlay IP. |
+| `MAZEDNS_API_PORT` | No | `8080` | Port of the HTTP server (YAML: `api.port`). Move it when two components share a host — the prod compose sets `9090` on the agent so the control plane keeps `:8080` under host networking. |
 | `MAZEDNS_JOIN_TOKEN` | For clustering | *(empty)* | The **enrollment key** an agent presents to self-enroll and receive a per-node key. Create/list/revoke enrollment keys in the UI (Cluster → Enrollment keys) with optional expiry and max-uses. On the **control plane** this variable is *deprecated*: if set it is auto-imported once as a never-expiring enrollment key so existing agents keep working — prefer managing keys in the UI. Enrollment keys only work at `/api/cluster/enroll`, never for serving DNS or shipping logs. |
 | `MAZEDNS_KEY_MAX_AGE` | No | `720h` (30d) | Control plane: rotate a node's per-node key once it exceeds this age. The new key is handed to the agent on its next poll; the old key stays valid for `MAZEDNS_KEY_GRACE`. |
 | `MAZEDNS_KEY_GRACE` | No | `15m` | Control plane: how long a rotated-out node key stays valid — the zero-downtime overlap window. |

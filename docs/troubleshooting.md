@@ -36,8 +36,9 @@ Common causes:
   resolve or connect. If the agent is the only DNS on its network it can't resolve
   the CP's FQDN — pin the IP with `MAZEDNS_CP_IP=<cp-ip>` (TLS still verifies the
   URL host). See [install.md](install.md#reaching-the-control-plane-from-an-agent).
-- **Pending approval.** With `MAZEDNS_REQUIRE_APPROVAL=true`, the node is created
-  *pending* — approve it in the Cluster tab before it serves.
+- **Pending approval.** With **require approval** on (Settings → Access → Cluster
+  policy), the node is created *pending* — approve it in the Cluster tab before it
+  serves.
 
 ## The agent won't start / can't bind port 53
 
@@ -181,8 +182,11 @@ tls://1.1.1.1:853#cloudflare-dns.com
 tls://9.9.9.9:853#dns.quad9.net
 ```
 
-Verify validation from a client: `dig @<agent-host> dnssec-failed.org` must return
-**SERVFAIL**.
+MazeDNS forwards DNSSEC rather than validating locally: it can force the DO bit
+upstream and passes the AD flag through, so validation is your **upstream's** job.
+Checking `dig @<agent-host> dnssec-failed.org` therefore tests the upstream — with a
+validating upstream (Cloudflare, Quad9) it returns **SERVFAIL**, and if it resolves,
+the upstream isn't validating.
 
 ## Is it the resolver, or the path to it?
 

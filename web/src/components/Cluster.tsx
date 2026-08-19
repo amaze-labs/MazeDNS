@@ -5,7 +5,7 @@ import Modal from './Modal'
 import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
 const ONLINE_WINDOW = 120 // seconds
-const IMAGE = 'ghcr.io/ipmaze/mazedns-dns-agent:latest'
+const IMAGE = 'ghcr.io/amaze-labs/mazedns-agent:latest'
 
 function ago(unixSec: number): string {
   if (!unixSec) return 'never'

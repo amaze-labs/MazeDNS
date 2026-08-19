@@ -12,3 +12,8 @@ For building MazeDNS from source and working on the code. If you only want to
   the optimizations applied, with benchmarks.
 - **[Improvement plan](improvement-plan.md)** — tracked issues and their fixes.
 - **[Roadmap](roadmap.md)** — phased build plan.
+
+[`docs/superpowers/`](../superpowers/) holds the design specs and implementation
+plans kept from individual features (e.g. scoped rewrites and forwarders). They are
+historical records of how a change was planned, not maintained documentation — the
+pages above are the current truth.

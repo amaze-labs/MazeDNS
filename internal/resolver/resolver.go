@@ -638,7 +638,11 @@ func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR
 	m.SetReply(req)
 	m.Authoritative = true
 	matched := false
+	hasAddr := false
 	for _, rr := range rrs {
+		if rr.Type == dns.TypeA || rr.Type == dns.TypeAAAA {
+			hasAddr = true
+		}
 		if rr.Type != q.Qtype {
 			continue
 		}
@@ -659,9 +663,28 @@ func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR
 		}
 	}
 	if !matched {
+		// A name with a local address override belongs to the internal horizon:
+		// an unmatched address-shaped query (A/AAAA, or HTTPS/SVCB with their
+		// ipv4hint/ipv6hint) gets an authoritative NODATA instead of falling
+		// through to the public upstream — otherwise a dual-stack client takes
+		// the public AAAA (or hint) and bypasses the split horizon entirely.
+		// Other types (MX, TXT, ...) still forward.
+		if hasAddr && isAddrQtype(q.Qtype) {
+			return m // empty NOERROR = NODATA
+		}
 		return nil
 	}
 	return m
+}
+
+// isAddrQtype reports whether t is a query type whose public answer would hand
+// the client a connection address (A/AAAA directly, HTTPS/SVCB via ip hints).
+func isAddrQtype(t uint16) bool {
+	switch t {
+	case dns.TypeA, dns.TypeAAAA, dns.TypeHTTPS, dns.TypeSVCB:
+		return true
+	}
+	return false
 }
 
 func (r *Resolver) blockedResponse(req *dns.Msg, q dns.Question, blockMode string) *dns.Msg {

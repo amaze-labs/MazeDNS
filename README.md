@@ -86,3 +86,14 @@ Start at the **[documentation index](docs/README.md)**.
   publish `:53` to the internet.
 - Per-client rate limiting is available but ships **disabled** — turn it on under
   **Settings → Rate limit** (queries per minute per client IP; `REFUSED` beyond).
+
+## License
+
+Copyright © 2026 Amaze Labs
+
+MazeDNS is free software, licensed under the **GNU Affero General Public License
+v3.0 or later** — see [LICENSE](LICENSE).
+
+You can run, modify and self-host it freely. The AGPL's network clause means that
+if you offer a modified MazeDNS to others over a network — as a hosted or managed
+service — you must also offer those users the source of your modified version.

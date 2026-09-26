@@ -20,12 +20,17 @@ listen:
   address: "0.0.0.0"           # bind all interfaces so clients can reach the resolver (or MAZEDNS_LISTEN_ADDRESS)
   port: 53                     # standard DNS port. The container image binds it via CAP_NET_BIND_SERVICE; for local non-root dev set MAZEDNS_LISTEN_PORT=5300
 
-upstreams:                     # tried in order, first to answer wins
+upstreams:                     # tried in order: the next one only if the previous fails
   - "1.1.1.1:53"               # plain UDP (TCP fallback)
   - "9.9.9.9:53"
   # Encrypted upstreams are supported too:
   # - "tls://1.1.1.1:853#cloudflare-dns.com"   # DNS-over-TLS (servername after #)
   # - "https://dns.quad9.net/dns-query"         # DNS-over-HTTPS
+
+upstream_strategy: ordered     # ordered = strict failover: the next upstream is queried only on
+                               #   timeout, network error, SERVFAIL or REFUSED (never in parallel);
+                               # hedged = also query the rest in parallel if the first is slow (>30ms)
+upstream_timeout: 1500ms       # ordered only: how long one upstream may take before the next is tried
 
 forwarders: []                 # split-horizon: e.g. - { suffix: "corp.internal", upstreams: ["udp://10.0.0.53:53"] }
 

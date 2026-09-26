@@ -38,6 +38,14 @@ type Config struct {
 	Listen     Listen      `yaml:"listen"`
 	Upstreams  []string    `yaml:"upstreams"`
 	Forwarders []Forwarder `yaml:"forwarders"`
+
+	// UpstreamStrategy is how several upstreams are used: "ordered" (default:
+	// strict failover, one at a time) or "hedged" (parallel after a short delay).
+	UpstreamStrategy string `yaml:"upstream_strategy"`
+	// UpstreamTimeout is the ordered strategy's per-upstream failover timeout
+	// (e.g. "1500ms"); 0 = the built-in default.
+	UpstreamTimeout Duration `yaml:"upstream_timeout"`
+
 	Zones      []Zone      `yaml:"zones"`
 	RateLimit  RateLimit   `yaml:"rate_limit"`
 	DNSSEC     DNSSEC      `yaml:"dnssec"`
@@ -580,6 +588,14 @@ func (c Config) validate() error {
 	}
 	if len(c.Upstreams) == 0 {
 		return fmt.Errorf("at least one upstream is required")
+	}
+	switch c.UpstreamStrategy {
+	case "", "ordered", "hedged":
+	default:
+		return fmt.Errorf("upstream_strategy must be ordered or hedged, got %q", c.UpstreamStrategy)
+	}
+	if c.UpstreamTimeout < 0 {
+		return fmt.Errorf("upstream_timeout must not be negative, got %s", c.UpstreamTimeout.Std())
 	}
 	switch c.Filter.BlockResponse {
 	case "", "nxdomain", "zeroip":

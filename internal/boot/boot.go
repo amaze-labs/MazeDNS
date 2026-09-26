@@ -123,7 +123,7 @@ func rateLimitQPM(rl config.RateLimit) int {
 
 // SettingsFromConfig maps the file config to the resolver's operational settings.
 func SettingsFromConfig(cfg config.Config) resolver.Settings {
-	return resolver.Settings{
+	s := resolver.Settings{
 		Upstreams:     cfg.Upstreams,
 		Forwarders:    toForwardGroups(cfg.Forwarders),
 		BlockResponse: cfg.Filter.BlockResponse,
@@ -135,15 +135,32 @@ func SettingsFromConfig(cfg config.Config) resolver.Settings {
 			MinTTLSec:  int(cfg.Cache.MinTTL.Std().Seconds()),
 			MaxTTLSec:  int(cfg.Cache.MaxTTL.Std().Seconds()),
 		},
+		UpstreamStrategy:  cfg.UpstreamStrategy,
+		UpstreamTimeoutMs: int(cfg.UpstreamTimeout.Std().Milliseconds()),
 	}
+	s.NormalizeUpstreams()
+	return s
 }
 
 // LoadOrSeedSettings returns the DB-stored operational settings, seeding them
 // from the config file the first time (so the file is just initial defaults).
+//
+// Fields added after the settings row was first saved (the upstream strategy
+// and per-upstream timeout) are backfilled from the config file while the
+// stored row lacks them, without persisting: an upgraded node runs the
+// file's value — "ordered" and the default timeout unless configured — until
+// the settings are next saved from the UI.
 func LoadOrSeedSettings(st *store.Store, cfg config.Config) resolver.Settings {
 	if raw, _ := st.GetSettings(); raw != "" {
 		var s resolver.Settings
 		if json.Unmarshal([]byte(raw), &s) == nil {
+			if s.UpstreamStrategy == "" {
+				s.UpstreamStrategy = cfg.UpstreamStrategy
+			}
+			if s.UpstreamTimeoutMs == 0 {
+				s.UpstreamTimeoutMs = int(cfg.UpstreamTimeout.Std().Milliseconds())
+			}
+			s.NormalizeUpstreams()
 			return s
 		}
 	}

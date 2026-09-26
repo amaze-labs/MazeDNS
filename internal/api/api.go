@@ -1512,6 +1512,9 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &settings)
 	}
+	// Show the effective upstream strategy/timeout even for settings saved
+	// before those fields existed (absent = ordered, default timeout).
+	settings.NormalizeUpstreams()
 	writeJSON(w, http.StatusOK, settings)
 }
 
@@ -1535,6 +1538,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if in.Cache.MaxEntries < 0 {
 		in.Cache.MaxEntries = 0
 	}
+	in.NormalizeUpstreams()
 	b, err := json.Marshal(in)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

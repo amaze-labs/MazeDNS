@@ -3,6 +3,7 @@ package boot
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 
@@ -138,5 +139,52 @@ func TestRewritePTRScoping(t *testing.T) {
 		if got := ptr(a2, c.ip); got != c.want2 {
 			t.Errorf("agent-02 PTR %s = %q, want %q", c.ip, got, c.want2)
 		}
+	}
+}
+
+// Settings saved before the upstream strategy existed load as ordered with the
+// default timeout, unless the config file sets them; stored values win.
+func TestLoadOrSeedSettingsUpstreamStrategy(t *testing.T) {
+	open := func(t *testing.T, raw string) *store.Store {
+		t.Helper()
+		st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		if raw != "" {
+			if err := st.SaveSettings(raw); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return st
+	}
+	legacy := `{"upstreams":["192.0.2.1:53","192.0.2.2:53"],"block_response":"nxdomain"}`
+	hedgedCfg := config.Default()
+	hedgedCfg.UpstreamStrategy = "hedged"
+	hedgedCfg.UpstreamTimeout = config.Duration(700 * time.Millisecond)
+
+	cases := []struct {
+		name         string
+		raw          string
+		cfg          config.Config
+		wantStrategy string
+		wantTimeout  int
+	}{
+		{"legacy row, default config", legacy, config.Default(), resolver.StrategyOrdered, resolver.DefaultUpstreamTimeoutMs},
+		{"legacy row, config sets hedged", legacy, hedgedCfg, resolver.StrategyHedged, 700},
+		{"stored values win over config",
+			`{"upstreams":["192.0.2.1:53"],"upstream_strategy":"ordered","upstream_timeout_ms":900}`,
+			hedgedCfg, resolver.StrategyOrdered, 900},
+		{"first boot seeds from config", "", hedgedCfg, resolver.StrategyHedged, 700},
+		{"first boot, default config", "", config.Default(), resolver.StrategyOrdered, resolver.DefaultUpstreamTimeoutMs},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := LoadOrSeedSettings(open(t, tc.raw), tc.cfg)
+			if s.UpstreamStrategy != tc.wantStrategy || s.UpstreamTimeoutMs != tc.wantTimeout {
+				t.Fatalf("got %q/%d, want %q/%d", s.UpstreamStrategy, s.UpstreamTimeoutMs, tc.wantStrategy, tc.wantTimeout)
+			}
+		})
 	}
 }

@@ -143,6 +143,7 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 		if b.Settings.Cache.MaxEntries < 0 {
 			b.Settings.Cache.MaxEntries = 0
 		}
+		b.Settings.NormalizeUpstreams()
 		data, err := json.Marshal(b.Settings)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())

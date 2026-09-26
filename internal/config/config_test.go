@@ -229,3 +229,19 @@ func TestLegacyClusterEnabledEnvIgnored(t *testing.T) {
 		t.Errorf("expected a MAZEDNS_CLUSTER_ENABLED deprecation notice, got %v", cfg.Deprecations)
 	}
 }
+
+func TestUpstreamStrategyConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, minimalConfig+"upstream_strategy: hedged\nupstream_timeout: 800ms\n"))
+	if err != nil {
+		t.Fatalf("valid upstream strategy should load: %v", err)
+	}
+	if cfg.UpstreamStrategy != "hedged" || cfg.UpstreamTimeout.Std().Milliseconds() != 800 {
+		t.Errorf("got strategy %q timeout %s, want hedged 800ms", cfg.UpstreamStrategy, cfg.UpstreamTimeout.Std())
+	}
+	if _, err := Load(writeConfig(t, minimalConfig+"upstream_strategy: random\n")); err == nil {
+		t.Error("expected an error for an unknown upstream_strategy")
+	}
+	if _, err := Load(writeConfig(t, minimalConfig+"upstream_timeout: -1s\n")); err == nil {
+		t.Error("expected an error for a negative upstream_timeout")
+	}
+}

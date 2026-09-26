@@ -1855,12 +1855,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
+	noteError(w, msg) // surfaced by logRequests' warn line
 	writeJSON(w, code, map[string]string{"error": msg})
-}
-
-func logRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r)
-		slog.Debug("http", "method", r.Method, "path", r.URL.Path)
-	})
 }

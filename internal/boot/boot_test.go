@@ -1,8 +1,12 @@
 package boot
 
 import (
+	"path/filepath"
 	"testing"
 
+	"github.com/miekg/dns"
+
+	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
@@ -41,5 +45,98 @@ func TestMergeForwarders(t *testing.T) {
 	same := MergeForwarders(local, nil)
 	if len(same.Forwarders) != 2 {
 		t.Fatalf("nil central must be a no-op, got %+v", same.Forwarders)
+	}
+}
+
+// TestRewritePTRScoping runs the real replication path: the control plane
+// filters rewrites per node, each agent stores its served set and builds its
+// policy from it. PTR answers must follow exactly the forward records that node
+// serves (scope, precedence, enabled flag), with no scope logic on the agent.
+func TestRewritePTRScoping(t *testing.T) {
+	openStore := func(name string) *store.Store {
+		st, err := store.Open(filepath.Join(t.TempDir(), name+".db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		return st
+	}
+	cp := openStore("cp")
+	add := func(domain, rrtype, value, scopeType string, vals ...string) int64 {
+		id, err := cp.AddRewriteScoped(domain, rrtype, value, scopeType, vals)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	// Split horizon: nas is 192.0.2.10 everywhere except site-b.
+	add("nas.example.lan", "A", "192.0.2.10", store.ScopeAll)
+	add("nas.example.lan", "A", "192.0.2.20", store.ScopeSites, "site-b")
+	// Only agent-01 serves printer.
+	add("printer.example.lan", "A", "192.0.2.30", store.ScopeNodes, "agent-01")
+	// A disabled override falls back to the broader enabled entry.
+	add("app.example.lan", "AAAA", "2001:db8::40", store.ScopeAll)
+	off := add("app.example.lan", "AAAA", "2001:db8::41", store.ScopeNodes, "agent-02")
+	if err := cp.UpdateRewrite(off, "2001:db8::41", false, store.ScopeNodes, []string{"agent-02"}); err != nil {
+		t.Fatal(err)
+	}
+	// Wildcards imply no PTR.
+	add("*.lab.example.lan", "A", "192.0.2.50", store.ScopeAll)
+
+	agent := func(node, site string) *resolver.Resolver {
+		rws, err := cp.ListRewritesForNode(node, site)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := openStore(node)
+		if err := st.ApplySnapshot(nil, rws); err != nil {
+			t.Fatal(err)
+		}
+		pol, err := BuildPolicy(st, config.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := resolver.New(resolver.Options{})
+		r.SetPolicy(pol)
+		return r
+	}
+	ptr := func(r *resolver.Resolver, ip string) string {
+		t.Helper()
+		rev, err := dns.ReverseAddr(ip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := new(dns.Msg)
+		req.SetQuestion(rev, dns.TypePTR)
+		resp, action, _ := r.Resolve(req, "192.0.2.1")
+		if action != "rewrite" {
+			return "" // not answered locally (no upstreams here, so it errors out)
+		}
+		if len(resp.Answer) != 1 {
+			t.Fatalf("PTR %s: %d answers, want 1", ip, len(resp.Answer))
+		}
+		return resp.Answer[0].(*dns.PTR).Ptr
+	}
+
+	a1, a2 := agent("agent-01", "site-a"), agent("agent-02", "site-b")
+	cases := []struct {
+		ip    string
+		want1 string // agent-01 (site-a)
+		want2 string // agent-02 (site-b)
+	}{
+		{"192.0.2.10", "nas.example.lan.", ""},
+		{"192.0.2.20", "", "nas.example.lan."},
+		{"192.0.2.30", "printer.example.lan.", ""},
+		{"2001:db8::40", "app.example.lan.", "app.example.lan."},
+		{"2001:db8::41", "", ""},
+		{"192.0.2.50", "", ""},
+	}
+	for _, c := range cases {
+		if got := ptr(a1, c.ip); got != c.want1 {
+			t.Errorf("agent-01 PTR %s = %q, want %q", c.ip, got, c.want1)
+		}
+		if got := ptr(a2, c.ip); got != c.want2 {
+			t.Errorf("agent-02 PTR %s = %q, want %q", c.ip, got, c.want2)
+		}
 	}
 }

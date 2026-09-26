@@ -40,6 +40,9 @@ type Policy struct {
 	// specific suffix wins. The suffix apex itself is not matched (add an exact
 	// rewrite for that).
 	Wildcards map[string][]RewriteRR
+	// reverse holds the PTR answers derived from Rewrites (see buildReverse),
+	// rebuilt by SetPolicy.
+	reverse map[string]string
 }
 
 // lookupRewrite returns the rewrite records for name: an exact match first, then
@@ -302,6 +305,7 @@ func (r *Resolver) SetPolicy(p *Policy) {
 	if p.Wildcards == nil {
 		p.Wildcards = map[string][]RewriteRR{}
 	}
+	p.reverse = buildReverse(p.Rewrites)
 	r.pol.Store(p)
 }
 
@@ -415,6 +419,15 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 				r.stats.Rewritten.Add(1)
 				return resp, "rewrite", ""
 			}
+		}
+	}
+
+	// 2b. Reverse lookup for an address an exact A/AAAA rewrite points to: answer
+	// the rewrite's name, unless a conditional forwarder covers the reverse zone.
+	if q.Qtype == dns.TypePTR {
+		if resp := r.rewritePTR(rt, pol, req, q, name); resp != nil {
+			r.stats.Rewritten.Add(1)
+			return resp, "rewrite", ""
 		}
 	}
 

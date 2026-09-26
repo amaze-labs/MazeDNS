@@ -210,24 +210,50 @@ func (s *Store) ManualRules() ([]Rule, error) {
 	return out, rows.Err()
 }
 
+// activeRulesWhere selects the enforced rules: enabled, and either manual
+// (list_id=0) or belonging to an enabled list.
+const activeRulesWhere = `FROM rules r LEFT JOIN lists l ON r.list_id = l.id
+		 WHERE r.enabled=1 AND (r.list_id=0 OR l.enabled=1)`
+
 // ActiveRules returns the rules that should be enforced: enabled, and either
 // manual (list_id=0) or belonging to an enabled list.
+//
+// It runs over the whole blocklist (hundreds of thousands of rows), so it
+// keeps per-row allocations down: the result is sized from a COUNT up front,
+// and action/category — a handful of distinct values — are scanned into
+// reusable buffers and interned, so only the domain allocates per row.
 func (s *Store) ActiveRules() ([]Rule, error) {
+	var n int
+	if err := s.read.QueryRow(`SELECT COUNT(*) ` + activeRulesWhere).Scan(&n); err != nil {
+		return nil, err
+	}
 	rows, err := s.read.Query(
-		`SELECT r.id, r.action, r.domain, r.category, r.enabled, r.list_id, r.updated_at
-		 FROM rules r LEFT JOIN lists l ON r.list_id = l.id
-		 WHERE r.enabled=1 AND (r.list_id=0 OR l.enabled=1)
-		 ORDER BY r.domain`)
+		`SELECT r.id, r.action, r.domain, r.category, r.enabled, r.list_id, r.updated_at ` +
+			activeRulesWhere + ` ORDER BY r.domain`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Rule
+	// The COUNT is only a capacity hint: a concurrent write between the two
+	// queries just means one extra growth (or some slack).
+	out := make([]Rule, 0, n)
+	var action, category sql.RawBytes
+	intern := map[string]string{}
+	internBytes := func(b []byte) string {
+		if v, ok := intern[string(b)]; ok { // no allocation for the lookup
+			return v
+		}
+		v := string(b)
+		intern[v] = v
+		return v
+	}
 	for rows.Next() {
 		var r Rule
-		if err := rows.Scan(&r.ID, &r.Action, &r.Domain, &r.Category, &r.Enabled, &r.ListID, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &action, &r.Domain, &category, &r.Enabled, &r.ListID, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
+		r.Action = internBytes(action)
+		r.Category = internBytes(category)
 		out = append(out, r)
 	}
 	return out, rows.Err()

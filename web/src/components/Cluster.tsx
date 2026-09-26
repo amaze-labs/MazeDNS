@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { api, type EnrollKey, type Node, type RevokedNode, type Site } from '../api'
 import { pollWhileVisible } from '../poll'
 import Modal from './Modal'
-import { useTable, Th, Pager, type SortAccessors } from './tableKit'
+import Spinner from './Spinner'
+import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
 
 const ONLINE_WINDOW = 120 // seconds
 const IMAGE = 'ghcr.io/amaze-labs/mazedns-agent:latest'
@@ -159,6 +160,8 @@ export default function Cluster() {
   const [sites, setSites] = useState<Site[]>([])
   const [enrollKeys, setEnrollKeys] = useState<EnrollKey[]>([])
   const [revoked, setRevoked] = useState<RevokedNode[]>([])
+  // Set on the first successful load; polling refreshes never clear it.
+  const [loaded, setLoaded] = useState(false)
   const [name, setName] = useState('')
   const [siteName, setSiteName] = useState('')
   const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
@@ -177,6 +180,7 @@ export default function Cluster() {
         setEnrollKeys(k)
         setRevoked(rv)
         setCpVer(v)
+        setLoaded(true)
         setErr('')
       })
       .catch((e) => setErr(e.message))
@@ -412,12 +416,13 @@ ${bridgeAlt}`
       </p>
 
       <div className="cards">
-        <Card label="Agents" value={nodes.length} />
-        <Card label="Online" value={online} />
-        <Card label="Serving DNS" value={serving} accent={serving === 0 ? 'danger' : undefined} />
-        <Card label="Pending" value={pending} accent={pending > 0 ? 'danger' : undefined} />
-        <Card label="Cluster queries" value={totalQ} />
-        <Card label="Cluster blocked" value={totalB} accent="danger" />
+        {/* "—" until loaded: a zero "Serving DNS" card would raise a false alarm. */}
+        <Card label="Agents" value={loaded ? nodes.length : undefined} />
+        <Card label="Online" value={loaded ? online : undefined} />
+        <Card label="Serving DNS" value={loaded ? serving : undefined} accent={loaded && serving === 0 ? 'danger' : undefined} />
+        <Card label="Pending" value={loaded ? pending : undefined} accent={pending > 0 ? 'danger' : undefined} />
+        <Card label="Cluster queries" value={loaded ? totalQ : undefined} />
+        <Card label="Cluster blocked" value={loaded ? totalB : undefined} accent="danger" />
       </div>
 
       {/* ── Sites ─────────────────────────────────────────────────────────── */}
@@ -472,6 +477,8 @@ ${bridgeAlt}`
             )
           })}
         </div>
+      ) : !loaded ? (
+        !err && <Spinner label="Loading…" />
       ) : (
         <p className="muted">No sites yet — create one above, then assign agents in the table below.</p>
       )}
@@ -549,13 +556,9 @@ ${bridgeAlt}`
                 </tr>
               )
             })}
-            {agentsTable.rows.length === 0 && (
-              <tr>
-                <td colSpan={9} className="muted">
-                  No agents enrolled — add one from “Deploy a DNS agent” below.
-                </td>
-              </tr>
-            )}
+            <TableStatusRow loading={!loaded} error={err} empty={agentsTable.rows.length === 0} colSpan={9}>
+              No agents enrolled — add one from “Deploy a DNS agent” below.
+            </TableStatusRow>
           </tbody>
         </table>
       </div>
@@ -613,6 +616,8 @@ ${bridgeAlt}`
       {/* ── Enrollment keys ───────────────────────────────────────────────── */}
       <EnrollKeys
         keys={enrollKeys}
+        loading={!loaded}
+        error={err}
         created={newEnrollKey}
         onCreate={createEnrollKey}
         onRevoke={revokeEnrollKey}
@@ -946,10 +951,10 @@ function AgentModal({
   )
 }
 
-function Card({ label, value, accent }: { label: string; value: number; accent?: string }) {
+function Card({ label, value, accent }: { label: string; value?: number; accent?: string }) {
   return (
     <div className={`card ${accent || ''}`}>
-      <div className="card-value">{value.toLocaleString()}</div>
+      <div className="card-value">{value === undefined ? '—' : value.toLocaleString()}</div>
       <div className="card-label">{label}</div>
     </div>
   )
@@ -966,12 +971,16 @@ const TTL_OPTIONS: { label: string; hours: number }[] = [
 
 function EnrollKeys({
   keys,
+  loading,
+  error,
   created,
   onCreate,
   onRevoke,
   onDismiss,
 }: {
   keys: EnrollKey[]
+  loading: boolean
+  error: string
   created: { name: string; key: string } | null
   onCreate: (name: string, ttlHours: number, maxUses: number) => void
   onRevoke: (k: EnrollKey) => void
@@ -1076,13 +1085,9 @@ function EnrollKeys({
                 </td>
               </tr>
             ))}
-            {table.rows.length === 0 && (
-              <tr>
-                <td colSpan={7} className="muted">
-                  No enrollment keys yet — create one above to let agents join.
-                </td>
-              </tr>
-            )}
+            <TableStatusRow loading={loading} error={error} empty={table.rows.length === 0} colSpan={7}>
+              No enrollment keys yet — create one above to let agents join.
+            </TableStatusRow>
           </tbody>
         </table>
       </div>

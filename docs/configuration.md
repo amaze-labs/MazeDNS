@@ -139,8 +139,10 @@ never the secret values), viewable at `GET /api/settings/audit`.
 > the source of truth. Use PostgreSQL for the control plane if you want managed
 > backups/HA, and leave agents on their local SQLite.
 
-The Go garbage-collector knobs `GOGC` (raised to `200` internally to cut GC jitter)
-and `GOMEMLIMIT` are also honored on both images.
+The Go garbage-collector knobs `GOGC` and `GOMEMLIMIT` are honored on both images.
+When `GOGC` is unset, the DNS agent raises it to `200` to cut GC jitter on the
+query path; the control plane keeps Go's default (`100`), since it serves no DNS
+and a higher value would only inflate its heap.
 
 ---
 

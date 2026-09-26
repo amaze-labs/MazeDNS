@@ -52,7 +52,8 @@ remaining wins concentrate.
   reads (`server.go`).
 - **Non-blocking query log** — `QueryLogWriter.Write` drops on a full 4096 buffer
   instead of stalling the DNS goroutine (`store` writer).
-- **GC tuning** — `GOGC` defaulted to 200 to cut tail-latency jitter (`boot.go`).
+- **GC tuning** — `GOGC` defaulted to 200 on the DNS agent to cut tail-latency
+  jitter (`boot.go`); the control plane keeps the Go default.
 
 ## Open strategies
 

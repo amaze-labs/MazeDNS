@@ -48,7 +48,10 @@ func main() {
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
 	flag.Parse()
 
-	boot.TuneGC()
+	// No boot.TuneGC() here: its rationale (the DNS cache copies a message on
+	// every hit) is agent-only — the control plane's resolver is headless and
+	// serves no queries — and GOGC=200 would only let the heap grow to three
+	// times the live policy. The Go default (100) applies unless GOGC is set.
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {

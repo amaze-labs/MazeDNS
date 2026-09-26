@@ -42,9 +42,12 @@ func NewLogger(level string, ring *logbuf.Buffer) *slog.Logger {
 	return slog.New(h)
 }
 
-// TuneGC applies a less aggressive default GC unless the operator set GOGC. The
-// cache copies a message on every hit, so this trades a little memory (already
-// bounded by the cache size) for fewer GC cycles and less tail-latency jitter.
+// TuneGC applies a less aggressive default GC (GOGC=200) unless the operator
+// set GOGC. It is for the DNS agent only: its cache copies a message on every
+// hit, so this trades a little memory (already bounded by the cache size) for
+// fewer GC cycles and less tail-latency jitter. The control plane serves no
+// queries, so it keeps the Go default — there GOGC=200 would only let the
+// heap grow to three times the live data.
 func TuneGC() {
 	if os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(200)

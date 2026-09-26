@@ -32,9 +32,16 @@ action, and sort by processing time (`ms`) to find slow lookups.
 Operational DNS settings live under **Settings** and apply live across the cluster
 (no restart):
 
-- **Upstream resolvers** — tried in order, first to answer wins. Plain (`1.1.1.1:53`),
-  DoT (`tls://1.1.1.1:853#cloudflare-dns.com`), or DoH
-  (`https://dns.quad9.net/dns-query`). Quick-fill buttons are provided.
+- **Upstream resolvers** — plain (`1.1.1.1:53`), DoT
+  (`tls://1.1.1.1:853#cloudflare-dns.com`), or DoH (`https://dns.quad9.net/dns-query`).
+  Quick-fill buttons are provided; use the ↑/↓ arrows on each row to set the order,
+  which is saved exactly as shown. With the default **Ordered** strategy every query
+  goes to the first resolver and the next one is tried only if it times out (the
+  **per-resolver timeout**, default 1500 ms), fails, or answers `SERVFAIL`/`REFUSED`
+  — never in parallel. **Hedged** instead races the remaining resolvers when the first
+  hasn't answered within 30 ms, for lowest latency. Conditional forwarders with
+  several upstreams follow the same strategy. See
+  [Upstream strategy](configuration.md#upstream-strategy).
 - **Conditional forwarders** — send a domain suffix to specific upstreams
   (split-horizon), e.g. `corp.internal` → your internal resolver. Cluster-wide
   forwarders are managed on the **Rewrites** tab, can be scoped to specific

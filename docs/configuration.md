@@ -192,13 +192,37 @@ take rules/rewrites from the control plane via replication.
 
 | Section | Keys |
 |---|---|
-| `upstreams` | Ordered list; plain `1.1.1.1:53`, `tls://1.1.1.1:853#cloudflare-dns.com`, or `https://dns.quad9.net/dns-query`. |
+| `upstreams` | Ordered list; plain `1.1.1.1:53`, `tls://1.1.1.1:853#cloudflare-dns.com`, or `https://dns.quad9.net/dns-query`. The order is the failover order (see `upstream_strategy`). |
+| `upstream_strategy` | `ordered` (default) or `hedged` — see [Upstream strategy](#upstream-strategy). Also applies to conditional forwarders with more than one upstream. |
+| `upstream_timeout` | Per-upstream failover timeout for `ordered` (`1500ms`; clamped to `100ms`–`10s`). |
 | `forwarders` | Split-horizon per suffix: `- { suffix: "corp.internal", upstreams: [...] }`. Seeds this node's local forwarders; cluster-wide scoped forwarders managed in the UI override a local entry with the same suffix. |
 | `cache` | `enabled` (`true`), `max_entries` (`10000`), `min_ttl` (`10s`), `max_ttl` (`24h`). |
 | `rate_limit` | `enabled` (`false`), `qpm` (`600`). |
 | `dnssec` | `enabled` (`false`) — force the DO bit upstream and surface AD. |
 | `filter` | `enabled` (`true`), `block_response` (`nxdomain` or `zeroip`), `blocklist_files`. |
 | `zones` | Authoritative records served locally. |
+
+#### Upstream strategy
+
+- **`ordered`** (default) — strict failover. Every query goes to the first
+  upstream; the next one is queried only when the current one does not answer
+  within `upstream_timeout`, fails with a network error, or answers `SERVFAIL` or
+  `REFUSED` (`REFUSED` means that server won't serve us — ACL, rate limit — so
+  another may). `NXDOMAIN` and empty answers are real answers and are returned
+  as-is. Upstreams are never queried in parallel, so under normal conditions only
+  the first one sees traffic. The last upstream gets whatever is left of the 5 s
+  query budget, and no further upstream is started once it is spent. If every
+  upstream fails softly the client gets `SERVFAIL`.
+- **`hedged`** — the previous default: the first upstream is queried and, if it
+  hasn't answered within 30 ms (or fails), all the others are queried in parallel;
+  the first valid answer wins. Lowest latency, but traffic spreads over every
+  upstream and the answering server isn't predictable.
+
+Settings saved before these keys existed run `ordered` with the default timeout
+(or whatever the config file sets, until the settings are next saved from the
+UI). Upstreams and the strategy are per-node settings: on a DNS agent they come
+from its own config file — only conditional forwarders are pushed from the control
+plane.
 
 ---
 

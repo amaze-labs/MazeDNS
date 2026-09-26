@@ -1002,9 +1002,20 @@ select option {
   border-color: var(--accent);
 }
 
-input {
+/* Text-like inputs grow to fill form rows. Checkboxes, radios and the other
+   fixed-size controls are excluded so they are never stretched to 180px+;
+   :where() keeps the specificity of a bare `input` selector so the per-component
+   overrides below (e.g. `.upstream-row > input`) still win. */
+input:where(:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'])) {
   flex: 1;
   min-width: 180px;
+}
+/* Native checkboxes and radios keep their intrinsic size in flex rows (no
+   growing, no squashing next to long labels) and drop the text-field padding. */
+input[type='checkbox'],
+input[type='radio'] {
+  flex: none;
+  padding: 0;
 }
 
 form button {
@@ -1208,13 +1219,11 @@ button.del:hover {
   border-color: var(--accent, #3b82f6);
   background: color-mix(in srgb, var(--accent, #3b82f6) 8%, transparent);
 }
-/* Native radio is hidden; .opt-mark is the custom dot so it can't be stretched by
-   the global `input { flex:1 }` rule. */
+/* Native radio is hidden; .opt-mark is the custom dot drawn in its place. */
 .setup-method-opt input[type='radio'] {
   position: absolute;
   opacity: 0;
   width: 0;
-  min-width: 0;
   height: 0;
 }
 .opt-mark {
@@ -2406,10 +2415,6 @@ th.sortable:hover {
   gap: 8px;
   cursor: pointer;
 }
-.kpi-customize li input {
-  flex: none;
-  min-width: 0;
-}
 .kpi-customize li .btn {
   padding: 2px 8px;
 }
@@ -2885,4 +2890,25 @@ img.acct-avatar.lg {
 
 /* Scope picker: inline chips next to the type select */
 .scope-picker { display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-.scope-chip { display: inline-flex; align-items: center; gap: 0.2rem; font-size: 0.85em; padding: 0.1rem 0.4rem; border: 1px solid var(--border, #4444); border-radius: 999px; cursor: pointer; }
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85em;
+  line-height: 1.2;
+  white-space: nowrap;
+  padding: 0.2rem 0.6rem 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.scope-chip:hover {
+  border-color: var(--line-strong);
+}
+.scope-chip:has(input:checked) {
+  border-color: var(--accent);
+}
+.scope-chip input {
+  margin: 0;
+}

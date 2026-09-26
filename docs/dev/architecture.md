@@ -94,9 +94,34 @@ images (`mazedns-control-plane`, `mazedns-agent`).
 authenticating with a per-node API key (Bearer). The snapshot carries the rules
 and rewrites plus a short content **version hash** (`store.ConfigVersion`, an
 order-independent hash of the replicated config); the agent applies a new snapshot
-only when its own hash differs, so steady state is a cheap no-op. Query logs and
-counters flow the other way via `POST /api/cluster/log`. None of this touches the
-DNS hot path.
+only when its own hash differs. Query logs and counters flow the other way via
+`POST /api/cluster/log`. None of this touches the DNS hot path.
+
+Steady state is kept cheap on both sides:
+
+- Every poll sends the agent's applied version in `X-MazeDNS-Node-Version`. The
+  agent hashes its config once per applied snapshot and persists it in
+  `app_meta` (with a fingerprint of its tables, so a stale value is never reused
+  after a restart), instead of re-hashing every rule on each poll.
+- An agent that supports it adds `X-MazeDNS-Accept-Not-Modified: 1` together with
+  the rest of the state a snapshot carries: `X-MazeDNS-Node-ID`,
+  `X-MazeDNS-Paused-Until` and `X-MazeDNS-Maintenance` (as it applied them). The
+  control plane then answers **`304 Not Modified`** with no body when all of them
+  and the version match, and no node key was rotated on that poll; otherwise it
+  sends the full `200` snapshot. An agent offers this only after it has applied a
+  full snapshot in the current process, so the first poll after boot is always a
+  `200`. Agents that do not send the header (older builds) always get the full
+  `200`, and an older control plane ignores the headers, so either side can be
+  upgraded first. Node stats, address and versions are recorded on every poll,
+  `304` included.
+- The control plane caches each node's version per (node name, site). The cache
+  is keyed to a store-wide generation counter bumped after every committed write
+  to a table that feeds the version (`rules`, `lists`, `classifications`,
+  `rewrites`, `forwarders`), detected in the DB wrapper every write goes through
+  (`internal/store/dialect.go`). Inserting an AI verdict that is not enforced
+  cannot change the version and is exempt. Entries also expire after five minutes as a
+  safety net for edits made outside the process. The Cluster page's
+  expected-version column is served from the same cache.
 
 **Enrollment (key-based auto-join).** Agents self-register with an **enrollment key**
 — created in the UI (Cluster → Enrollment keys), each with an optional expiry and

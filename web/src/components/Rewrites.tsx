@@ -4,6 +4,14 @@ import Modal from './Modal'
 import ScopePicker, { ALL_SCOPE, scopeBadge, type Scope } from './ScopePicker'
 import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
+// Upstreams are edited as one comma-separated field in both the add form and
+// the edit dialog.
+const splitUpstreams = (raw: string) =>
+  raw
+    .split(',')
+    .map((u) => u.trim())
+    .filter(Boolean)
+
 const COLS: SortAccessors<Rewrite> = {
   domain: (r) => r.domain,
   rrtype: (r) => r.rrtype,
@@ -28,6 +36,7 @@ export default function Rewrites() {
   const [sites, setSites] = useState<string[] | null>(null)
 
   const [editing, setEditing] = useState<Rewrite | null>(null)
+  const [editingFwd, setEditingFwd] = useState<Forwarder | null>(null)
 
   const load = () => {
     api.rewrites().then(setRows).catch((e) => setErr(e.message))
@@ -83,10 +92,7 @@ export default function Rewrites() {
 
   const addFwd = async (e: FormEvent) => {
     e.preventDefault()
-    const ups = upstreams
-      .split(',')
-      .map((u) => u.trim())
-      .filter(Boolean)
+    const ups = splitUpstreams(upstreams)
     if (!suffix.trim() || ups.length === 0) return
     try {
       await api.addForwarder(suffix.trim(), ups, fwdScope.scope_type, fwdScope.scope_values)
@@ -107,6 +113,14 @@ export default function Rewrites() {
     } catch (e: any) {
       setFwdErr(e.message)
     }
+  }
+
+  const saveFwdEdit = async (f: Forwarder, raw: string, s: Scope) => {
+    const ups = splitUpstreams(raw)
+    if (ups.length === 0) throw new Error('at least one upstream is required')
+    await api.updateForwarder(f.id, ups, f.enabled, s.scope_type, s.scope_values)
+    setEditingFwd(null)
+    load()
   }
 
   const delFwd = async (id: number) => {
@@ -228,9 +242,14 @@ export default function Rewrites() {
                 <button onClick={() => toggleFwd(f)}>{f.enabled ? 'On' : 'Off'}</button>
               </td>
               <td>
-                <button className="del" onClick={() => delFwd(f.id)}>
-                  ✕
-                </button>
+                <div className="actions">
+                  <button className="btn ghost" onClick={() => setEditingFwd(f)}>
+                    Edit
+                  </button>
+                  <button className="del" onClick={() => delFwd(f.id)} title="Delete">
+                    ✕
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -261,6 +280,25 @@ export default function Rewrites() {
           sites={sites}
           onClose={() => setEditing(null)}
           onSave={(text, s) => saveEdit(editing, text, s)}
+        />
+      )}
+      {editingFwd && (
+        <EditScopedModal
+          title={`Edit forwarder ${editingFwd.suffix}`}
+          intro={
+            <>
+              The suffix <code>{editingFwd.suffix}</code> identifies the forwarder and can't be changed; delete it and add
+              a new one instead.
+            </>
+          }
+          fieldLabel="Upstreams (comma-separated)"
+          fieldPlaceholder="e.g. 10.0.0.2:53"
+          initialText={editingFwd.upstreams.join(', ')}
+          initialScope={{ scope_type: editingFwd.scope_type || 'all', scope_values: editingFwd.scope_values ?? [] }}
+          nodes={nodes}
+          sites={sites}
+          onClose={() => setEditingFwd(null)}
+          onSave={(text, s) => saveFwdEdit(editingFwd, text, s)}
         />
       )}
     </div>

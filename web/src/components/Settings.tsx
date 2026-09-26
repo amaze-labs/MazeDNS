@@ -3,6 +3,7 @@ import {
   api,
   type Settings as S,
   type ForwardGroup,
+  type UpstreamStrategy,
   type ClassifierSettings,
   type ClassifierStatus,
   type NetbirdSettings,
@@ -267,6 +268,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   }
 
   const patch = (p: Partial<S>) => setS({ ...s, ...p })
+  const hedged = s.upstream_strategy === 'hedged'
   const patchCache = (p: Partial<S['cache']>) => setS({ ...s, cache: { ...s.cache, ...p } })
 
   // Structured upstream editing keeps the canonical `upstreams` text in sync so
@@ -278,6 +280,23 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const setRow = (i: number, p: Partial<UpRow>) => setRows(upRows.map((r, j) => (j === i ? { ...r, ...p } : r)))
   const addRow = () => setRows([...upRows, emptyRow()])
   const delRow = (i: number) => setRows(upRows.filter((_, j) => j !== i))
+  // moveRow shifts resolver i one place up (d = -1) or down (d = 1). The list
+  // order is the failover order, saved exactly as shown. Focus follows the moved
+  // resolver so repeated keyboard presses keep moving the same entry.
+  const moveRow = (i: number, d: -1 | 1) => {
+    const j = i + d
+    if (j < 0 || j >= upRows.length) return
+    const rows = [...upRows]
+    ;[rows[i], rows[j]] = [rows[j], rows[i]]
+    setRows(rows)
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`[data-upstream-row="${j}"]`)
+      const btn =
+        row?.querySelector<HTMLButtonElement>(`button[data-move="${d}"]:not(:disabled)`) ??
+        row?.querySelector<HTMLButtonElement>('button[data-move]:not(:disabled)')
+      btn?.focus()
+    })
+  }
   const quickFill = (p: (typeof PROVIDERS)[number]) => {
     if (qfProto === 'https') setRows([{ ...emptyRow(), proto: 'https', url: p.doh }])
     else if (qfProto === 'tls') setRows(p.ips.map((ip) => ({ proto: 'tls', host: ip, port: '853', name: p.name, url: '' })))
@@ -572,7 +591,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       <details className="settings-card" open>
         <summary>Upstream resolvers</summary>
         <label className="muted">
-          Tried in order. <strong>DoT/DoH is recommended</strong> — connections are pooled, so large/DNSSEC-validated
+          {hedged
+            ? 'Hedged: the first resolver is queried, and if it has not answered within 30 ms the others are queried in parallel — the fastest answer wins. '
+            : 'Tried in order: every query goes to the first resolver; the next one is used only if the previous times out, fails, or answers SERVFAIL/REFUSED. Use the arrows to change the order. '}
+          <strong>DoT/DoH is recommended</strong> — connections are pooled, so large/DNSSEC-validated
           answers avoid UDP fragmentation and per-query handshakes (lower latency). Plain DNS is faster to set up but
           unencrypted.
         </label>
@@ -601,7 +623,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         ) : (
           <div className="upstream-list">
             {upRows.map((r, i) => (
-              <div className="upstream-row" key={i}>
+              <div className="upstream-row" key={i} data-upstream-row={i}>
+                <span className="upstream-pos" title={i === 0 ? 'Primary resolver' : `Fallback #${i}`}>
+                  {i + 1}
+                </span>
                 <select value={r.proto} onChange={(e) => setRow(i, { proto: e.target.value as UpProto })} aria-label="Protocol">
                   <option value="plain">Plain DNS</option>
                   <option value="tls">DoT</option>
@@ -639,6 +664,30 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                     )}
                   </>
                 )}
+                <span className="upstream-move">
+                  <button
+                    type="button"
+                    className="move"
+                    data-move={-1}
+                    onClick={() => moveRow(i, -1)}
+                    disabled={i === 0}
+                    aria-label={`Move resolver ${i + 1} up`}
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="move"
+                    data-move={1}
+                    onClick={() => moveRow(i, 1)}
+                    disabled={i === upRows.length - 1}
+                    aria-label={`Move resolver ${i + 1} down`}
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                </span>
                 <button type="button" className="del" onClick={() => delRow(i)} aria-label="Remove resolver">
                   ✕
                 </button>
@@ -655,6 +704,37 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             {rawUpstreams ? '← Back to editor' : 'Edit as text'}
           </button>{' '}
           · Click <strong>Save changes</strong> below to apply.
+        </p>
+
+        <div className="field">
+          <label htmlFor="upstream-strategy">Failover strategy</label>
+          <select
+            id="upstream-strategy"
+            value={hedged ? 'hedged' : 'ordered'}
+            onChange={(e) => patch({ upstream_strategy: e.target.value as UpstreamStrategy })}
+          >
+            <option value="ordered">Ordered — strict failover</option>
+            <option value="hedged">Hedged — race after 30 ms</option>
+          </select>
+        </div>
+        {!hedged && (
+          <div className="field">
+            <label htmlFor="upstream-timeout">Per-resolver timeout (ms)</label>
+            <input
+              id="upstream-timeout"
+              type="number"
+              min={100}
+              max={10000}
+              step={100}
+              value={s.upstream_timeout_ms}
+              onChange={(e) => patch({ upstream_timeout_ms: Number(e.target.value) })}
+            />
+          </div>
+        )}
+        <p className="muted" style={{ textAlign: 'left', marginTop: 4 }}>
+          {hedged
+            ? 'Lowest latency, but queries reach several resolvers and the answering one is not predictable. Also applies to conditional forwarders with more than one upstream.'
+            : 'How long one resolver may take before the next is tried (default 1500 ms); the last resolver gets the rest of the 5 s query budget. Also applies to conditional forwarders with more than one upstream.'}
         </p>
       </details>
 

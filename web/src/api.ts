@@ -439,7 +439,14 @@ export interface Settings {
   rate_limit_qpm: number
   dnssec: boolean
   cache: CacheSettings
+  // How several upstreams are used: "ordered" (strict failover, the default) or
+  // "hedged" (the rest are raced in parallel when the first is slow).
+  upstream_strategy: UpstreamStrategy
+  // Ordered strategy: how long one upstream may take before the next is tried.
+  upstream_timeout_ms: number
 }
+
+export type UpstreamStrategy = 'ordered' | 'hedged'
 
 // One process-log line from the control plane's or an agent's in-memory ring.
 export interface LogEntry {

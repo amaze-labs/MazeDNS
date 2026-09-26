@@ -1549,6 +1549,34 @@ details.settings-card[open] > :last-child {
 .upstream-list > .btn.ghost {
   align-self: flex-start;
 }
+/* Failover position + reorder controls: the list order is the query order. */
+.upstream-pos {
+  flex: 0 0 auto;
+  min-width: 1.5em;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.upstream-move {
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+button.move {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+}
+button.move:hover:not(:disabled) {
+  color: var(--accent);
+}
+button.move:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
 
 /* Button system (used in Settings and reusable elsewhere) */
 .btn {

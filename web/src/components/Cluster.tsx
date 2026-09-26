@@ -200,19 +200,18 @@ export default function Cluster() {
     }
   }
 
+  // Agent actions below are used from the agent modal, which shows their errors
+  // itself (the page-level error box is hidden behind the modal backdrop), so
+  // they throw instead of calling setErr. Cancelling a confirm is not an error.
   const del = async (n: Node, revoke: boolean) => {
     const msg = revoke
       ? `Remove and revoke agent “${n.name}”? Its identity is tombstoned so the running agent cannot rejoin the cluster — it keeps serving DNS standalone until you stop it or un-revoke.`
       : `Remove agent “${n.name}” only? A still-running agent may re-enroll as a NEW node. Use this for intentional replacement.`
     if (!window.confirm(msg)) return
-    try {
-      await api.deleteNode(n.id, revoke)
-      if (newKey?.name === n.name) setNewKey(null)
-      if (selected === n.id) setSelected(null)
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    await api.deleteNode(n.id, revoke)
+    if (newKey?.name === n.name) setNewKey(null)
+    if (selected === n.id) setSelected(null)
+    load()
   }
 
   const unrevoke = async (r: RevokedNode) => {
@@ -241,61 +240,41 @@ export default function Cluster() {
 
   const renew = async (n: Node) => {
     if (!window.confirm(`Rotate the key for “${n.name}”? The old key stops working immediately.`)) return
-    try {
-      const r = await api.renewNodeKey(n.id)
-      setNewKey({ name: n.name, key: r.key })
-      setErr('')
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    const r = await api.renewNodeKey(n.id)
+    setNewKey({ name: n.name, key: r.key })
+    load()
   }
 
-  const rename = async (n: Node) => {
-    const next = window.prompt(`Rename agent “${n.name}” (display label only — its identity and history are unchanged):`, n.name)
-    if (next == null) return
-    const name = next.trim()
-    if (!name || name === n.name) return
-    try {
-      await api.renameNode(n.id, name)
-      setErr('')
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
+  // rename validation (non-empty, not reserved, not used by another live node)
+  // is the backend's; its message is shown next to the modal's rename field.
+  const rename = async (n: Node, name: string) => {
+    await api.renameNode(n.id, name)
+    await load() // refresh before the field closes so the new name shows at once
   }
 
   const approve = async (n: Node) => {
-    try {
-      await api.approveNode(n.id, !n.approved)
-      setErr('')
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    await api.approveNode(n.id, !n.approved)
+    load()
   }
 
   const toggleMaintenance = async (n: Node) => {
     const on = !n.maintenance
     if (on && !window.confirm(`Put “${n.name}” into maintenance? It stops serving DNS (SERVFAIL) so clients fail over to another agent.`)) return
-    try {
-      await api.setNodeMaintenance(n.id, on)
-      setErr('')
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    await api.setNodeMaintenance(n.id, on)
+    load()
   }
 
   const assignSite = async (n: Node, site: string, role: string) => {
-    try {
-      await api.setNodeSite(n.id, site, role)
-      setErr('')
-      load()
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    await api.setNodeSite(n.id, site, role)
+    load()
   }
+  // assignSiteFromTable reports failures of the agents-table dropdowns in the
+  // page-level error box (no modal is open there).
+  const assignSiteFromTable = (n: Node, site: string, role: string) =>
+    assignSite(n, site, role).then(
+      () => setErr(''),
+      (e: any) => setErr(e.message),
+    )
 
   const addSite = async (e: FormEvent) => {
     e.preventDefault()
@@ -549,11 +528,11 @@ ${bridgeAlt}`
                   </td>
                   <td>{nodeIP(n) || '—'}</td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <SiteSelect value={n.site} sites={sitesInUse} onChange={(site) => assignSite(n, site, site ? n.role || 'backup' : '')} />
+                    <SiteSelect value={n.site} sites={sitesInUse} onChange={(site) => assignSiteFromTable(n, site, site ? n.role || 'backup' : '')} />
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
                     {n.site ? (
-                      <RoleSelect value={n.role} onChange={(role) => assignSite(n, n.site, role)} />
+                      <RoleSelect value={n.role} onChange={(role) => assignSiteFromTable(n, n.site, role)} />
                     ) : (
                       <span className="muted">—</span>
                     )}
@@ -680,6 +659,7 @@ ${bridgeAlt}`
 
       {selectedNode && (
         <AgentModal
+          key={selectedNode.id}
           node={selectedNode}
           cpVer={cpVer}
           sites={sitesInUse}
@@ -688,7 +668,7 @@ ${bridgeAlt}`
           onApprove={() => approve(selectedNode)}
           onMaintenance={() => toggleMaintenance(selectedNode)}
           onRenew={() => renew(selectedNode)}
-          onRename={() => rename(selectedNode)}
+          onRename={(name) => rename(selectedNode, name)}
           onDelete={(revoke) => del(selectedNode, revoke)}
           onAssign={(site, role) => assignSite(selectedNode, site, role)}
         />
@@ -715,13 +695,61 @@ function AgentModal({
   sites: string[]
   newKey: { name: string; key: string } | null
   onClose: () => void
-  onApprove: () => void
-  onMaintenance: () => void
-  onRenew: () => void
-  onRename: () => void
-  onDelete: (revoke: boolean) => void
-  onAssign: (site: string, role: string) => void
+  onApprove: () => Promise<void>
+  onMaintenance: () => Promise<void>
+  onRenew: () => Promise<void>
+  onRename: (name: string) => Promise<void>
+  onDelete: (revoke: boolean) => Promise<void>
+  onAssign: (site: string, role: string) => Promise<void>
 }) {
+  // Errors are kept per action and shown next to the control that failed —
+  // the page-level error box sits behind the modal backdrop. State lives in the
+  // modal, so it is dropped when the modal closes.
+  const [actionErr, setActionErr] = useState<{ at: string; msg: string } | null>(null)
+  const [busy, setBusy] = useState('')
+  const run = async (at: string, fn: () => Promise<void>) => {
+    setActionErr(null)
+    setBusy(at)
+    try {
+      await fn()
+    } catch (e: any) {
+      setActionErr({ at, msg: e?.message || 'Request failed' })
+    } finally {
+      setBusy('')
+    }
+  }
+  const errFor = (at: string) =>
+    actionErr?.at === at ? (
+      <div className="error agent-action-error" role="alert">
+        {actionErr.msg}
+      </div>
+    ) : null
+
+  // Inline rename: the Rename row turns into a field pre-filled with the name.
+  const [renaming, setRenaming] = useState(false)
+  const [draft, setDraft] = useState('')
+  const startRename = () => {
+    setDraft(node.name)
+    setActionErr(null)
+    setRenaming(true)
+  }
+  const cancelRename = () => {
+    setRenaming(false)
+    if (actionErr?.at === 'rename') setActionErr(null)
+  }
+  const saveRename = (e: FormEvent) => {
+    e.preventDefault()
+    const next = draft.trim()
+    if (next === node.name) {
+      cancelRename()
+      return
+    }
+    run('rename', async () => {
+      await onRename(next)
+      setRenaming(false)
+    })
+  }
+
   const st = statusOf(node)
   const pct = node.total > 0 ? `${Math.round((node.blocked / node.total) * 100)}% of queries` : undefined
   const tiles: { label: string; value: string; sub?: string; tone?: string }[] = [
@@ -775,15 +803,20 @@ function AgentModal({
       <div className="agent-assign">
         <label>
           Site
-          <SiteSelect value={node.site} sites={sites} onChange={(site) => onAssign(site, site ? node.role || 'backup' : '')} />
+          <SiteSelect
+            value={node.site}
+            sites={sites}
+            onChange={(site) => run('assign', () => onAssign(site, site ? node.role || 'backup' : ''))}
+          />
         </label>
         {node.site && (
           <label>
             Role
-            <RoleSelect value={node.role} onChange={(role) => onAssign(node.site, role)} />
+            <RoleSelect value={node.role} onChange={(role) => run('assign', () => onAssign(node.site, role))} />
           </label>
         )}
       </div>
+      {errFor('assign')}
 
       {newKey && (
         <div className="enroll" style={{ marginTop: 12 }}>
@@ -798,58 +831,115 @@ function AgentModal({
       <h4 className="agent-actions-head">Actions</h4>
       <div className="agent-actions">
         <div className="agent-action">
-          <button className={`btn ${node.approved ? '' : 'primary'}`} onClick={onApprove}>
+          <button
+            className={`btn ${node.approved ? '' : 'primary'}`}
+            disabled={busy === 'approve'}
+            onClick={() => run('approve', onApprove)}
+          >
             {node.approved ? 'Hold' : 'Approve'}
           </button>
-          <span className="muted">
-            {node.approved
-              ? 'Revoke admission — the agent stops pulling config and serving until re-approved.'
-              : 'Admit this agent to the cluster so it can pull config and serve DNS.'}
-          </span>
+          <div className="agent-action-text">
+            <span className="muted">
+              {node.approved
+                ? 'Revoke admission — the agent stops pulling config and serving until re-approved.'
+                : 'Admit this agent to the cluster so it can pull config and serve DNS.'}
+            </span>
+            {errFor('approve')}
+          </div>
         </div>
         <div className="agent-action">
-          <button className={`btn ${node.maintenance ? 'primary' : ''}`} onClick={onMaintenance}>
+          <button
+            className={`btn ${node.maintenance ? 'primary' : ''}`}
+            disabled={busy === 'maintenance'}
+            onClick={() => run('maintenance', onMaintenance)}
+          >
             {node.maintenance ? 'Resume' : 'Maintenance'}
           </button>
-          <span className="muted">
-            {node.maintenance
-              ? 'Resume serving DNS.'
-              : 'Drain: answer SERVFAIL so clients fail over to another agent (for reboots/upgrades).'}
-          </span>
+          <div className="agent-action-text">
+            <span className="muted">
+              {node.maintenance
+                ? 'Resume serving DNS.'
+                : 'Drain: answer SERVFAIL so clients fail over to another agent (for reboots/upgrades).'}
+            </span>
+            {errFor('maintenance')}
+          </div>
         </div>
+        {renaming ? (
+          <form className="agent-action agent-rename" onSubmit={saveRename}>
+            <div className="agent-rename-field">
+              <input
+                className="agent-rename-input"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  // Escape cancels the edit only — keep it from reaching the
+                  // modal's window-level Escape handler (which closes it).
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    cancelRename()
+                  }
+                }}
+                onFocus={(e) => e.target.select()}
+                aria-label="Agent name"
+                aria-invalid={actionErr?.at === 'rename'}
+                disabled={busy === 'rename'}
+                autoFocus
+              />
+              <button type="submit" className="btn primary" disabled={busy === 'rename'}>
+                {busy === 'rename' ? 'Saving…' : 'Save'}
+              </button>
+              <button type="button" className="btn ghost" onClick={cancelRename} disabled={busy === 'rename'}>
+                Cancel
+              </button>
+            </div>
+            <div className="agent-action-text">
+              <span className="muted">Enter to save, Esc to cancel. The agent’s identity and history are unchanged.</span>
+              {errFor('rename')}
+            </div>
+          </form>
+        ) : (
+          <div className="agent-action">
+            <button className="btn" onClick={startRename}>
+              Rename
+            </button>
+            <span className="muted">Change the display label. The agent’s identity and history are unchanged.</span>
+          </div>
+        )}
         <div className="agent-action">
-          <button className="btn" onClick={onRename}>
-            Rename
-          </button>
-          <span className="muted">Change the display label. The agent’s identity and history are unchanged.</span>
-        </div>
-        <div className="agent-action">
-          <button className="btn" onClick={onRenew}>
+          <button className="btn" disabled={busy === 'renew'} onClick={() => run('renew', onRenew)}>
             Rotate key
           </button>
-          <span className="muted">
-            Issue a new per-node key. A running agent adopts it automatically on its next poll (the old key stays valid
-            for a short grace window — no downtime). The key shown is for the manual <code>MAZEDNS_NODE_KEY</code> path.
-          </span>
+          <div className="agent-action-text">
+            <span className="muted">
+              Issue a new per-node key. A running agent adopts it automatically on its next poll (the old key stays
+              valid for a short grace window — no downtime). The key shown is for the manual{' '}
+              <code>MAZEDNS_NODE_KEY</code> path.
+            </span>
+            {errFor('renew')}
+          </div>
         </div>
         <div className="agent-action">
           <div className="agent-remove-btns">
-            <button className="del" onClick={() => onDelete(true)}>
+            <button className="del" disabled={busy === 'delete'} onClick={() => run('delete', () => onDelete(true))}>
               Remove &amp; revoke
             </button>
-            <button className="btn ghost" onClick={() => onDelete(false)}>
+            <button className="btn ghost" disabled={busy === 'delete'} onClick={() => run('delete', () => onDelete(false))}>
               Remove only
             </button>
           </div>
-          <span className="muted">
-            <strong>Remove &amp; revoke</strong> tombstones this node’s identity so the running agent can’t rejoin — use
-            it for a decommissioned or compromised agent. <strong>Remove only</strong> deletes the row so the agent may
-            re-enroll as a new node (intentional replacement).
-            <br />
-            Note: an agent whose <code>/data</code> was wiped enrolls with no identity and can’t be matched to the
-            tombstone — but with the same name it can <em>reclaim</em> this node once it goes offline. To keep it out,
-            also revoke the enrollment key it holds and/or turn on <em>require approval</em>.
-          </span>
+          <div className="agent-action-text">
+            <span className="muted">
+              <strong>Remove &amp; revoke</strong> tombstones this node’s identity so the running agent can’t rejoin — use
+              it for a decommissioned or compromised agent. <strong>Remove only</strong> deletes the row so the agent may
+              re-enroll as a new node (intentional replacement).
+              <br />
+              Note: an agent whose <code>/data</code> was wiped enrolls with no identity and can’t be matched to the
+              tombstone — but with the same name it can <em>reclaim</em> this node once it goes offline. To keep it out,
+              also revoke the enrollment key it holds and/or turn on <em>require approval</em>.
+            </span>
+            {errFor('delete')}
+          </div>
         </div>
       </div>
     </Modal>

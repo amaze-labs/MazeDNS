@@ -2800,6 +2800,42 @@ img.acct-avatar.lg {
 .agent-action .muted {
   font-size: 13px;
 }
+/* Copy column of an action row; also holds that action's error message. */
+.agent-action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+/* Per-action errors inside the agent modal (the page-level .error box sits
+   behind the modal backdrop). Compact variant of .error. */
+.agent-action-error {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.agent-assign + .agent-action-error {
+  margin-top: 10px;
+}
+/* Inline rename: the Rename row becomes name field + Save/Cancel. */
+.agent-rename {
+  flex-wrap: wrap;
+}
+.agent-rename-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+.agent-rename-input {
+  flex: 0 1 220px;
+  width: 220px;
+  min-width: 140px;
+}
+.agent-rename-field button {
+  min-width: 0;
+}
 /* Two-choice node removal (revoke vs remove-only): stack the buttons, top-aligned
    next to the explanatory copy. */
 .agent-remove-btns {

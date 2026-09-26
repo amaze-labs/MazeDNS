@@ -17,3 +17,21 @@ type Snapshot struct {
 	PausedUntil int64               `json:"paused_until"` // cluster-wide block pause deadline (unix)
 	Maintenance bool                `json:"maintenance"`  // this node is drained (answers SERVFAIL)
 }
+
+// Snapshot-poll request headers (agent -> control plane).
+//
+// Every agent sends HeaderNodeVersion (the replicated-config hash it has
+// applied). An agent that understands "304 Not Modified" also sends
+// HeaderAcceptNotModified plus the rest of the state a snapshot would carry
+// — its node id, the block-pause deadline and maintenance flag it has
+// applied — so the control plane can skip the payload only when the agent
+// provably holds everything the snapshot would deliver. Agents that don't
+// send HeaderAcceptNotModified (older builds) always get the full 200: they
+// would treat an empty rule set as authoritative and stop blocking.
+const (
+	HeaderNodeVersion       = "X-MazeDNS-Node-Version"
+	HeaderAcceptNotModified = "X-MazeDNS-Accept-Not-Modified" // "1" = the agent handles 304
+	HeaderNodeID            = "X-MazeDNS-Node-ID"
+	HeaderPausedUntil       = "X-MazeDNS-Paused-Until" // decimal unix seconds the agent has applied
+	HeaderMaintenance       = "X-MazeDNS-Maintenance"  // "1" | "0", as the agent has applied it
+)

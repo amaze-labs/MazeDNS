@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,15 +24,24 @@ func (s *Store) ReplicatedRules() ([]Rule, error) {
 	if err != nil {
 		return nil, err
 	}
-	seen := make(map[string]bool, len(rules))
-	for _, r := range rules {
-		if r.Action == "deny" {
-			seen[r.Domain] = true
-		}
-	}
 	ai, err := s.ActiveAIBlocked()
 	if err != nil {
 		return nil, err
+	}
+	if len(ai) == 0 {
+		return rules, nil
+	}
+	// Dedupe against the (few) AI domains instead of indexing every deny rule:
+	// a set over the whole rule table is tens of MB at blocklist scale.
+	aiDomains := make(map[string]bool, len(ai))
+	for _, c := range ai {
+		aiDomains[c.Domain] = true
+	}
+	seen := make(map[string]bool, len(ai))
+	for _, r := range rules {
+		if r.Action == "deny" && aiDomains[r.Domain] {
+			seen[r.Domain] = true
+		}
 	}
 	for _, c := range ai {
 		if seen[c.Domain] {
@@ -53,17 +62,42 @@ func (s *Store) ReplicatedRules() ([]Rule, error) {
 // ruleLine, rewriteLine, and forwardLine are the single source of truth for
 // the hashed line formats (R|, W|, F|) shared by configHash and the batched
 // ConfigVersionsForNodes — they are frozen: changing them desynchronizes
-// every agent at once.
+// every agent at once. They are built by concatenation rather than
+// fmt.Sprintf (one allocation per line instead of several), producing the
+// exact bytes the original "R|%s|%s|%s|%t" formats did; the golden test in
+// confighash_test.go pins that equivalence.
 func ruleLine(r Rule) string {
-	return fmt.Sprintf("R|%s|%s|%s|%t", r.Action, r.Domain, r.Category, r.Enabled)
+	return "R|" + r.Action + "|" + r.Domain + "|" + r.Category + "|" + strconv.FormatBool(r.Enabled)
 }
 
 func rewriteLine(rw Rewrite) string {
-	return fmt.Sprintf("W|%s|%s|%s|%t", rw.Domain, rw.RRType, rw.Value, rw.Enabled)
+	return "W|" + rw.Domain + "|" + rw.RRType + "|" + rw.Value + "|" + strconv.FormatBool(rw.Enabled)
 }
 
 func forwardLine(f ForwardSpec) string {
-	return fmt.Sprintf("F|%s|%s", f.Suffix, strings.Join(f.Upstreams, ","))
+	return "F|" + f.Suffix + "|" + strings.Join(f.Upstreams, ",")
+}
+
+// hashLines sorts lines in place and returns the short hash of their
+// "\n"-joined concatenation. The join is streamed into the hasher through a
+// small buffer instead of materializing the joined string and its []byte copy
+// (two extra copies of ~30 MB each at blocklist scale).
+func hashLines(lines []string) string {
+	sort.Strings(lines) // order-independent: same content -> same hash on every node
+	h := sha256.New()
+	buf := make([]byte, 0, 64<<10)
+	for i, l := range lines {
+		if len(buf) > 0 && len(buf)+len(l)+1 > cap(buf) {
+			h.Write(buf)
+			buf = buf[:0]
+		}
+		if i > 0 {
+			buf = append(buf, '\n')
+		}
+		buf = append(buf, l...)
+	}
+	h.Write(buf)
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
 // configHash is the shared content hash both sides compute from their own
@@ -80,9 +114,7 @@ func configHash(rules []Rule, rewrites []Rewrite, fws []ForwardSpec) string {
 	for _, f := range fws {
 		lines = append(lines, forwardLine(f))
 	}
-	sort.Strings(lines) // order-independent: same content -> same hash on every node
-	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	return hex.EncodeToString(sum[:])[:12]
+	return hashLines(lines)
 }
 
 // ConfigVersion returns a short content hash of the replicated config this
@@ -274,9 +306,7 @@ func (s *Store) ConfigVersionsForNodes(nodes []Node) (map[string]string, error) 
 			lines := make([]string, 0, len(ruleLines)+len(nodeLines))
 			lines = append(lines, ruleLines...)
 			lines = append(lines, nodeLines...)
-			sort.Strings(lines)
-			sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-			hash = hex.EncodeToString(sum[:])[:12]
+			hash = hashLines(lines)
 			memo[memoKey] = hash
 		}
 		out[n.Name] = hash

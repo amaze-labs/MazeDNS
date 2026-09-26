@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Spinner from './Spinner'
+import { TableStatusRow } from './tableKit'
 import {
   Area,
   AreaChart,
@@ -126,7 +127,20 @@ function Section({
   )
 }
 
-function Donut({ data, height = 180 }: { data: { name: string; value: number; fill: string }[]; height?: number }) {
+// Donut renders a spinner until its data source first answers (nothing if that
+// failed — the page shows the error), then "No data yet" or the chart.
+function Donut({
+  data,
+  loading,
+  error,
+  height = 180,
+}: {
+  data: { name: string; value: number; fill: string }[]
+  loading: boolean
+  error?: string
+  height?: number
+}) {
+  if (loading) return error ? null : <Spinner label="Loading…" />
   if (data.length === 0) return <p className="muted">No data yet</p>
   return (
     <>
@@ -159,6 +173,11 @@ export default function Dashboard() {
   // Top domains are loaded lazily (heavy raw-log scan) only once the section is opened.
   const [topDom, setTopDom] = useState<{ top_queried: DomainStat[]; top_blocked: DomainStat[] } | null>(null)
   const [topOpen, setTopOpen] = useState(false)
+  const [topErr, setTopErr] = useState('')
+  const loadedTop = (d: { top_queried: DomainStat[]; top_blocked: DomainStat[] }) => {
+    setTopDom(d)
+    setTopErr('')
+  }
   const [lat, setLat] = useState<{ nodes: string[]; points: LatencyPoint[] } | null>(null)
   const [nodes, setNodes] = useState<Node[]>([])
   const [err, setErr] = useState('')
@@ -204,7 +223,7 @@ export default function Dashboard() {
         .catch(fail)
       api.latency(hours, focus).then((l) => alive && setLat(l)).catch(fail)
       api.clusterNodes().then((n) => alive && setNodes(n)).catch(() => {})
-      if (topOpen) api.topDomains(hours, focus).then((d) => alive && setTopDom(d)).catch(() => {})
+      if (topOpen) api.topDomains(hours, focus).then((d) => alive && loadedTop(d)).catch((e) => alive && setTopErr(e.message))
     }
     tick()
     const stop = pollWhileVisible(tick, 15000)
@@ -451,11 +470,11 @@ export default function Dashboard() {
         <div className="charts">
           <div className="panel">
             <h2>Queries by node</h2>
-            <Donut data={byNodeData} />
+            <Donut data={byNodeData} loading={!ins} error={err} />
           </div>
           <div className="panel">
             <h2>Answer source</h2>
-            <Donut data={sourceData} />
+            <Donut data={sourceData} loading={!ins} error={err} />
           </div>
         </div>
       </Section>
@@ -483,13 +502,9 @@ export default function Dashboard() {
                 </td>
               </tr>
             ))}
-            {clientRows.length === 0 && (
-              <tr>
-                <td colSpan={4} className="muted">
-                  No client activity yet
-                </td>
-              </tr>
-            )}
+            <TableStatusRow loading={!ins} error={err} empty={clientRows.length === 0} colSpan={4}>
+              No client activity yet
+            </TableStatusRow>
           </tbody>
         </table>
       </Section>
@@ -499,12 +514,13 @@ export default function Dashboard() {
         defaultOpen={false}
         onOpen={() => {
           setTopOpen(true)
-          api.topDomains(hours, focus).then(setTopDom).catch(() => {})
+          api.topDomains(hours, focus).then(loadedTop).catch((e) => setTopErr(e.message))
         }}
       >
+        {topErr && <div className="error">{topErr}</div>}
         <div className="charts">
-          <DomainTable title="Top blocked" rows={topDom?.top_blocked} />
-          <DomainTable title="Most queried" rows={topDom?.top_queried} />
+          <DomainTable title="Top blocked" rows={topDom?.top_blocked} loading={!topDom} error={topErr} />
+          <DomainTable title="Most queried" rows={topDom?.top_queried} loading={!topDom} error={topErr} />
         </div>
       </Section>
 
@@ -522,7 +538,17 @@ function Card({ label, value, accent, sub }: { label: string; value?: string | n
   )
 }
 
-function DomainTable({ title, rows }: { title: string; rows?: { name: string; count: number }[] }) {
+function DomainTable({
+  title,
+  rows,
+  loading,
+  error,
+}: {
+  title: string
+  rows?: { name: string; count: number }[]
+  loading: boolean
+  error: string
+}) {
   return (
     <div className="panel">
       <h2>{title}</h2>
@@ -534,11 +560,9 @@ function DomainTable({ title, rows }: { title: string; rows?: { name: string; co
               <td className="num">{d.count.toLocaleString()}</td>
             </tr>
           ))}
-          {(rows?.length ?? 0) === 0 && (
-            <tr>
-              <td className="muted">Nothing yet</td>
-            </tr>
-          )}
+          <TableStatusRow loading={loading} error={error} empty={(rows?.length ?? 0) === 0}>
+            Nothing yet
+          </TableStatusRow>
         </tbody>
       </table>
     </div>

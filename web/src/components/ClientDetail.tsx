@@ -133,7 +133,7 @@ export default function ClientDetail({
   return (
     <Modal title={`Client ${client}`} onClose={onClose} size="wide">
       {err && <div className="error">{err}</div>}
-      {!d && <Spinner label="Loading…" />}
+      {!d && !err && <Spinner label="Loading…" />}
       {d && (
         <>
           {/* Static hostname editor */}

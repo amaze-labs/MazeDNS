@@ -30,6 +30,7 @@ export default function DomainDetail({
   const [whoisErr, setWhoisErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [clients, setClients] = useState<DomainClient[] | null>(null)
+  const [clientsErr, setClientsErr] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -41,7 +42,7 @@ export default function DomainDetail({
     api
       .domainClients(c.domain)
       .then((r) => setClients(r.clients))
-      .catch(() => setClients([]))
+      .catch((e) => setClientsErr(e.message))
   }, [c.domain])
 
   const blocked = c.status === 'auto' || c.status === 'approved'
@@ -115,7 +116,9 @@ export default function DomainDetail({
       </div>
 
       <h4>Clients querying this domain</h4>
-      {clients === null ? (
+      {clientsErr ? (
+        <p className="muted" style={{ textAlign: 'left' }}>Clients unavailable: {clientsErr}</p>
+      ) : clients === null ? (
         <Spinner label="Loading…" />
       ) : clients.length === 0 ? (
         <p className="muted" style={{ textAlign: 'left' }}>No queries for this domain in the retained logs.</p>

@@ -82,7 +82,17 @@ func (s *Store) InsertClassification(c Classification) (bool, error) {
 	if factors == "" {
 		factors = "[]"
 	}
-	res, err := s.db.Exec(
+	// The classifier inserts a verdict for every newly seen domain, and most
+	// are not enforced. Such an insert cannot change the replicated config:
+	// ActiveAIBlocked only returns block=1 rows with status approved/auto, and
+	// ON CONFLICT DO NOTHING leaves any existing row untouched. Skip the
+	// config-generation bump for it, so routine classification does not keep
+	// invalidating every node's cached config version.
+	exec := s.db.Exec
+	if !(c.Block && (c.Status == ClassApproved || c.Status == ClassAuto)) {
+		exec = s.db.execUntracked
+	}
+	res, err := exec(
 		`INSERT INTO classifications(domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, updated_at)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(domain) DO NOTHING`,

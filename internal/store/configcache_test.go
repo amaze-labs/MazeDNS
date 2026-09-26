@@ -352,3 +352,32 @@ func TestCachedConfigVersionConcurrentWrites(t *testing.T) {
 		t.Fatalf("cache did not converge after concurrent writes: %q != %q", got, want)
 	}
 }
+
+// Routine classification (verdicts that are not enforced) must not
+// invalidate cached versions; an enforced verdict must.
+func TestUnenforcedClassificationKeepsCache(t *testing.T) {
+	s := openTestStore(t)
+	gen := s.configGen.Load()
+	for _, c := range []Classification{
+		{Domain: "clean.example.lan", Category: "news", Status: ClassClean},
+		{Domain: "maybe.example.lan", Category: "ads", Block: true, Status: ClassSuggested},
+		{Domain: "noblock.example.lan", Category: "ads", Block: false, Status: ClassAuto},
+	} {
+		if _, err := s.InsertClassification(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if s.configGen.Load() != gen {
+		t.Fatal("unenforced verdicts must not bump the config generation")
+	}
+	v0, _ := s.ConfigVersion()
+	if _, err := s.InsertClassification(Classification{Domain: "bad.example.lan", Category: "malware", Block: true, Status: ClassApproved}); err != nil {
+		t.Fatal(err)
+	}
+	if s.configGen.Load() == gen {
+		t.Fatal("an enforced verdict must bump the config generation")
+	}
+	if v1, _ := s.ConfigVersion(); v1 == v0 {
+		t.Fatal("test setup: an enforced verdict changes the version")
+	}
+}

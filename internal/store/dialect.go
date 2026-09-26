@@ -102,6 +102,13 @@ func (d *dbh) Exec(q string, a ...any) (sql.Result, error) {
 	return res, err
 }
 
+// execUntracked runs a statement without bumping the config generation. Only
+// for writes proven not to change the replicated config (see
+// InsertClassification); everything else goes through Exec.
+func (d *dbh) execUntracked(q string, a ...any) (sql.Result, error) {
+	return d.DB.Exec(translate(q, d.pg), a...)
+}
+
 // Query and QueryRow bump on a config write too, but a write through them (only
 // INSERT ... RETURNING, see insertID) may not be complete when they return;
 // such callers bump again once they have read the result.

@@ -97,12 +97,13 @@ export function Pager<T>({ table, unit = 'items' }: { table: Table<T>; unit?: st
 }
 
 // TableStatusRow is the last row of every table body: it tells "not loaded
-// yet" apart from "loaded and empty". Until the first successful response
-// (`loading`) it shows a spinner, or nothing when that first request failed
-// (`error` — the page already shows the error, and an empty-state message next
-// to it would read as lost configuration). Once loaded it renders `children`
-// as the usual muted empty message, only when `empty`. Later errors (a failed
-// refresh or action) never hide rows or the empty message of loaded data.
+// yet" apart from "loaded and empty". While `loading` (no successful response
+// yet for what the table shows) it renders a spinner row when the table has
+// nothing else to show, or nothing when the request failed (`error` — the page
+// already shows the error, and an empty-state message next to it would read as
+// lost configuration). Once loaded it renders `children` as the usual muted
+// empty message, only when `empty`. Errors after a successful load (a failed
+// refresh or action) never hide the empty message of loaded data.
 export function TableStatusRow({
   loading,
   error,
@@ -117,7 +118,7 @@ export function TableStatusRow({
   children: ReactNode
 }) {
   if (loading) {
-    if (error) return null
+    if (error || !empty) return null
     return (
       <tr>
         <td colSpan={colSpan}>

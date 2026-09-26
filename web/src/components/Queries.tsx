@@ -5,7 +5,7 @@ import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import Spinner from './Spinner'
-import { PAGE_SIZE } from './tableKit'
+import { PAGE_SIZE, TableStatusRow } from './tableKit'
 
 const PAGE = PAGE_SIZE
 const ACTIONS = ['forward', 'cache', 'blocked', 'rewrite', 'authoritative', 'error', 'refused']
@@ -202,13 +202,9 @@ export default function Queries() {
               <td>{e.elapsed_ms.toFixed(2)}</td>
             </tr>
           ))}
-          {log.length === 0 && (
-            <tr>
-              <td colSpan={9} className="muted">
-                No matching queries
-              </td>
-            </tr>
-          )}
+          <TableStatusRow loading={loading} error={err} empty={log.length === 0} colSpan={9}>
+            No matching queries
+          </TableStatusRow>
         </tbody>
       </table>
       </div>

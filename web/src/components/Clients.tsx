@@ -6,7 +6,7 @@ import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import ClientDetail from './ClientDetail'
 import Spinner from './Spinner'
-import { useTable, Th, Pager, timeAgo, type SortAccessors } from './tableKit'
+import { useTable, Th, Pager, TableStatusRow, timeAgo, type SortAccessors } from './tableKit'
 
 const loadHours = (): number => {
   const v = Number(localStorage.getItem('mazedns.clients.hours'))
@@ -37,7 +37,10 @@ export default function Clients() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  // loading: the current window/focus has no answer yet; loaded: the first
+  // answer ever arrived (the KPI cards show "—" until then, not zeros).
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     localStorage.setItem('mazedns.clients.hours', String(hours))
@@ -61,6 +64,7 @@ export default function Clients() {
             setRows(r.clients)
             setErr('')
             setLoading(false)
+            setLoaded(true)
           }
         })
         .catch((e) => alive && setErr(e.message))
@@ -81,6 +85,7 @@ export default function Clients() {
   const active = rows.filter((r) => r.last_seen && Date.now() - r.last_seen < ACTIVE_MS).length
   const named = rows.filter((r) => clientNames.get(r.client)?.name).length
   const blockedPct = totalQ ? Math.round((totalB / totalQ) * 100) : 0
+  const kpi = (n: number) => (loaded ? n.toLocaleString() : '—')
 
   const filtered: Row[] = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -113,24 +118,24 @@ export default function Clients() {
 
       <div className="cards" style={{ marginTop: 12 }}>
         <div className="card">
-          <div className="card-value">{rows.length.toLocaleString()}</div>
+          <div className="card-value">{kpi(rows.length)}</div>
           <div className="card-label">Clients seen</div>
         </div>
         <div className="card">
-          <div className="card-value">{active.toLocaleString()}</div>
+          <div className="card-value">{kpi(active)}</div>
           <div className="card-label">Active now (5m)</div>
         </div>
         <div className="card">
-          <div className="card-value">{named.toLocaleString()}</div>
+          <div className="card-value">{kpi(named)}</div>
           <div className="card-label">Named clients</div>
         </div>
         <div className="card">
-          <div className="card-value">{totalQ.toLocaleString()}</div>
+          <div className="card-value">{kpi(totalQ)}</div>
           <div className="card-label">Queries</div>
         </div>
         <div className={`card ${blockedPct >= 25 ? 'danger' : ''}`}>
-          <div className="card-value">{blockedPct}%</div>
-          <div className="card-label">Blocked ({totalB.toLocaleString()})</div>
+          <div className="card-value">{loaded ? `${blockedPct}%` : '—'}</div>
+          <div className="card-label">Blocked ({kpi(totalB)})</div>
         </div>
       </div>
 
@@ -173,13 +178,9 @@ export default function Clients() {
                 </tr>
               )
             })}
-            {table.rows.length === 0 && (
-              <tr>
-                <td colSpan={6} className="muted">
-                  No client activity
-                </td>
-              </tr>
-            )}
+            <TableStatusRow loading={loading} error={err} empty={table.rows.length === 0} colSpan={6}>
+              No client activity
+            </TableStatusRow>
           </tbody>
         </table>
       </div>

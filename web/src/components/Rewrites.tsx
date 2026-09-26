@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { api, type Forwarder, type Rewrite } from '../api'
 import Modal from './Modal'
 import ScopePicker, { ALL_SCOPE, scopeBadge, type Scope } from './ScopePicker'
-import { useTable, Th, Pager, type SortAccessors } from './tableKit'
+import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
 import { invalidateAllClientNames } from '../useClientNames'
 
 // Upstreams are edited as one comma-separated field in both the add form and
@@ -21,6 +21,7 @@ const COLS: SortAccessors<Rewrite> = {
 
 export default function Rewrites() {
   const [rows, setRows] = useState<Rewrite[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [domain, setDomain] = useState('')
   const [rrtype, setRrtype] = useState('A')
   const [value, setValue] = useState('')
@@ -28,6 +29,7 @@ export default function Rewrites() {
   const [err, setErr] = useState('')
 
   const [fwds, setFwds] = useState<Forwarder[]>([])
+  const [fwdsLoaded, setFwdsLoaded] = useState(false)
   const [suffix, setSuffix] = useState('')
   const [upstreams, setUpstreams] = useState('')
   const [fwdScope, setFwdScope] = useState<Scope>(ALL_SCOPE)
@@ -40,9 +42,16 @@ export default function Rewrites() {
   const [editingFwd, setEditingFwd] = useState<Forwarder | null>(null)
 
   const load = () => {
-    api.rewrites().then(setRows).catch((e) => setErr(e.message))
+    api
+      .rewrites()
+      .then((rs) => {
+        setRows(rs)
+        setLoaded(true)
+      })
+      .catch((e) => setErr(e.message))
     api.forwarders().then((f) => {
       setFwds(f)
+      setFwdsLoaded(true)
       setFwdErr('')
     }).catch((e) => setFwdErr(e.message))
   }
@@ -194,13 +203,9 @@ export default function Rewrites() {
               </td>
             </tr>
           ))}
-          {table.rows.length === 0 && (
-            <tr>
-              <td colSpan={6} className="muted">
-                No rewrites
-              </td>
-            </tr>
-          )}
+          <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={6}>
+            No rewrites
+          </TableStatusRow>
         </tbody>
       </table>
       <Pager table={table} unit="rewrites" />
@@ -258,13 +263,9 @@ export default function Rewrites() {
               </td>
             </tr>
           ))}
-          {fwds.length === 0 && (
-            <tr>
-              <td colSpan={5} className="muted">
-                No cluster forwarders
-              </td>
-            </tr>
-          )}
+          <TableStatusRow loading={!fwdsLoaded} error={fwdErr} empty={fwds.length === 0} colSpan={5}>
+            No cluster forwarders
+          </TableStatusRow>
         </tbody>
       </table>
 

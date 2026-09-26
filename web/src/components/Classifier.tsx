@@ -6,7 +6,7 @@ import DomainDetail from './DomainDetail'
 import DecisionModal from './DecisionModal'
 import ReputationUsage from './ReputationUsage'
 import { pollWhileVisible } from '../poll'
-import { PAGE_SIZE } from './tableKit'
+import { PAGE_SIZE, TableStatusRow } from './tableKit'
 
 const MODES = [
   { id: 'off', label: 'Off', desc: 'Stop classifying.' },
@@ -36,6 +36,8 @@ export default function Classifier() {
   const [tab, setTab] = useState('suggested')
   const [page, setPage] = useState(0)
   const [rows, setRows] = useState<Classification[]>([])
+  // Set on the first successful rows load; polling and tab switches keep it.
+  const [rowsLoaded, setRowsLoaded] = useState(false)
   const [err, setErr] = useState('')
   // Domain search — finds a domain within the current tab's list.
   const [search, setSearch] = useState('')
@@ -49,13 +51,17 @@ export default function Classifier() {
   const [listView, setListView] = useState<'trusted' | 'threat' | null>(null)
   const [listSearch, setListSearch] = useState('')
   const [listRows, setListRows] = useState<string[]>([])
+  const [listLoaded, setListLoaded] = useState(false)
 
   const loadInfo = () => api.classifier().then(setInfo).catch((e) => setErr(e.message))
   // Search only applies to the Clean tab.
   const loadRows = () =>
     api
       .classifications(tab, PAGE, page * PAGE, searchQ)
-      .then(setRows)
+      .then((rs) => {
+        setRows(rs)
+        setRowsLoaded(true)
+      })
       .catch((e) => setErr(e.message))
 
   useEffect(() => {
@@ -64,7 +70,14 @@ export default function Classifier() {
   useEffect(() => {
     if (!listView) return
     const t = setTimeout(
-      () => api.classifierList(listView, listSearch, 200).then((r) => setListRows(r.domains)).catch(() => {}),
+      () =>
+        api
+          .classifierList(listView, listSearch, 200)
+          .then((r) => {
+            setListRows(r.domains)
+            setListLoaded(true)
+          })
+          .catch((e) => setErr(e.message)),
       300,
     )
     return () => clearTimeout(t)
@@ -72,6 +85,7 @@ export default function Classifier() {
   const openList = (l: 'trusted' | 'threat') => {
     setListSearch('')
     setListRows([])
+    setListLoaded(false)
     setListView((cur) => (cur === l ? null : l))
   }
   useEffect(() => {
@@ -254,7 +268,9 @@ export default function Classifier() {
                 {d}
               </span>
             ))}
-            {listRows.length === 0 && <span className="muted">No matches</span>}
+            {!listLoaded
+              ? !err && <Spinner label="Loading…" />
+              : listRows.length === 0 && <span className="muted">No matches</span>}
           </div>
         </div>
       )}
@@ -443,13 +459,9 @@ export default function Classifier() {
               </tr>
             )
           })}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={4} className="muted">
-                Nothing here yet
-              </td>
-            </tr>
-          )}
+          <TableStatusRow loading={!rowsLoaded} error={err} empty={rows.length === 0} colSpan={4}>
+            Nothing here yet
+          </TableStatusRow>
         </tbody>
       </table>
       </div>

@@ -8,6 +8,7 @@ replicate it automatically. You never edit files on an agent.
 - [Upstreams, cache, and DNS behavior](#upstreams-cache-and-dns-behavior)
 - [Blocklists and allow/deny rules](#blocklists-and-allowdeny-rules)
 - [Rewrites and local records](#rewrites-and-local-records)
+- [Client names](#client-names)
 - [Pause blocking](#pause-blocking)
 - [Clustering operations](#clustering-operations)
 - [Authentication and SSO](#authentication-and-sso)
@@ -91,6 +92,52 @@ The **Conditional forwarders (cluster)** section on the same tab manages
 suffix → upstream routing with identical scoping. Agents pick changes up on
 their next config poll; the cluster page shows a per-node sync flag (⟳) until
 each node has applied its own expected version.
+
+### Reverse lookups (PTR) from rewrites
+
+Exact `A`/`AAAA` rewrites also answer reverse lookups for their address:
+with `nas.example.lan → A 192.0.2.10`, `dig -x 192.0.2.10 @<agent>` returns
+`nas.example.lan` (`2001:db8::10` works the same through `ip6.arpa`). There is
+nothing to configure:
+
+- **Scoping** — each agent derives PTR answers from the rewrites it serves, so
+  they follow the forward record's scope: a site-scoped rewrite answers reverse
+  lookups only on that site's nodes. Disabled and wildcard rewrites imply no PTR.
+- **Several names, one address** — a single PTR is returned, the preferred name:
+  shortest, then alphabetical (`fs.example.lan` over `nas.example.lan` over
+  `storage.example.lan`). One record keeps every client and cache on the same
+  answer, and it is the same name the Clients page shows.
+- **Conditional forwarders win** — if a conditional forwarder covers the
+  reverse name (e.g. `2.0.192.in-addr.arpa`, or all of `in-addr.arpa`, sent to
+  the DHCP server that owns your PTRs), the query is forwarded there and no PTR
+  is synthesized: an explicit routing choice beats an implied record. Remove or
+  narrow the forwarder to let rewrites answer. Authoritative zones from the
+  config file also take precedence.
+- Addresses with no matching rewrite, and other query types on reverse names,
+  are forwarded as before. Forward answers are unchanged, including the
+  `NODATA` for the address family a rewritten name has no record for.
+
+## Client names
+
+Wherever a client IP is shown (Dashboard, Requests, Clients, domain drill-downs)
+the UI labels it with a name, taking the first source that knows the IP:
+
+1. **static** — a hostname you assigned on the client's detail view (Clients tab).
+2. **netbird** — the NetBird peer name, when the NetBird integration is enabled.
+3. **rewrite** — the name of an enabled, non-wildcard `A`/`AAAA` rewrite pointing
+   at the IP. When several rewrites point at it, the shortest name (then
+   alphabetical) is shown and the others appear in the tooltip (the badge reads
+   `rewrite +N`). With scoped rewrites, the ones served by the node that handles
+   the client win; if that node serves none for the IP, any enabled rewrite
+   naming it is used. Rewrite changes rename clients immediately.
+4. **reverse DNS** — a PTR lookup, for private addresses against the reverse-DNS
+   resolver configured for the client's node, otherwise against the system
+   resolver (cached for an hour, ten minutes when there is no PTR). Pointing that
+   resolver at an agent also picks up the PTRs agents synthesize from rewrites
+   (see above).
+
+Rewrites come before reverse DNS because they are your own configuration and
+cost no network query.
 
 ## Pause blocking
 

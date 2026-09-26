@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
 
 // The store is written in the SQLite dialect (which is also the default backend).
@@ -55,43 +56,121 @@ func rebindPlaceholders(query string) string {
 	return b.String()
 }
 
+// configTablesRE matches the tables whose content feeds the replicated config
+// version (store.ConfigVersionForNode): rules and lists (ActiveRules),
+// classifications (enforced AI verdicts), rewrites, and forwarders.
+var configTablesRE = regexp.MustCompile(`(?i)\b(rules|lists|classifications|rewrites|forwarders)\b`)
+
+// isConfigWrite reports whether a statement may modify a table that feeds the
+// config version. It is deliberately conservative: anything that is not a
+// plain SELECT and names one of those tables counts. A statement can only
+// modify a table it names (the schema has no triggers and no cascading
+// foreign keys), so no config write is missed; a false positive merely costs
+// one cache recomputation.
+func isConfigWrite(q string) bool {
+	t := strings.TrimLeft(q, " \t\r\n")
+	if len(t) >= 6 && strings.EqualFold(t[:6], "SELECT") {
+		return false
+	}
+	return configTablesRE.MatchString(q)
+}
+
 // dbh wraps a *sql.DB and applies dialect translation on every call, so the rest
 // of the store can keep writing SQLite-dialect SQL with `?` placeholders.
+//
+// It is also the choke point every write passes through, which is where the
+// config generation (gen) is bumped: after any statement that may change the
+// replicated config completes — for a transaction, after it commits — so the
+// cached per-node config versions (configcache.go) are invalidated no matter
+// which store method did the write. Bumping only after the change is visible
+// is what makes the cache safe; see versionCache.
 type dbh struct {
 	*sql.DB
-	pg bool
+	pg  bool
+	gen *atomic.Uint64 // shared config generation (nil = not tracked)
+}
+
+func (d *dbh) bumpIf(q string) {
+	if d.gen != nil && isConfigWrite(q) {
+		d.gen.Add(1)
+	}
 }
 
 func (d *dbh) Exec(q string, a ...any) (sql.Result, error) {
-	return d.DB.Exec(translate(q, d.pg), a...)
+	res, err := d.DB.Exec(translate(q, d.pg), a...)
+	d.bumpIf(q) // even on error: a partial effect must not leave a stale cache
+	return res, err
 }
+
+// Query and QueryRow bump on a config write too, but a write through them (only
+// INSERT ... RETURNING, see insertID) may not be complete when they return;
+// such callers bump again once they have read the result.
 func (d *dbh) Query(q string, a ...any) (*sql.Rows, error) {
-	return d.DB.Query(translate(q, d.pg), a...)
+	rows, err := d.DB.Query(translate(q, d.pg), a...)
+	d.bumpIf(q)
+	return rows, err
 }
-func (d *dbh) QueryRow(q string, a ...any) *sql.Row { return d.DB.QueryRow(translate(q, d.pg), a...) }
+func (d *dbh) QueryRow(q string, a ...any) *sql.Row {
+	row := d.DB.QueryRow(translate(q, d.pg), a...)
+	d.bumpIf(q)
+	return row
+}
 
 func (d *dbh) Begin() (*txh, error) {
 	tx, err := d.DB.Begin()
 	if err != nil {
 		return nil, err
 	}
-	return &txh{Tx: tx, pg: d.pg}, nil
+	return &txh{Tx: tx, pg: d.pg, gen: d.gen}, nil
 }
 
-// txh is the transaction-scoped equivalent of dbh.
+// txh is the transaction-scoped equivalent of dbh. A config write inside the
+// transaction marks it dirty; the generation is bumped once it commits, never
+// before (a bump before the data is visible could let a concurrent reader
+// cache the old content under the new generation).
 type txh struct {
 	*sql.Tx
-	pg bool
+	pg    bool
+	gen   *atomic.Uint64
+	dirty bool
+}
+
+func (t *txh) mark(q string) {
+	if isConfigWrite(q) {
+		t.dirty = true
+	}
 }
 
 func (t *txh) Exec(q string, a ...any) (sql.Result, error) {
+	t.mark(q)
 	return t.Tx.Exec(translate(q, t.pg), a...)
 }
 func (t *txh) Query(q string, a ...any) (*sql.Rows, error) {
+	t.mark(q)
 	return t.Tx.Query(translate(q, t.pg), a...)
 }
-func (t *txh) QueryRow(q string, a ...any) *sql.Row { return t.Tx.QueryRow(translate(q, t.pg), a...) }
-func (t *txh) Prepare(q string) (*sql.Stmt, error)  { return t.Tx.Prepare(translate(q, t.pg)) }
+func (t *txh) QueryRow(q string, a ...any) *sql.Row {
+	t.mark(q)
+	return t.Tx.QueryRow(translate(q, t.pg), a...)
+}
+
+// Prepare marks the transaction dirty up front: statements executed through the
+// returned *sql.Stmt bypass the wrapper.
+func (t *txh) Prepare(q string) (*sql.Stmt, error) {
+	t.mark(q)
+	return t.Tx.Prepare(translate(q, t.pg))
+}
+
+// Commit commits and then bumps the config generation if the transaction wrote
+// a config table (even when Commit reports an error — being conservative only
+// costs a recomputation).
+func (t *txh) Commit() error {
+	err := t.Tx.Commit()
+	if t.dirty && t.gen != nil {
+		t.gen.Add(1)
+	}
+	return err
+}
 
 // toPostgresSchema rewrites the SQLite DDL into its PostgreSQL equivalent: the
 // auto-increment column type, the float type, and dropping SQLite's WITHOUT

@@ -201,5 +201,9 @@ func (s *Store) SetClusterForwarders(fws []ForwardSpec) error {
 	if err != nil {
 		return err
 	}
-	return s.SetMeta(clusterForwardersMeta, string(b))
+	err = s.SetMeta(clusterForwardersMeta, string(b))
+	// The blob feeds ConfigVersion but lives in app_meta, which the generic
+	// write tracking (isConfigWrite) does not watch: bump explicitly.
+	s.configGen.Add(1)
+	return err
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,6 +27,12 @@ import (
 type Store struct {
 	db   *dbh // writer (INSERT/UPDATE/DELETE/DDL + transactions)
 	read *dbh // concurrent readers (standalone SELECTs)
+
+	// configGen counts writes that may change the replicated config; both
+	// handles bump it (see dbh). versions caches per-node config versions
+	// keyed to it (configcache.go).
+	configGen atomic.Uint64
+	versions  versionCache
 }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.
@@ -103,7 +110,9 @@ func OpenWith(driver, dsn string) (*Store, error) {
 	}
 	read.SetMaxOpenConns(n) // WAL / Postgres allow concurrent readers
 
-	s := &Store{db: &dbh{DB: write, pg: pg}, read: &dbh{DB: read, pg: pg}}
+	s := &Store{}
+	s.db = &dbh{DB: write, pg: pg, gen: &s.configGen}
+	s.read = &dbh{DB: read, pg: pg, gen: &s.configGen}
 	if err := s.migrate(); err != nil {
 		_ = write.Close()
 		_ = read.Close()

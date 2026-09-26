@@ -401,6 +401,7 @@ func (s *Store) insertID(query string, args ...any) (int64, error) {
 	if s.db.pg {
 		var id int64
 		err := s.db.QueryRow(query+" RETURNING id", args...).Scan(&id)
+		s.db.bumpIf(query) // the statement is complete once its result is read
 		return id, err
 	}
 	res, err := s.db.Exec(query, args...)

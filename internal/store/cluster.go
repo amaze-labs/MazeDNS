@@ -263,13 +263,14 @@ func (s *Store) ListForwardersForNode(nodeName, nodeSite string) ([]ForwardSpec,
 	return filterForwardersForNode(all, nodeName, nodeSite), nil
 }
 
-// ConfigVersionsForNodes computes every node's expected config version in one
+// configVersionsForNodes computes every node's expected config version in one
 // pass: rules, rewrites, and forwarders are each loaded and formatted once,
 // and nodes that resolve to the same filtered view share one hash computation
 // (the common case — nodes with no node-specific scopes in the same site).
 // The result is byte-identical to calling ConfigVersionForNode(n.Name, n.Site)
-// for each node individually. Returned map is keyed by node name.
-func (s *Store) ConfigVersionsForNodes(nodes []Node) (map[string]string, error) {
+// for each node individually. Returned map is keyed by node name. The
+// exported, cached entry point is ConfigVersionsForNodes (configcache.go).
+func (s *Store) configVersionsForNodes(nodes []Node) (map[string]string, error) {
 	rules, err := s.ReplicatedRules()
 	if err != nil {
 		return nil, err

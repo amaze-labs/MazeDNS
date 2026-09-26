@@ -108,21 +108,35 @@ go test -bench . -benchmem ./internal/resolver/ ./internal/cache/ ./internal/fil
 
 ## CI
 
-`.github/workflows/build-containers.yml` builds **multi-arch** images
-(`linux/amd64` + `linux/arm64`) and pushes `ghcr.io/amaze-labs/mazedns-control-plane`
-and `ghcr.io/amaze-labs/mazedns-agent` (`:latest`, plus the version tag on `v*`
-releases) on push to `main`, tags, or manual dispatch. The source version is baked
-into each binary via `-ldflags -X github.com/IPMaze/MazeDNS/internal/version.Version`
-(the Go module path still uses the original org).
+`.github/workflows/build-containers.yml` is the release pipeline. On every push to
+`main` (or manual dispatch) it:
+
+1. computes the next version with `.github/scripts/next-version.sh`: starting from the
+   latest semver tag (`N.N.N`, no `v` prefix) it applies every later non-merge commit
+   in order — `type!:` bumps major, `feat:` bumps minor, anything else bumps patch. Write
+   commit subjects as [Conventional Commits](https://www.conventionalcommits.org/): the
+   version is derived from them;
+2. publishes **both** `ghcr.io/amaze-labs/mazedns-control-plane` and
+   `ghcr.io/amaze-labs/mazedns-agent` as `:<version>` and `:latest`, **multi-arch**
+   (`linux/amd64` + `linux/arm64`). If anything that ends up in the binaries changed
+   since the previous release (`cmd`, `internal`, `web`, `configs`, `go.mod`, `go.sum`,
+   `Dockerfile`, `.dockerignore`), both images are rebuilt; otherwise (docs, CI) the
+   previous release's manifests are retagged, which costs no build;
+3. only after both images are published, pushes the git tag `<version>`. A tag
+   therefore always means both images exist.
+
+The version is baked into each binary via `-ldflags -X
+github.com/IPMaze/MazeDNS/internal/version.Version` (the Go module path still uses
+the original org). The two images are always rebuilt or retagged together so they
+report the same version: the Cluster page flags an agent as outdated when its app
+version differs from the control plane's.
 
 The matrix axis `image` is the Dockerfile **target** (`control-plane`, `dns-agent`);
 the published name comes from the separate `suffix` value, which is why the agent
 image is `mazedns-agent` while its build target stays `dns-agent`.
 
-Pushes that only touch `docs/**`, any `**.md`, or `docker-compose*.yml` are skipped
-via `paths-ignore` — a push mixing docs with code still builds, and tag pushes always
-build (GitHub does not evaluate path filters for tags). `configs/` is deliberately
-*not* ignored: it is baked into both images.
+`release.yml` is separate and manual: it builds the standalone binaries and
+publishes them as the rolling `latest` GitHub Release.
 
 `.github/workflows/release.yml` (manual only) publishes the standalone binaries to a
 rolling `latest` GitHub Release.

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type LogEntry, type Node } from '../api'
 import { pollWhileVisible } from '../poll'
 import Spinner from './Spinner'
+import { TableStatusRow } from './tableKit'
 
 const LEVELS = ['debug', 'info', 'warn', 'error']
 const CONTROL_PLANE = 'control-plane'
@@ -133,15 +134,13 @@ export default function Logs() {
                 </td>
               </tr>
             ))}
-            {entries.length === 0 && !loading && (
-              <tr>
-                <td colSpan={3} className="muted">
-                  {source === CONTROL_PLANE
-                    ? 'No matching log lines'
-                    : `No log lines received from ${sourceNode?.name ?? 'this agent'} yet — it ships logs on its poll cycle, and agents running an older version don't ship them at all.`}
-                </td>
-              </tr>
-            )}
+            {/* A failed fetch clears `loading`, but the source's contents are
+                still unknown: keep the empty text away from the error. */}
+            <TableStatusRow loading={loading || !!err} error={err} empty={entries.length === 0} colSpan={3}>
+              {source === CONTROL_PLANE
+                ? 'No matching log lines'
+                : `No log lines received from ${sourceNode?.name ?? 'this agent'} yet — it ships logs on its poll cycle, and agents running an older version don't ship them at all.`}
+            </TableStatusRow>
           </tbody>
         </table>
       </div>

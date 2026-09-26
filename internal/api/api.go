@@ -1818,8 +1818,12 @@ func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {
 
 // afterChange reloads the local policy after a config mutation. The cluster
 // version is a content hash (store.ConfigVersion), so workers detect the change
-// on their next poll without an explicit bump.
+// on their next poll without an explicit bump. It also rebuilds the client-name
+// index derived from rewrites, so a rewrite edit renames clients immediately.
 func (s *Server) afterChange() {
+	if s.enricher != nil {
+		s.enricher.RefreshRewrites()
+	}
 	if s.reload == nil {
 		return
 	}

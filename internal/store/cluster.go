@@ -183,6 +183,12 @@ func (s *Store) ListRewritesForNode(nodeName, nodeSite string) ([]Rewrite, error
 	return filterRewritesForNode(all, nodeName, nodeSite), nil
 }
 
+// FilterRewritesForNode is ListRewritesForNode over an already-loaded slice
+// (from ListRewrites), for callers that evaluate many nodes against one read.
+func FilterRewritesForNode(all []Rewrite, nodeName, nodeSite string) []Rewrite {
+	return filterRewritesForNode(all, nodeName, nodeSite)
+}
+
 // filterForwardersForNode is the per-node filtering body shared by
 // ListForwardersForNode and the batched ConfigVersionsForNodes: only enabled
 // entries that match the node are considered, precedence resolved to a

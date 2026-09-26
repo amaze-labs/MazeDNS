@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -116,5 +118,67 @@ func TestUpdateRewriteExactScopeConflict(t *testing.T) {
 		default:
 			t.Fatalf("unexpected row: %+v", rw)
 		}
+	}
+}
+
+// Rewrite mutations must rename clients right away (no restart, no waiting for
+// the enricher's refresh tick): afterChange rebuilds the rewrite name index.
+func TestRewriteMutationRenamesClients(t *testing.T) {
+	s, st := newRewriteServer(t)
+	s.enricher = netbird.NewEnricher(func() netbird.Settings { return netbird.Settings{} }, nil, st)
+	resolve := func() netbird.Identity {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		s.resolveClients(rr, httptest.NewRequest(http.MethodGet, "/api/clients/resolve?ips=192.0.2.10", nil))
+		var out map[string]netbird.Identity
+		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+			t.Fatalf("resolve: %v (%s)", err, rr.Body.String())
+		}
+		return out["192.0.2.10"]
+	}
+	post := func(body string) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		s.addRewrite(rr, httptest.NewRequest(http.MethodPost, "/api/rewrites", strings.NewReader(body)))
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("add: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+
+	post(`{"domain":"nas.example.lan","rrtype":"A","value":"192.0.2.10"}`)
+	if got := resolve(); got.Name != "nas.example.lan" || got.Source != "rewrite" || len(got.Aliases) != 0 {
+		t.Fatalf("after add: %+v", got)
+	}
+	post(`{"domain":"fs.example.lan","rrtype":"A","value":"192.0.2.10"}`)
+	if got := resolve(); got.Name != "fs.example.lan" || len(got.Aliases) != 1 || got.Aliases[0] != "nas.example.lan" {
+		t.Fatalf("after second name: %+v, want fs.example.lan with alias nas.example.lan", got)
+	}
+	var fsID int64
+	rws, _ := st.ListRewrites()
+	for _, rw := range rws {
+		if rw.Domain == "fs.example.lan" {
+			fsID = rw.ID
+		}
+	}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/rewrites/%d", fsID),
+		strings.NewReader(`{"value":"192.0.2.11","enabled":true}`))
+	req.SetPathValue("id", fmt.Sprint(fsID))
+	s.updateRewrite(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rr.Code, rr.Body.String())
+	}
+	if got := resolve(); got.Name != "nas.example.lan" || len(got.Aliases) != 0 {
+		t.Fatalf("after repointing fs: %+v, want nas.example.lan alone", got)
+	}
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/rewrites/%d", fsID), nil)
+	req.SetPathValue("id", fmt.Sprint(fsID))
+	s.deleteRewrite(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", rr.Code)
+	}
+	if got := resolve(); got.Name != "nas.example.lan" {
+		t.Fatalf("after delete: %+v", got)
 	}
 }

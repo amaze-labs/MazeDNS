@@ -1,8 +1,8 @@
-// Package netbird enriches a client IP with a human-friendly identity. When the
-// NetBird integration is enabled it maps the IP to its NetBird peer (name +
-// hostname) via the NetBird REST API; otherwise (and as a fallback) it does a
-// reverse-DNS (PTR) lookup. This is what turns a bare "100.x.y.z" in the query
-// log into "alice-laptop" in the UI.
+// Package netbird enriches a client IP with a human-friendly identity. Sources,
+// in order: an operator-assigned static name, the NetBird peer (via the NetBird
+// REST API, when the integration is enabled), the Local DNS rewrites that point
+// at the IP, and finally a reverse-DNS (PTR) lookup. This is what turns a bare
+// "100.x.y.z" in the query log into "alice-laptop" in the UI.
 package netbird
 
 import (
@@ -56,8 +56,11 @@ func SaveSettings(st *store.Store, s Settings) error {
 
 // Identity is the resolved name for a client IP.
 type Identity struct {
-	Name   string `json:"name"`   // display name (peer name or PTR hostname)
-	Source string `json:"source"` // "netbird" | "rdns" | ""
+	Name   string `json:"name"`   // display name (static name, peer name, rewrite name or PTR hostname)
+	Source string `json:"source"` // "manual" | "netbird" | "rewrite" | "rdns" | ""
+	// Aliases are the other names the same source knows for the IP (today only
+	// "rewrite": several rewrites pointing at one address), preferred-first.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // peer is the subset of a NetBird API peer object we use.
@@ -81,6 +84,8 @@ type Enricher struct {
 	peers  map[string]Identity // ip -> netbird identity
 	cnode  map[string]string   // client ip -> node that serves it
 	manual map[string]string   // client ip -> operator-assigned static hostname
+	// rewrites is the IP -> names index derived from Local DNS rewrites.
+	rewrites rewriteIndex
 
 	rdnsMu sync.Mutex
 	rdns   map[string]rdnsEntry // ip -> cached PTR lookup
@@ -132,6 +137,7 @@ func (e *Enricher) refresh(ctx context.Context) {
 			e.manual = manual
 			e.mu.Unlock()
 		}
+		e.RefreshRewrites()
 	}
 
 	s := e.get()
@@ -158,8 +164,9 @@ func (e *Enricher) refresh(ctx context.Context) {
 	e.mu.Unlock()
 }
 
-// Lookup resolves a client IP to an identity: a NetBird peer if known, otherwise
-// a (cached) reverse-DNS hostname. Returns a zero Identity if nothing is found.
+// Lookup resolves a client IP to an identity: an operator-assigned static name,
+// else a NetBird peer, else a Local DNS rewrite name, else a (cached) reverse-DNS
+// hostname. Returns a zero Identity if nothing is found.
 func (e *Enricher) Lookup(ctx context.Context, ip string) Identity {
 	ip = clientIP(ip)
 	if ip == "" {
@@ -174,6 +181,15 @@ func (e *Enricher) Lookup(ctx context.Context, ip string) Identity {
 		return Identity{Name: name, Source: "manual"}
 	}
 	if ok && id.Name != "" {
+		return id
+	}
+	// Rewrites are local operator config: authoritative and free to consult,
+	// unlike a PTR lookup that costs a network query per IP.
+	if names := e.rewriteNames(ip); len(names) > 0 {
+		id := Identity{Name: names[0], Source: "rewrite"}
+		if len(names) > 1 {
+			id.Aliases = append([]string(nil), names[1:]...)
+		}
 		return id
 	}
 	if name := e.reverseDNS(ctx, ip); name != "" {

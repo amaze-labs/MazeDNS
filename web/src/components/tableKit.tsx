@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import Spinner from './Spinner'
 
 // tableKit standardizes every client-side table in the app: clickable header
 // sorting (click again to flip) and pagination capped at PAGE_SIZE rows per
@@ -92,6 +93,46 @@ export function Pager<T>({ table, unit = 'items' }: { table: Table<T>; unit?: st
         Next ›
       </button>
     </div>
+  )
+}
+
+// TableStatusRow is the last row of every table body: it tells "not loaded
+// yet" apart from "loaded and empty". Until the first successful response
+// (`loading`) it shows a spinner, or nothing when that first request failed
+// (`error` — the page already shows the error, and an empty-state message next
+// to it would read as lost configuration). Once loaded it renders `children`
+// as the usual muted empty message, only when `empty`. Later errors (a failed
+// refresh or action) never hide rows or the empty message of loaded data.
+export function TableStatusRow({
+  loading,
+  error,
+  empty,
+  colSpan,
+  children,
+}: {
+  loading: boolean
+  error?: unknown
+  empty: boolean
+  colSpan?: number
+  children: ReactNode
+}) {
+  if (loading) {
+    if (error) return null
+    return (
+      <tr>
+        <td colSpan={colSpan}>
+          <Spinner label="Loading…" />
+        </td>
+      </tr>
+    )
+  }
+  if (!empty) return null
+  return (
+    <tr>
+      <td colSpan={colSpan} className="muted">
+        {children}
+      </td>
+    </tr>
   )
 }
 

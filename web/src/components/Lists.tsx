@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, type List, type Protection, type Rule } from '../api'
-import { useTable, Th, Pager, type SortAccessors } from './tableKit'
+import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
+import Spinner from './Spinner'
 
 const categories = ['custom', 'ads', 'trackers', 'malware', 'phishing', 'not-found']
 
@@ -38,6 +39,7 @@ function fmtLeft(s: number): string {
 
 export default function Lists() {
   const [lists, setLists] = useState<List[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [prot, setProt] = useState<Protection | null>(null)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
@@ -63,6 +65,7 @@ export default function Lists() {
       const [ls, p] = await Promise.all([api.lists(), api.protection()])
       setLists(ls)
       setProt(p)
+      setLoaded(true)
       setErr('')
     } catch (e: any) {
       setErr(e.message)
@@ -192,7 +195,13 @@ export default function Lists() {
     <div>
       <h2>Protection</h2>
       <div className={`settings-card protection ${prot?.paused ? 'paused' : ''}`}>
-        {prot?.paused ? (
+        {!prot ? (
+          // Neutral until the first answer: never claim "active" for a
+          // blocking pause we haven't read yet.
+          <div className="protection-row">
+            {err ? <span className="muted">Protection status unavailable</span> : <Spinner label="Loading…" />}
+          </div>
+        ) : prot.paused ? (
           <div className="protection-row">
             <span className="badge blocked">Blocking paused</span>
             <span className="muted">{fmtLeft(prot.seconds_left)} remaining</span>
@@ -243,13 +252,9 @@ export default function Lists() {
               onInterval={(m) => setListInterval(l, m)}
             />
           ))}
-          {table.rows.length === 0 && (
-            <tr>
-              <td colSpan={7} className="muted">
-                No lists yet — import a file or add a URL below
-              </td>
-            </tr>
-          )}
+          <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={7}>
+            No lists yet — import a file or add a URL below
+          </TableStatusRow>
         </tbody>
       </table>
       <Pager table={table} unit="lists" />

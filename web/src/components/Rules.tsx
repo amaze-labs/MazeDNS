@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type Rule } from '../api'
-import { useTable, Th, Pager, type SortAccessors } from './tableKit'
+import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
 
 const categories = ['custom', 'ads', 'trackers', 'malware', 'phishing', 'not-found']
 
@@ -12,12 +12,20 @@ const COLS: SortAccessors<Rule> = {
 
 export default function Rules() {
   const [rules, setRules] = useState<Rule[]>([])
+  const [loaded, setLoaded] = useState(false)
   const [action, setAction] = useState('deny')
   const [domain, setDomain] = useState('')
   const [category, setCategory] = useState('custom')
   const [err, setErr] = useState('')
 
-  const load = () => api.rules().then(setRules).catch((e) => setErr(e.message))
+  const load = () =>
+    api
+      .rules()
+      .then((rs) => {
+        setRules(rs)
+        setLoaded(true)
+      })
+      .catch((e) => setErr(e.message))
   useEffect(() => {
     load()
   }, [])
@@ -92,13 +100,9 @@ export default function Rules() {
               </td>
             </tr>
           ))}
-          {table.rows.length === 0 && (
-            <tr>
-              <td colSpan={4} className="muted">
-                No manual rules
-              </td>
-            </tr>
-          )}
+          <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={4}>
+            No manual rules
+          </TableStatusRow>
         </tbody>
       </table>
       <Pager table={table} unit="rules" />

@@ -137,6 +137,82 @@ func (s *Store) ConfigVersion() (string, error) {
 	return configHash(rules, rewrites, fws), nil
 }
 
+// app_meta keys holding an agent's persisted config version and the
+// fingerprint of the local tables it was computed from.
+const (
+	localVersionMeta     = "applied_config_version"
+	localFingerprintMeta = "applied_config_fingerprint"
+)
+
+// localConfigFingerprint cheaply identifies the state of an agent's
+// replicated tables. Agents only change them through ApplySnapshot, which
+// deletes and re-inserts every row, and AUTOINCREMENT ids are never reused:
+// any apply that leaves rows moves MAX(id), and one that leaves none zeroes
+// the count. The forwarders blob is small and hashed whole. So a snapshot
+// applied by anything else — e.g. an older agent build that does not
+// maintain the persisted version — never matches a stale fingerprint.
+func (s *Store) localConfigFingerprint() (string, error) {
+	var fp strings.Builder
+	for _, table := range []string{"rules", "rewrites"} {
+		var maxID sql.NullInt64
+		var n int64
+		if err := s.read.QueryRow(`SELECT MAX(id), COUNT(*) FROM `+table).Scan(&maxID, &n); err != nil {
+			return "", err
+		}
+		fp.WriteString(table + ":" + strconv.FormatInt(maxID.Int64, 10) + ":" + strconv.FormatInt(n, 10) + "|")
+	}
+	fws, err := s.GetMeta(clusterForwardersMeta)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(fws))
+	fp.WriteString("fwd:" + hex.EncodeToString(sum[:8]))
+	return fp.String(), nil
+}
+
+// LocalConfigVersion is an agent's ConfigVersion without recomputing it on
+// every poll: it returns the version persisted when the last snapshot was
+// applied, as long as the local tables still match the fingerprint recorded
+// with it, and otherwise computes the version once and persists it.
+func (s *Store) LocalConfigVersion() (string, error) {
+	fp, err := s.localConfigFingerprint()
+	if err != nil {
+		return "", err
+	}
+	if v, _ := s.GetMeta(localVersionMeta); v != "" {
+		if stored, _ := s.GetMeta(localFingerprintMeta); stored == fp {
+			return v, nil
+		}
+	}
+	return s.recordLocalConfigVersion(fp)
+}
+
+// RecordLocalConfigVersion computes an agent's ConfigVersion — once, right
+// after a snapshot was applied — and persists it for LocalConfigVersion.
+func (s *Store) RecordLocalConfigVersion() (string, error) {
+	fp, err := s.localConfigFingerprint()
+	if err != nil {
+		return "", err
+	}
+	return s.recordLocalConfigVersion(fp)
+}
+
+func (s *Store) recordLocalConfigVersion(fp string) (string, error) {
+	v, err := s.ConfigVersion()
+	if err != nil {
+		return "", err
+	}
+	// Clear the fingerprint first: a crash between the writes leaves a pair
+	// that never validates, forcing a recomputation rather than a stale hit.
+	if err := s.SetMeta(localFingerprintMeta, ""); err != nil {
+		return v, err
+	}
+	if err := s.SetMeta(localVersionMeta, v); err != nil {
+		return v, err
+	}
+	return v, s.SetMeta(localFingerprintMeta, fp)
+}
+
 // ConfigVersionForNode is the master-side counterpart of an agent's
 // ConfigVersion: the hash of exactly the content served to that node.
 func (s *Store) ConfigVersionForNode(nodeName, nodeSite string) (string, error) {

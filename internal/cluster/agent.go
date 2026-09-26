@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,17 @@ type Agent struct {
 	procLogs      *logbuf.Buffer
 	procLogCursor uint64
 	bootID        string
+	// version is the replicated-config hash of the local tables, loaded once
+	// (store.LocalConfigVersion) and refreshed after every apply — never
+	// recomputed per poll. '' = not known yet.
+	version string
+	// The block pause and maintenance flag last applied from a full snapshot
+	// in this process. Until one has been applied (stateApplied), the agent
+	// does not offer 304 support, so the first poll after boot always
+	// delivers them.
+	stateApplied bool
+	appliedPause int64
+	appliedMaint bool
 }
 
 // SetProcessLogs installs the ring buffer of this process's recent log lines;
@@ -287,10 +299,31 @@ func statusError(resp *http.Response) error {
 	return fmt.Errorf("master returned status %d", resp.StatusCode)
 }
 
+// localVersion returns this node's replicated-config hash, loading it once
+// from the store (persisted at the last apply) instead of re-reading and
+// re-hashing every rule on each poll.
+func (a *Agent) localVersion() string {
+	if a.version == "" {
+		v, err := a.store.LocalConfigVersion()
+		if err != nil {
+			slog.Warn("cluster: computing local config version failed", "err", err)
+			return ""
+		}
+		a.version = v
+	}
+	return a.version
+}
+
 func (a *Agent) syncOnce(ctx context.Context) {
 	snap, err := a.fetch(ctx)
 	if err != nil {
 		slog.Warn("cluster sync failed", "err", err)
+		return
+	}
+	if snap == nil {
+		// 304: we already hold the current config, pause and maintenance
+		// state. Nothing to apply; keep serving the local copy.
+		slog.Debug("cluster config unchanged", "version", a.version)
 		return
 	}
 	// Adopt+persist our node id if we don't have one yet (upgraded from a pre-UUID
@@ -310,18 +343,22 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		}
 		slog.Info("cluster: adopted rotated node key from control plane")
 	}
-	// The block pause and this node's maintenance flag are applied every poll
-	// (they aren't part of the version hash).
+	// The block pause and this node's maintenance flag are applied every full
+	// poll (they aren't part of the version hash), and reported back on the
+	// next one so the control plane only answers 304 while they are current.
 	if a.setPause != nil {
 		a.setPause(snap.PausedUntil)
 	}
 	if a.setMaintenance != nil {
 		a.setMaintenance(snap.Maintenance)
 	}
-	cur, _ := a.store.ConfigVersion()
-	if snap.Version == cur {
+	a.appliedPause, a.appliedMaint, a.stateApplied = snap.PausedUntil, snap.Maintenance, true
+	if snap.Version == a.localVersion() {
 		return // rules already up to date
 	}
+	// The local tables are about to change: forget the cached version so a
+	// failed apply below is re-hashed from whatever state it left.
+	a.version = ""
 	// Persist the central forwarders first: they are part of this node's
 	// ConfigVersion, so the next poll's drift check sees the full payload.
 	if err := a.store.SetClusterForwarders(snap.Forwarders); err != nil {
@@ -332,6 +369,13 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		slog.Warn("cluster apply failed", "err", err)
 		return
 	}
+	// Hash the applied config once, here, and persist it: every later poll
+	// reuses it (header + comparison) until the next apply.
+	if v, err := a.store.RecordLocalConfigVersion(); err != nil {
+		slog.Warn("cluster: recording applied config version failed", "err", err)
+	} else {
+		a.version = v
+	}
 	if a.applySettings != nil {
 		a.applySettings()
 	}
@@ -341,6 +385,8 @@ func (a *Agent) syncOnce(ctx context.Context) {
 	slog.Info("cluster synced", "version", snap.Version, "rules", len(snap.Rules), "rewrites", len(snap.Rewrites), "forwarders", len(snap.Forwarders))
 }
 
+// fetch polls the control plane for this node's snapshot. A nil snapshot with
+// a nil error means "304 Not Modified": the node already holds it.
 func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.masterURL+"/api/cluster/snapshot", nil)
 	if err != nil {
@@ -351,9 +397,22 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 	// this node has applied (Node-Version) and the running binary's build version
 	// (App-Version) — the control plane compares the latter against its own to
 	// flag out-of-date agents.
-	ver, _ := a.store.ConfigVersion()
-	req.Header.Set("X-MazeDNS-Node-Version", ver)
+	req.Header.Set(HeaderNodeVersion, a.localVersion())
 	req.Header.Set("X-MazeDNS-App-Version", version.Short())
+	// Offer 304 support once this process has applied a full snapshot's
+	// pause/maintenance state, reporting that state (and our node id) so the
+	// control plane skips the payload only when nothing at all changed. A
+	// control plane that predates 304 ignores these and answers 200 as usual.
+	if a.stateApplied {
+		req.Header.Set(HeaderAcceptNotModified, "1")
+		req.Header.Set(HeaderNodeID, a.nodeID)
+		req.Header.Set(HeaderPausedUntil, strconv.FormatInt(a.appliedPause, 10))
+		maint := "0"
+		if a.appliedMaint {
+			maint = "1"
+		}
+		req.Header.Set(HeaderMaintenance, maint)
+	}
 	if a.advertiseAddr != "" {
 		req.Header.Set("X-MazeDNS-Advertise-Addr", a.advertiseAddr)
 	}
@@ -385,6 +444,9 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 			slog.Info("cluster re-enrolled after key rejection")
 		}
 		return nil, statusError(resp)
+	}
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, statusError(resp)

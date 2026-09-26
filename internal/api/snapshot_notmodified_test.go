@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -375,4 +377,80 @@ func BenchmarkClusterSnapshotPoll(b *testing.B) {
 			}
 		}
 	})
+}
+
+// End to end: a real agent polling a real control-plane handler converges,
+// settles into 304s, and still picks up a config change.
+func TestAgentAndControlPlaneEndToEnd(t *testing.T) {
+	s, st := newEnrollServer(t, "s3cr3t", false)
+	first := enroll(s, `{"name":"agent-01","token":"s3cr3t"}`)
+	key, id := jsonField(first.Body.String(), "key"), jsonField(first.Body.String(), "id")
+	if _, err := st.AddRule("deny", "ads.example.lan", "ads"); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	codes := map[int]int{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/cluster/snapshot" {
+			http.NotFound(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		s.clusterSnapshot(rec, r)
+		mu.Lock()
+		codes[rec.Code]++
+		mu.Unlock()
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+	}))
+	defer ts.Close()
+
+	agentStore, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agentStore.Close()
+	ag := cluster.NewAgent(ts.URL, "", key, "", 5*time.Millisecond, agentStore, nil, nil, nil, nil)
+	ag.SetNodeID(id, func(string) {})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { ag.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				mu.Lock()
+				defer mu.Unlock()
+				t.Fatalf("timed out waiting for %s (responses: %v)", what, codes)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	count := func(code int) int { mu.Lock(); defer mu.Unlock(); return codes[code] }
+	rulesOnAgent := func() int { r, _ := agentStore.ListRules(); return len(r) }
+
+	waitFor("initial sync", func() bool { return rulesOnAgent() == 1 })
+	waitFor("304 polls", func() bool { return count(http.StatusNotModified) >= 3 })
+	full := count(http.StatusOK)
+
+	if _, err := st.AddRule("deny", "tracker.example.lan", "ads"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("change delivered", func() bool { return rulesOnAgent() == 2 })
+	nm := count(http.StatusNotModified)
+	waitFor("304 after the change", func() bool { return count(http.StatusNotModified) >= nm+3 })
+	if got := count(http.StatusOK); got-full > 2 {
+		t.Fatalf("a single change should cost about one full snapshot, got %d", got-full)
+	}
+	want, _ := st.ConfigVersionForNode("agent-01", "")
+	if n := mustNode(t, st, "agent-01"); n.Version != want {
+		t.Fatalf("control plane should see the agent in sync: reported %q, expected %q", n.Version, want)
+	}
 }

@@ -103,6 +103,13 @@ type Settings struct {
 	RateLimitQPM  int            `json:"rate_limit_qpm"` // 0 = off
 	DNSSEC        bool           `json:"dnssec"`
 	Cache         CacheSettings  `json:"cache"`
+	// UpstreamStrategy is how multiple upstreams (default list and each
+	// conditional forwarder) are used: "ordered" (strict failover, the default —
+	// also what an empty value from older settings means) or "hedged".
+	UpstreamStrategy string `json:"upstream_strategy"`
+	// UpstreamTimeoutMs is the ordered strategy's per-upstream failover timeout:
+	// how long one upstream may take before the next one is tried. 0 = default.
+	UpstreamTimeoutMs int `json:"upstream_timeout_ms"`
 }
 
 // Options holds the static (non-UI-editable) resolver configuration.
@@ -142,6 +149,11 @@ type runtime struct {
 	blockMode        string
 	forceDNSSEC      bool
 	cache            *cache.Cache
+	// hedged selects the hedged upstream strategy; false = strict ordered failover.
+	hedged bool
+	// upstreamTimeout is the ordered strategy's per-upstream failover timeout
+	// (<= 0 = DefaultUpstreamTimeoutMs).
+	upstreamTimeout time.Duration
 }
 
 // Resolver answers DNS queries.
@@ -211,10 +223,20 @@ func New(opts Options) *Resolver {
 	return r
 }
 
-func (r *Resolver) parseUpstreams(specs []string) []Upstream {
+// parseUpstreams builds the upstreams of one list. With ordered failover
+// (per > 0) every upstream but the last gets the per-upstream timeout as its
+// own network timeout, so an upstream we already failed over from does not keep
+// a socket open for the whole query budget; the last one — with nothing left to
+// fail over to — keeps the full budget. Hedged lists (per == 0) use the full
+// budget for every upstream, as before.
+func (r *Resolver) parseUpstreams(specs []string, per time.Duration) []Upstream {
 	out := make([]Upstream, 0, len(specs))
-	for _, s := range specs {
-		u, err := ParseUpstream(s, r.timeout)
+	for i, s := range specs {
+		timeout := r.timeout
+		if per > 0 && per < timeout && i < len(specs)-1 {
+			timeout = per
+		}
+		u, err := ParseUpstream(s, timeout)
 		if err != nil {
 			slog.Warn("invalid upstream", "spec", s, "err", err)
 			continue
@@ -234,17 +256,24 @@ func (r *Resolver) ApplySettings(s Settings) {
 	if mode != "zeroip" {
 		mode = "nxdomain"
 	}
+	strategy := NormalizeUpstreamStrategy(s.UpstreamStrategy)
 	rt := &runtime{
-		defaultUpstreams: r.parseUpstreams(s.Upstreams),
-		blockMode:        mode,
-		forceDNSSEC:      s.DNSSEC,
+		blockMode:   mode,
+		forceDNSSEC: s.DNSSEC,
+		hedged:      strategy == StrategyHedged,
 	}
+	var per time.Duration // per-upstream network timeout; 0 = full budget (hedged)
+	if !rt.hedged {
+		rt.upstreamTimeout = time.Duration(NormalizeUpstreamTimeoutMs(s.UpstreamTimeoutMs)) * time.Millisecond
+		per = rt.upstreamTimeout
+	}
+	rt.defaultUpstreams = r.parseUpstreams(s.Upstreams, per)
 	for _, f := range s.Forwarders {
 		suffix := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(f.Suffix), "."))
 		if suffix == "" {
 			continue
 		}
-		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: r.parseUpstreams(f.Upstreams)})
+		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: r.parseUpstreams(f.Upstreams, per)})
 	}
 	sort.Slice(rt.conditional, func(i, j int) bool { return len(rt.conditional[i].suffix) > len(rt.conditional[j].suffix) })
 	if s.RateLimitQPM > 0 {
@@ -256,6 +285,7 @@ func (r *Resolver) ApplySettings(s Settings) {
 	}
 	r.rt.Store(rt)
 	slog.Info("settings applied", "upstreams", len(rt.defaultUpstreams), "forwarders", len(rt.conditional),
+		"strategy", strategy, "upstream_timeout", rt.upstreamTimeout,
 		"block", rt.blockMode, "ratelimit", s.RateLimitQPM, "dnssec", s.DNSSEC, "cache", s.Cache.Enabled)
 }
 
@@ -470,7 +500,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	// Coalesce concurrent misses for the same question into one upstream exchange;
 	// the shared result is cached once and copied per caller below.
 	resp, rtt, err := r.sf.Do(forwardKey(q, wantSigned), func() (*dns.Msg, time.Duration, error) {
-		m, rtt, err := r.forward(req, upstreamsFor(rt, name))
+		m, rtt, err := r.forward(rt, req, upstreamsFor(rt, name))
 		if err == nil && m != nil && rt.cache != nil {
 			rt.cache.Set(q, wantSigned, m)
 		}
@@ -540,7 +570,7 @@ func (r *Resolver) refreshStale(rt *runtime, req *dns.Msg, q dns.Question, name 
 	go func() {
 		defer r.refreshing.Delete(key)
 		r.sf.Do(key, func() (*dns.Msg, time.Duration, error) {
-			m, rtt, err := r.forward(rc, upstreamsFor(rt, name))
+			m, rtt, err := r.forward(rt, rc, upstreamsFor(rt, name))
 			if err == nil && m != nil && rt.cache != nil {
 				rt.cache.Set(q, wantSigned, m)
 			}
@@ -567,83 +597,6 @@ func upstreamsFor(rt *runtime, name string) []Upstream {
 		return cf.ups
 	}
 	return rt.defaultUpstreams
-}
-
-// hedgeDelay is how long we wait for the primary upstream before also querying
-// the remaining upstreams in parallel. A healthy primary answers well within
-// this window (so only one upstream is queried), while a slow or dead one fails
-// over almost immediately instead of burning the full per-query timeout.
-const hedgeDelay = 30 * time.Millisecond
-
-func (r *Resolver) forward(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
-	if len(ups) == 0 {
-		return nil, 0, errNoUpstreams
-	}
-	if len(ups) == 1 {
-		return ups[0].Exchange(req)
-	}
-
-	type result struct {
-		msg *dns.Msg
-		rtt time.Duration
-		err error
-	}
-	results := make(chan result, len(ups))
-	// Each goroutine exchanges against its own copy of the request so concurrent
-	// packing can never race on the shared message.
-	launch := func(u Upstream) {
-		go func() {
-			msg, rtt, err := u.Exchange(req.Copy())
-			results <- result{msg, rtt, err}
-		}()
-	}
-
-	launch(ups[0])
-	hedge := time.NewTimer(hedgeDelay)
-	defer hedge.Stop()
-
-	pending := 1
-	rest := ups[1:]
-	var lastErr error
-	var lastResp *dns.Msg // best response so far (a SERVFAIL we'd return if nothing better arrives)
-	var lastRtt time.Duration
-	launchRest := func() {
-		for _, u := range rest {
-			launch(u)
-			pending++
-		}
-		rest = nil
-		hedge.Stop()
-	}
-	for {
-		select {
-		case <-hedge.C:
-			launchRest()
-		case res := <-results:
-			pending--
-			switch {
-			case res.err == nil && res.msg != nil && res.msg.Rcode != dns.RcodeServerFailure:
-				return res.msg, res.rtt, nil // a real answer (incl. NXDOMAIN) wins.
-			case res.err == nil && res.msg != nil:
-				// SERVFAIL: a soft failure. Remember it, but try the other upstreams —
-				// one of them may actually resolve the name.
-				lastResp, lastRtt = res.msg, res.rtt
-				launchRest()
-			default:
-				lastErr = res.err
-				launchRest() // hard error before the hedge fired — query the rest now.
-			}
-			if pending == 0 {
-				if lastResp != nil {
-					return lastResp, lastRtt, nil // everyone SERVFAILed — return the SERVFAIL.
-				}
-				if lastErr == nil {
-					lastErr = errNoUpstreams
-				}
-				return nil, 0, lastErr
-			}
-		}
-	}
 }
 
 func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR) *dns.Msg {

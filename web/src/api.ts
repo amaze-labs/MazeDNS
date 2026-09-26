@@ -227,8 +227,9 @@ export interface VLExportSettings {
 }
 
 export interface ClientIdentity {
-  name: string // NetBird peer / reverse-DNS hostname ("" if unknown)
-  source: string // "netbird" | "rdns" | ""
+  name: string // static name / NetBird peer / rewrite name / reverse-DNS hostname ("" if unknown)
+  source: string // "manual" | "netbird" | "rewrite" | "rdns" | ""
+  aliases?: string[] // other names from the same source (several rewrites -> one IP)
 }
 
 export interface ClassifierSettings {

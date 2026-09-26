@@ -74,7 +74,7 @@ export default function ClientDetail({
   const [err, setErr] = useState('')
   const id = names.get(client)
   // Prefill with the existing static name; otherwise the field is empty and the
-  // detected NetBird/reverse-DNS name (if any) shows as a hint.
+  // detected NetBird/rewrite/reverse-DNS name (if any) shows as a hint.
   const [host, setHost] = useState(id?.source === 'manual' ? id.name : '')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
@@ -140,12 +140,13 @@ export default function ClientDetail({
           <div className="settings-card" style={{ marginBottom: 16 }}>
             <h3>Static hostname</h3>
             <p className="muted" style={{ textAlign: 'left', marginTop: 0 }}>
-              Assign a name for this IP (useful for static hosts that aren't NetBird peers). It overrides NetBird and
-              reverse-DNS and shows everywhere.
+              Assign a name for this IP (useful for static hosts that aren't NetBird peers). It overrides NetBird,
+              Local DNS rewrites and reverse-DNS and shows everywhere.
               {detected && (
                 <>
                   {' '}
-                  Currently detected: <strong>{detected}</strong> ({id?.source}).
+                  Currently detected: <strong>{detected}</strong> ({id?.source}
+                  {id?.aliases && id.aliases.length > 0 ? `; also ${id.aliases.join(', ')}` : ''}).
                 </>
               )}
             </p>

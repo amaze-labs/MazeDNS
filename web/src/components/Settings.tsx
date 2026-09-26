@@ -11,6 +11,7 @@ import {
   type CPSettings,
 } from '../api'
 import Spinner from './Spinner'
+import { invalidateAllClientNames } from '../useClientNames'
 
 const linesToList = (s: string) =>
   s.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean)
@@ -324,6 +325,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setImportMsg(
         `Imported ${res.rules} rules, ${res.rewrites} rewrites${res.settings ? ', settings applied' : ''} (${res.mode}).`,
       )
+      invalidateAllClientNames() // imported rewrites can rename clients
       await load()
     } catch (e: any) {
       setErr(e.message)

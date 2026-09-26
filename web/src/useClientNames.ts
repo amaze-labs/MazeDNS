@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ClientIdentity } from './api'
 
-// Shared client-IP -> identity (NetBird peer / reverse-DNS) resolver. Requests
+// Shared client-IP -> identity (static name / NetBird peer / rewrite / reverse-DNS) resolver. Requests
 // from every table are coalesced into one debounced batch and cached for the
 // session, so the same IP is never looked up twice.
 const cache = new Map<string, ClientIdentity>()
@@ -34,6 +34,13 @@ function flush() {
 // everywhere without a full reload.
 export function invalidateClientName(ip: string) {
   cache.delete(ip)
+  listeners.forEach((l) => l())
+}
+
+// invalidateAllClientNames drops every cached identity (e.g. after a Local DNS
+// rewrite changes, which can rename any number of clients).
+export function invalidateAllClientNames() {
+  cache.clear()
   listeners.forEach((l) => l())
 }
 

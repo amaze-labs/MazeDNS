@@ -3,6 +3,7 @@ import { api, type Forwarder, type Rewrite } from '../api'
 import Modal from './Modal'
 import ScopePicker, { ALL_SCOPE, scopeBadge, type Scope } from './ScopePicker'
 import { useTable, Th, Pager, type SortAccessors } from './tableKit'
+import { invalidateAllClientNames } from '../useClientNames'
 
 // Upstreams are edited as one comma-separated field in both the add form and
 // the edit dialog.
@@ -62,6 +63,7 @@ export default function Rewrites() {
       setValue('')
       setScope(ALL_SCOPE)
       setErr('')
+      invalidateAllClientNames()
       load()
     } catch (e: any) {
       setErr(e.message)
@@ -70,6 +72,7 @@ export default function Rewrites() {
 
   const del = async (id: number) => {
     await api.deleteRewrite(id)
+    invalidateAllClientNames()
     load()
   }
 
@@ -137,6 +140,8 @@ export default function Rewrites() {
         Use <code>*.example.com</code> to match every subdomain. The wildcard does not cover the bare
         <code> example.com</code> — add a separate entry for the apex if you need it. Scope an entry to
         nodes or sites for split-horizon answers; the most specific scope wins (node &gt; site &gt; all).
+        Exact <code>A</code>/<code>AAAA</code> entries also name clients on the Clients page and answer reverse
+        (PTR) lookups for their address.
       </p>
       {err && <div className="error">{err}</div>}
       <form className="row" onSubmit={add}>

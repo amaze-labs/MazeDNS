@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type SessionUser, type User } from '../api'
 import { PASSWORD_RULE, passwordPolicyError } from '../passwordPolicy'
+import { TableStatusRow } from './tableKit'
 
 export default function Account({ me, oidc = false }: { me: SessionUser | null; oidc?: boolean }) {
   // With SSO enabled, accounts and roles are governed by the identity provider's
@@ -16,12 +17,20 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
 
   // User management (admin)
   const [users, setUsers] = useState<User[]>([])
+  const [usersLoaded, setUsersLoaded] = useState(false)
   const [nu, setNu] = useState({ username: '', password: '', role: 'readonly' })
   const [uErr, setUErr] = useState('')
   const [uMsg, setUMsg] = useState('')
 
   const loadUsers = () => {
-    if (isAdmin) api.users().then(setUsers).catch((e) => setUErr(e.message))
+    if (!isAdmin) return
+    api
+      .users()
+      .then((us) => {
+        setUsers(us)
+        setUsersLoaded(true)
+      })
+      .catch((e) => setUErr(e.message))
   }
   useEffect(() => {
     loadUsers()
@@ -219,13 +228,9 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
                   </td>
                 </tr>
               ))}
-              {users.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="muted">
-                    No users
-                  </td>
-                </tr>
-              )}
+              <TableStatusRow loading={!usersLoaded} error={uErr} empty={users.length === 0} colSpan={4}>
+                No users
+              </TableStatusRow>
             </tbody>
           </table>
 

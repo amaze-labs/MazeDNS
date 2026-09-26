@@ -29,7 +29,11 @@ export function scopeBadge(scopeType?: string, scopeValues?: string[], known?: s
 
 // Scope selector: "all nodes" or a checkbox list of nodes / sites. Options come
 // from the cluster endpoints; when the cluster is empty the picker collapses to
-// "all nodes" only.
+// "all nodes" only. Pass null for a list that hasn't loaded (or failed to load):
+// values already in the scope are still shown, just not flagged as unknown.
+// Selected values missing from a loaded list (a renamed or removed node, say)
+// stay visible, marked with ⚠, so an edit can drop them instead of silently
+// keeping them.
 export default function ScopePicker({
   value,
   onChange,
@@ -38,10 +42,12 @@ export default function ScopePicker({
 }: {
   value: Scope
   onChange: (s: Scope) => void
-  nodes: string[]
-  sites: string[]
+  nodes: string[] | null
+  sites: string[] | null
 }) {
-  const options = value.scope_type === 'nodes' ? nodes : value.scope_type === 'sites' ? sites : []
+  const known = value.scope_type === 'nodes' ? nodes : value.scope_type === 'sites' ? sites : []
+  const options = [...(known ?? []), ...value.scope_values.filter((v) => !(known ?? []).includes(v))]
+  const label = value.scope_type === 'nodes' ? 'node' : 'site'
   const toggle = (name: string) => {
     const has = value.scope_values.includes(name)
     onChange({
@@ -56,16 +62,24 @@ export default function ScopePicker({
         onChange={(e) => onChange({ scope_type: e.target.value, scope_values: [] })}
       >
         <option value="all">All nodes</option>
-        {nodes.length > 0 && <option value="nodes">Specific nodes</option>}
-        {sites.length > 0 && <option value="sites">Sites</option>}
+        {((nodes?.length ?? 0) > 0 || value.scope_type === 'nodes') && <option value="nodes">Specific nodes</option>}
+        {((sites?.length ?? 0) > 0 || value.scope_type === 'sites') && <option value="sites">Sites</option>}
       </select>
       {value.scope_type !== 'all' &&
-        options.map((name) => (
-          <label key={name} className="scope-chip">
-            <input type="checkbox" checked={value.scope_values.includes(name)} onChange={() => toggle(name)} />
-            {name}
-          </label>
-        ))}
+        options.map((name) => {
+          const unknown = known !== null && !known.includes(name)
+          return (
+            <label
+              key={name}
+              className="scope-chip"
+              title={unknown ? `unknown ${label}: no longer in the cluster, so it matches nothing` : undefined}
+            >
+              <input type="checkbox" checked={value.scope_values.includes(name)} onChange={() => toggle(name)} />
+              {name}
+              {unknown && <span className="muted">⚠</span>}
+            </label>
+          )
+        })}
     </span>
   )
 }

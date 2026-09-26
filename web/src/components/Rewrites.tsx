@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { api, type Forwarder, type Rewrite } from '../api'
+import Modal from './Modal'
 import ScopePicker, { ALL_SCOPE, scopeBadge, type Scope } from './ScopePicker'
 import { useTable, Th, Pager, type SortAccessors } from './tableKit'
 
@@ -25,6 +26,8 @@ export default function Rewrites() {
 
   const [nodes, setNodes] = useState<string[] | null>(null)
   const [sites, setSites] = useState<string[] | null>(null)
+
+  const [editing, setEditing] = useState<Rewrite | null>(null)
 
   const load = () => {
     api.rewrites().then(setRows).catch((e) => setErr(e.message))
@@ -58,6 +61,23 @@ export default function Rewrites() {
 
   const del = async (id: number) => {
     await api.deleteRewrite(id)
+    load()
+  }
+
+  const toggle = async (r: Rewrite) => {
+    try {
+      await api.updateRewrite(r.id, r.value, !r.enabled, r.scope_type || 'all', r.scope_values ?? [])
+      setErr('')
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
+  const saveEdit = async (r: Rewrite, value: string, s: Scope) => {
+    if (!value) throw new Error('value required')
+    await api.updateRewrite(r.id, value, r.enabled, s.scope_type, s.scope_values)
+    setEditing(null)
     load()
   }
 
@@ -113,7 +133,7 @@ export default function Rewrites() {
           <option>CNAME</option>
         </select>
         <input placeholder="value (IP or target)" value={value} onChange={(e) => setValue(e.target.value)} />
-        <ScopePicker value={scope} onChange={setScope} nodes={nodes ?? []} sites={sites ?? []} />
+        <ScopePicker value={scope} onChange={setScope} nodes={nodes} sites={sites} />
         <button type="submit">Add</button>
       </form>
       <table>
@@ -123,12 +143,13 @@ export default function Rewrites() {
             <Th table={table} col="rrtype">Type</Th>
             <Th table={table} col="value">Value</Th>
             <th>Scope</th>
+            <th>Enabled</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {table.rows.map((r) => (
-            <tr key={r.id}>
+            <tr key={r.id} className={r.enabled ? '' : 'muted'}>
               <td>{r.domain}</td>
               <td>{r.rrtype}</td>
               <td>{r.value}</td>
@@ -140,15 +161,23 @@ export default function Rewrites() {
                 )}
               </td>
               <td>
-                <button className="del" onClick={() => del(r.id)}>
-                  ✕
-                </button>
+                <button onClick={() => toggle(r)}>{r.enabled ? 'On' : 'Off'}</button>
+              </td>
+              <td>
+                <div className="actions">
+                  <button className="btn ghost" onClick={() => setEditing(r)}>
+                    Edit
+                  </button>
+                  <button className="del" onClick={() => del(r.id)} title="Delete">
+                    ✕
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
           {table.rows.length === 0 && (
             <tr>
-              <td colSpan={5} className="muted">
+              <td colSpan={6} className="muted">
                 No rewrites
               </td>
             </tr>
@@ -170,7 +199,7 @@ export default function Rewrites() {
           value={upstreams}
           onChange={(e) => setUpstreams(e.target.value)}
         />
-        <ScopePicker value={fwdScope} onChange={setFwdScope} nodes={nodes ?? []} sites={sites ?? []} />
+        <ScopePicker value={fwdScope} onChange={setFwdScope} nodes={nodes} sites={sites} />
         <button type="submit">Add</button>
       </form>
       <table>
@@ -214,6 +243,102 @@ export default function Rewrites() {
           )}
         </tbody>
       </table>
+
+      {editing && (
+        <EditScopedModal
+          title={`Edit rewrite ${editing.domain}`}
+          intro={
+            <>
+              Domain <code>{editing.domain}</code> and type <code>{editing.rrtype}</code> identify the record and can't
+              be changed; delete it and add a new one instead.
+            </>
+          }
+          fieldLabel={editing.rrtype === 'CNAME' ? 'Value (target name)' : `Value (${editing.rrtype === 'AAAA' ? 'IPv6' : 'IPv4'} address)`}
+          fieldPlaceholder="value (IP or target)"
+          initialText={editing.value}
+          initialScope={{ scope_type: editing.scope_type || 'all', scope_values: editing.scope_values ?? [] }}
+          nodes={nodes}
+          sites={sites}
+          onClose={() => setEditing(null)}
+          onSave={(text, s) => saveEdit(editing, text, s)}
+        />
+      )}
     </div>
+  )
+}
+
+// EditScopedModal edits the mutable part of a scoped entry (rewrite value or
+// forwarder upstreams, plus the scope). Save errors, including the backend's
+// 409 when the new scope overlaps another entry for the same name, are shown
+// inside the dialog so the operator can adjust the scope and retry.
+function EditScopedModal({
+  title,
+  intro,
+  fieldLabel,
+  fieldPlaceholder,
+  initialText,
+  initialScope,
+  nodes,
+  sites,
+  onClose,
+  onSave,
+}: {
+  title: string
+  intro: ReactNode
+  fieldLabel: string
+  fieldPlaceholder: string
+  initialText: string
+  initialScope: Scope
+  nodes: string[] | null
+  sites: string[] | null
+  onClose: () => void
+  onSave: (text: string, scope: Scope) => Promise<void>
+}) {
+  const [text, setText] = useState(initialText)
+  const [scope, setScope] = useState<Scope>(initialScope)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    setErr('')
+    try {
+      await onSave(text.trim(), scope)
+    } catch (e: any) {
+      setErr(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="muted" style={{ textAlign: 'left', marginTop: 0 }}>
+        {intro}
+      </p>
+      <div className="field">
+        <label>{fieldLabel}</label>
+        <input
+          autoFocus
+          placeholder={fieldPlaceholder}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && save()}
+        />
+      </div>
+      <div className="field">
+        <label>Scope</label>
+        <ScopePicker value={scope} onChange={setScope} nodes={nodes} sites={sites} />
+      </div>
+      {err && <div className="error">{err}</div>}
+      <div className="settings-actions" style={{ marginTop: 8 }}>
+        <button className="btn ghost" onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </Modal>
   )
 }

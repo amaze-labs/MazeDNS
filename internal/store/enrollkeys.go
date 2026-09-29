@@ -151,3 +151,41 @@ func (s *Store) EnrollKeyValid(keyHash string, now int64) (bool, string, error) 
 	valid := enrollKeyStatus(revoked != 0, expiresAt, maxUses, useCount, now) == "active"
 	return valid, prefix, nil
 }
+
+var (
+	ErrEnrollKeyNotFound = errors.New("enrollment key not found")
+	ErrEnrollKeyActive   = errors.New("enrollment key is still active: revoke it before deleting it")
+	// ErrEnrollKeyConfigured refuses deleting the deprecated join_token while it is
+	// still configured: the boot-time import would re-insert it as an active,
+	// never-expiring key, silently undoing the revocation.
+	ErrEnrollKeyConfigured = errors.New("enrollment key is still set as cluster.join_token / MAZEDNS_JOIN_TOKEN: remove it from the config and restart before deleting it")
+)
+
+// DeleteEnrollKey permanently removes a revoked, expired or exhausted enrollment
+// key and returns its name. Active keys are refused (revoke first), so a delete can
+// never take a working key away from a live rollout. keepHash is the hash of the
+// configured deprecated join_token ("" = none); that key is refused too (see
+// ErrEnrollKeyConfigured).
+func (s *Store) DeleteEnrollKey(id, keepHash string, now int64) (string, error) {
+	var name, hash string
+	var expiresAt, maxUses, useCount int64
+	var revoked int
+	err := s.db.QueryRow(
+		`SELECT name, key_hash, expires_at, max_uses, use_count, revoked FROM enroll_keys WHERE id=?`, id).
+		Scan(&name, &hash, &expiresAt, &maxUses, &useCount, &revoked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrEnrollKeyNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if keepHash != "" && hash == keepHash {
+		return name, ErrEnrollKeyConfigured
+	}
+	if enrollKeyStatus(revoked != 0, expiresAt, maxUses, useCount, now) == "active" {
+		return name, ErrEnrollKeyActive
+	}
+	// No transition makes a non-active key active again, so the check can't go stale.
+	_, err = s.db.Exec(`DELETE FROM enroll_keys WHERE id=?`, id)
+	return name, err
+}

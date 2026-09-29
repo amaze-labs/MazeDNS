@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -58,6 +59,7 @@ type Server struct {
 	requireApproval     bool          // hold self-enrolled agents until an admin approves
 	keyMaxAge           time.Duration // rotate a node's key once it exceeds this age (0 = disabled)
 	keyGrace            time.Duration // overlap window a rotated-out node key stays valid
+	joinTokenHash       string        // hash of the configured deprecated join_token ("" = none); see SetJoinToken
 	// Login rate limiting (finding #2). loginRate keys fixed windows by IP and by
 	// username; the limits are live-applied from CPSettings via applyCPSettings.
 	loginRate     *keyedLimiter
@@ -89,6 +91,15 @@ func (s *Server) SetClusterEnrollment(requireApproval bool, keyMaxAge, keyGrace 
 		keyGrace = 15 * time.Minute
 	}
 	s.keyGrace = keyGrace
+}
+
+// SetJoinToken records the configured deprecated join_token, which is re-imported
+// as an enrollment key on every boot: its row must not be hard-deleted while the
+// token is still configured, or the next restart would bring it back as active.
+func (s *Server) SetJoinToken(token string) {
+	if token = strings.TrimSpace(token); token != "" {
+		s.joinTokenHash = hashKey(token)
+	}
 }
 
 // classifierStatus exposes the classifier worker's runtime state to the API
@@ -245,10 +256,10 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("GET /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.listEnrollKeys))
 			mux.HandleFunc("POST /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.createEnrollKey))
 			mux.HandleFunc("DELETE /api/cluster/enroll-keys/{id}", s.requireRole(roleAdmin, s.revokeEnrollKey))
-			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)      // enrollment-key auth
-			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot)   // per-node key auth
-			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)            // per-node key auth
-			mux.HandleFunc("POST /api/cluster/proclog", s.clusterProcLog)    // per-node key auth
+			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)    // enrollment-key auth
+			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
+			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
+			mux.HandleFunc("POST /api/cluster/proclog", s.clusterProcLog)  // per-node key auth
 		}
 
 		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
@@ -604,9 +615,33 @@ func (s *Server) createEnrollKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// revokeEnrollKey disables an enrollment key immediately.
+// revokeEnrollKey disables an enrollment key immediately. With ?forever=true it
+// instead permanently deletes a key that is no longer usable (revoked, expired or
+// exhausted; see Store.DeleteEnrollKey) — audit-logged, like a node purge.
 func (s *Server) revokeEnrollKey(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.RevokeEnrollKey(r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	if r.URL.Query().Get("forever") == "true" {
+		name, err := s.store.DeleteEnrollKey(id, s.joinTokenHash, time.Now().Unix())
+		switch {
+		case errors.Is(err, store.ErrEnrollKeyNotFound):
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		case errors.Is(err, store.ErrEnrollKeyActive), errors.Is(err, store.ErrEnrollKeyConfigured):
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		case err != nil:
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_ = s.store.AppendAudit(store.AuditEntry{
+			User: auditUser(s, r), Action: "cluster.enrollkey.delete",
+			Detail: fmt.Sprintf("permanently deleted enrollment key %q (%s)", name, id),
+		})
+		slog.Info("cluster enrollment key deleted", "id", id, "name", name)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.store.RevokeEnrollKey(id); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

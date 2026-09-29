@@ -214,6 +214,7 @@ func main() {
 	// deprecated: import it once as a never-expiring enrollment key so existing
 	// agents keep working, then warn the operator to manage keys in the UI.
 	importDeprecatedJoinToken(st, cfg.Cluster.JoinToken)
+	apiSrv.SetJoinToken(cfg.Cluster.JoinToken)
 
 	// First-boot setup wizard: on a fresh, admin-less control plane, guard the API
 	// behind the setup wizard (trust-on-first-use — whoever reaches the fresh CP

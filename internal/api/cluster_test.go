@@ -793,3 +793,57 @@ func TestClientIPForwardedHeaders(t *testing.T) {
 		t.Fatalf("all-invalid headers should fall to RemoteAddr: got %q", got)
 	}
 }
+
+// DELETE ?forever=true hard-deletes only unusable keys, never the configured
+// deprecated join_token (the boot import would bring it back as active).
+func TestEnrollKeyDeleteForever(t *testing.T) {
+	s, st := newEnrollServer(t, "", false)
+	s.SetJoinToken(" cfg-token ")
+	now := time.Now().Unix()
+	mk := func(id, secret string, expiresAt int64) {
+		if err := st.CreateEnrollKey(id, id, hashKey(secret), keyPrefix(secret), "test", expiresAt, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("active", "a-secret", 0)
+	mk("expired", "e-secret", now-1)
+	mk("revoked", "r-secret", 0)
+	if err := st.RevokeEnrollKey("revoked"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureEnrollKey("cfg", "imported", hashKey("cfg-token"), "cfg-toke"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RevokeEnrollKey("cfg"); err != nil {
+		t.Fatal(err)
+	}
+	del := func(id string) int {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodDelete, "/api/cluster/enroll-keys/"+id+"?forever=true", nil)
+		req.SetPathValue("id", id)
+		s.revokeEnrollKey(rr, req)
+		return rr.Code
+	}
+	for id, want := range map[string]int{
+		"active": http.StatusConflict, "cfg": http.StatusConflict, "missing": http.StatusNotFound,
+		"revoked": http.StatusNoContent, "expired": http.StatusNoContent,
+	} {
+		if got := del(id); got != want {
+			t.Errorf("delete %s: status = %d, want %d", id, got, want)
+		}
+	}
+	keys, _ := st.ListEnrollKeys()
+	if len(keys) != 2 {
+		t.Fatalf("want only active + cfg left, got %+v", keys)
+	}
+	audit, _ := st.ListAudit()
+	n := 0
+	for _, e := range audit {
+		if e.Action == "cluster.enrollkey.delete" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("want 2 delete audit entries, got %d", n)
+	}
+}

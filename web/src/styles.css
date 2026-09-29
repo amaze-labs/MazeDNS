@@ -467,6 +467,14 @@ tr:last-child td {
   color: var(--accent);
 }
 
+/* Live requests: blocked and rewritten queries stand out. */
+tr.live-blocked td {
+  background: rgba(255, 93, 108, 0.08);
+}
+tr.live-rewrite td {
+  background: rgba(196, 138, 255, 0.08);
+}
+
 /* Classifier verdict table */
 .cls-row {
   cursor: pointer;

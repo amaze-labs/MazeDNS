@@ -27,6 +27,16 @@ cards; the choice is remembered in your browser.
 Use the **Requests** tab to inspect individual queries — filter by node, client, or
 action, and sort by processing time (`ms`) to find slow lookups.
 
+Switch the Requests tab to **Live** to watch queries as the agents answer them
+(within about a second), newest first — e.g. while debugging a client or checking
+that a new block rule takes effect. Filter by node or site, client (IP or resolved
+name), domain, type, action, classification, and rcode; blocked and rewritten
+queries are highlighted, and clicking a row opens the client's details. The
+browser keeps the last 1000 rows, and the stream pauses while the tab is hidden.
+Agents only send queries while someone is watching them, and only the ones that
+match the filters. Live is best effort (a slow view drops rows); the stored query
+log is unaffected.
+
 ## Upstreams, cache, and DNS behavior
 
 Operational DNS settings live under **Settings** and apply live across the cluster

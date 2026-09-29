@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/logbuf"
@@ -21,8 +22,12 @@ import (
 )
 
 const (
-	shipBatch    = 5000 // max query-log entries shipped to the master per cycle
-	procLogBatch = 1000 // max process-log lines shipped to the master per cycle
+	shipBatch = 5000 // max query-log entries shipped to the master per request
+	// shipMaxBatches bounds one cycle's shipping so a huge backlog can't starve
+	// the config sync. At the default 30s interval that drains ~3300 queries/s;
+	// an agent sustaining more still falls behind and would need its own ticker.
+	shipMaxBatches = 20
+	procLogBatch   = 1000 // max process-log lines shipped to the master per cycle
 	// procLogByteBudget bounds one proc-log batch's payload so it stays well
 	// under the master's 1MB request-body cap — a rejected batch would re-ship
 	// identically every cycle and wedge shipping for good.
@@ -35,6 +40,7 @@ const (
 // dashboard is cluster-wide. None of this touches the DNS hot path.
 type Agent struct {
 	masterURL      string
+	keyMu          sync.Mutex // guards nodeKey: the live-stream goroutines read it too
 	nodeKey        string
 	advertiseAddr  string // site-reachable address reported to the master ('' = use RemoteAddr)
 	interval       time.Duration
@@ -68,9 +74,23 @@ type Agent struct {
 	stateApplied bool
 	appliedPause int64
 	appliedMaint bool
+	live         *LiveTap // live query streaming (nil = disabled)
 	// settingsVer is the SettingsVersion of the central settings persisted on
 	// this node (loaded at start, updated on every change).
 	settingsVer string
+}
+
+// key returns the current node key.
+func (a *Agent) key() string {
+	a.keyMu.Lock()
+	defer a.keyMu.Unlock()
+	return a.nodeKey
+}
+
+func (a *Agent) setKey(k string) {
+	a.keyMu.Lock()
+	a.nodeKey = k
+	a.keyMu.Unlock()
 }
 
 // SetProcessLogs installs the ring buffer of this process's recent log lines;
@@ -171,6 +191,9 @@ func (a *Agent) Run(ctx context.Context) {
 	if !strings.HasPrefix(a.masterURL, "https://") {
 		slog.Warn("cluster master URL is not https; behind a TLS reverse proxy use the proxy URL (e.g. https://host, no :8080)", "master", a.masterURL)
 	}
+	if a.live != nil {
+		go a.runLive(ctx)
+	}
 	a.cycle(ctx)
 	t := time.NewTicker(a.interval)
 	defer t.Stop()
@@ -227,7 +250,7 @@ func (a *Agent) shipProcLogs(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
+	req.Header.Set("Authorization", "Bearer "+a.key())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -250,41 +273,48 @@ func (a *Agent) shipProcLogs(ctx context.Context) {
 }
 
 // shipLogs forwards new query-log entries to the master in batches, advancing a
-// persisted cursor. Runs off the DNS path on the agent goroutine.
+// persisted cursor, until the backlog is drained (or shipMaxBatches batches were
+// sent). Runs off the DNS path on the agent goroutine.
 func (a *Agent) shipLogs(ctx context.Context) {
-	entries, maxID, err := a.store.QueryLogSince(a.lastShipped, shipBatch)
-	if err != nil {
-		slog.Warn("ship logs: read failed", "err", err)
-		return
+	for i := 0; i < shipMaxBatches; i++ {
+		entries, maxID, err := a.store.QueryLogSince(a.lastShipped, shipBatch)
+		if err != nil {
+			slog.Warn("ship logs: read failed", "err", err)
+			return
+		}
+		if len(entries) == 0 {
+			return
+		}
+		if err := a.postJSON(ctx, "/api/cluster/log", entries); err != nil {
+			slog.Warn("ship logs: post failed", "err", err)
+			return
+		}
+		a.lastShipped = maxID
+		_ = a.store.SetMetaInt("shipped_log_id", maxID)
+		if len(entries) < shipBatch {
+			return
+		}
 	}
-	if len(entries) == 0 {
-		return
-	}
-	if err := a.postLogs(ctx, entries); err != nil {
-		slog.Warn("ship logs: post failed", "err", err)
-		return
-	}
-	a.lastShipped = maxID
-	_ = a.store.SetMetaInt("shipped_log_id", maxID)
 }
 
-func (a *Agent) postLogs(ctx context.Context, entries []store.QueryLogEntry) error {
-	body, err := json.Marshal(entries)
+// postJSON posts v to the master's path, authenticated with the node key.
+func (a *Agent) postJSON(ctx context.Context, path string, v any) error {
+	body, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.masterURL+"/api/cluster/log", strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.masterURL+path, strings.NewReader(string(body)))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
+	req.Header.Set("Authorization", "Bearer "+a.key())
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return statusError(resp)
 	}
 	return nil
@@ -341,8 +371,8 @@ func (a *Agent) syncOnce(ctx context.Context) {
 	// Adopt a control-plane-rotated node key: switch to it now and persist it so the
 	// next request (and restarts) use it. Done before the version early-return so a
 	// rotation isn't skipped when the config is unchanged.
-	if snap.NewNodeKey != "" && snap.NewNodeKey != a.nodeKey {
-		a.nodeKey = snap.NewNodeKey
+	if snap.NewNodeKey != "" && snap.NewNodeKey != a.key() {
+		a.setKey(snap.NewNodeKey)
 		if a.saveNodeKey != nil {
 			a.saveNodeKey(snap.NewNodeKey)
 		}
@@ -411,7 +441,7 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+a.nodeKey)
+	req.Header.Set("Authorization", "Bearer "+a.key())
 	// Two distinct versions travel with every poll: the replicated-config hash
 	// this node has applied (Node-Version) and the running binary's build version
 	// (App-Version) — the control plane compares the latter against its own to
@@ -460,7 +490,7 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 				slog.Warn("cluster re-enroll failed", "err", rerr)
 			}
 		} else {
-			a.nodeKey = newKey
+			a.setKey(newKey)
 			slog.Info("cluster re-enrolled after key rejection")
 		}
 		return nil, statusError(resp)

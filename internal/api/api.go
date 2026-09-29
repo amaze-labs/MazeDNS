@@ -76,6 +76,8 @@ type Server struct {
 	// procLogs holds recent process-log lines: the control plane's own slog ring
 	// plus one shipped ring per agent (see logs.go).
 	procLogs *procLogStore
+	// live fans agents' streamed queries out to the Live view (see live.go).
+	live *liveHub
 }
 
 // SetClusterEnrollment configures agent self-enrollment and per-node key rotation.
@@ -129,7 +131,7 @@ func (s *Server) SetEnricher(e *netbird.Enricher) { s.enricher = e }
 // cluster endpoints when clusterEnabled. reload rebuilds the resolver policy
 // after every mutation.
 func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, refresher *lists.Refresher, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
-	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker, procLogs: newProcLogStore()}
+	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker, procLogs: newProcLogStore(), live: newLiveHub()}
 	s.setupDone.Store(true) // no gating unless main calls EnableSetupMode
 	// Login rate limiting seeded to the default; live-updated via applyCPSettings.
 	s.loginRate = newKeyedLimiter()
@@ -163,6 +165,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.cached(s.getLatency)))
 		mux.HandleFunc("GET /api/stats/top-domains", s.requireRole(roleReadonly, s.cached(s.getTopDomains)))
 		mux.HandleFunc("GET /api/querylog", s.requireRole(roleReadonly, s.getQueryLog))
+		mux.HandleFunc("GET /api/querylog/stream", s.requireRole(roleReadonly, s.streamQueryLog))
 		mux.HandleFunc("GET /api/rules", s.requireRole(roleReadonly, s.listRules))
 		mux.HandleFunc("POST /api/rules", s.requireRole(roleAdmin, s.addRule))
 		mux.HandleFunc("POST /api/rules/import", s.requireRole(roleAdmin, s.importRules))
@@ -260,6 +263,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
 			mux.HandleFunc("POST /api/cluster/proclog", s.clusterProcLog)  // per-node key auth
+			mux.HandleFunc("GET /api/cluster/live", s.clusterLiveState)    // per-node key auth
+			mux.HandleFunc("POST /api/cluster/live", s.clusterLivePush)    // per-node key auth
 		}
 
 		mux.Handle("/", web.Handler()) // SPA + static assets (embedded with -tags embed_dist)
@@ -270,6 +275,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		Handler:           logRequests(s.setupGate(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	// Shutdown waits for open requests: end the live streams and long polls.
+	s.http.RegisterOnShutdown(s.live.close)
 	return s
 }
 

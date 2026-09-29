@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -845,5 +847,67 @@ func TestEnrollKeyDeleteForever(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("want 2 delete audit entries, got %d", n)
+	}
+}
+
+// Queries flow live from a real agent to a Live viewer: the agent learns the
+// viewer's filter over the long poll, streams only matching queries, and the
+// control plane tags them with the node name.
+func TestLiveQueryStream(t *testing.T) {
+	s, _ := newEnrollServer(t, "s3cr3t", false)
+	s.live = newLiveHub()
+	key := jsonField(enroll(s, `{"name":"agent-01","token":"s3cr3t"}`).Body.String(), "key")
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/cluster/live", s.clusterLiveState)
+	mux.HandleFunc("POST /api/cluster/live", s.clusterLivePush)
+	mux.HandleFunc("GET /api/querylog/stream", s.streamQueryLog)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/querylog/stream?nodes=agent-01&domain=Wanted", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	events := make(chan store.QueryLogEntry)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if data, ok := strings.CutPrefix(sc.Text(), "data: "); ok {
+				var e store.QueryLogEntry
+				_ = json.Unmarshal([]byte(data), &e)
+				events <- e
+			}
+		}
+	}()
+
+	ast, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ast.Close()
+	tap := cluster.NewLiveTap()
+	ag := cluster.NewAgent(ts.URL, "", key, "", time.Hour, ast, nil, nil, nil, nil)
+	ag.SetLiveTap(tap)
+	go ag.Run(ctx)
+
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case e := <-events:
+			if e.Name != "wanted.example.lan" || e.Node != "agent-01" {
+				t.Fatalf("unexpected live entry: %+v", e)
+			}
+			return
+		case <-tick.C:
+			tap.Write(store.QueryLogEntry{Client: "10.0.0.1", Name: "noise.example.lan", QType: "A", Action: "forward"})
+			tap.Write(store.QueryLogEntry{Client: "10.0.0.1", Name: "wanted.example.lan", QType: "A", Action: "forward"})
+		case <-ctx.Done():
+			t.Fatal("no live entry received")
+		}
 	}
 }

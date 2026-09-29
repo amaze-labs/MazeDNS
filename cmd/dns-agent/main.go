@@ -76,6 +76,7 @@ func main() {
 	mx := metrics.New()
 
 	qlog := store.NewQueryLogWriter(st, 4096)
+	liveTap := cluster.NewLiveTap() // live query stream to the control plane's Live view
 	defer qlog.Close()
 	mx.RegisterQueryLogDropped(func() float64 { return float64(qlog.Dropped()) })
 
@@ -85,7 +86,7 @@ func main() {
 		QueryLog: cfg.Log.QueryLog,
 		Metrics:  mx,
 		OnQuery: func(ev *resolver.QueryEvent) {
-			qlog.Write(store.QueryLogEntry{
+			e := store.QueryLogEntry{
 				TS:        ev.TS.UnixMilli(),
 				Client:    ev.Client,
 				Name:      ev.Name,
@@ -94,7 +95,9 @@ func main() {
 				Category:  ev.Category,
 				Rcode:     ev.Rcode,
 				ElapsedMS: float64(ev.Elapsed.Microseconds()) / 1000.0,
-			})
+			}
+			qlog.Write(e)
+			liveTap.Write(e)
 		},
 	})
 	res.ApplySettings(boot.EffectiveSettings(st, cfg))
@@ -121,7 +124,7 @@ func main() {
 	// order) the locally-persisted key, self-enrollment with the join token, or an
 	// explicitly-supplied key.
 	agentCtx, agentCancel := context.WithCancel(context.Background())
-	startAgent(agentCtx, st, cfg, res, reload, procRing)
+	startAgent(agentCtx, st, cfg, res, reload, procRing, liveTap)
 
 	// Bound local query-log growth: the agent only needs a short buffer before
 	// shipping to the control plane.
@@ -216,7 +219,7 @@ func main() {
 
 // startAgent resolves this node's API key and launches the replication agent. It
 // no-ops (serving standalone DNS) when no control plane is configured.
-func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer) {
+func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer, liveTap *cluster.LiveTap) {
 	cpURL := cfg.Cluster.ControlPlaneURL()
 	if cpURL == "" {
 		slog.Info("standalone mode: no control plane configured (set MAZEDNS_CP_URL)")
@@ -307,6 +310,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 			cfg.Cluster.Interval.Std(), st, reload, statsFn, res.SetBlockPausedUntil, res.SetMaintenance)
 		// Ship recent process-log lines to the control plane's Logs page.
 		ag.SetProcessLogs(procRing)
+		ag.SetLiveTap(liveTap)
 		// Re-merge local + centrally pushed settings after every applied snapshot
 		// (central forwarders win per suffix).
 		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })

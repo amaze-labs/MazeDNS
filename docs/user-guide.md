@@ -182,7 +182,10 @@ so its dashboard/classifier load can't affect resolver latency.
   is lost on restart; use VictoriaLogs export for durable, searchable query logs.
 
 Create enrollment keys with an expiry and a maximum number of uses; the full secret
-is shown once and then stored hashed. Multisite networking (e.g. a WireGuard mesh so
+is shown once and then stored hashed. A revoked, expired or exhausted key can be
+*Deleted* for good (audit-logged); an active key must be revoked first, and the
+deprecated `join_token` can't be deleted while it is still in the config, since
+every boot would import it again as an active key. Multisite networking (e.g. a WireGuard mesh so
 agents reach the control plane privately) is up to you; see
 [install.md](install.md#reaching-the-control-plane-from-an-agent) for pinning the
 control plane's IP when an agent can't resolve its FQDN.

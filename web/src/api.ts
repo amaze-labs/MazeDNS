@@ -799,7 +799,10 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ name, ttl_hours, max_uses }),
     }).then(j<{ id: string; name: string; key: string; key_prefix: string; expires_at: number; max_uses: number }>),
-  revokeEnrollKey: (id: string) => fetch(`/api/cluster/enroll-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  revokeEnrollKey: (id: string) => fetch(`/api/cluster/enroll-keys/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(ok),
+  // Permanently delete a revoked, expired or exhausted key (active keys are refused).
+  deleteEnrollKey: (id: string) =>
+    fetch(`/api/cluster/enroll-keys/${encodeURIComponent(id)}?forever=true`, { method: 'DELETE' }).then(ok),
   clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
   createSite: (name: string, description = '') =>
     fetch('/api/cluster/sites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name, description }) }).then(j),

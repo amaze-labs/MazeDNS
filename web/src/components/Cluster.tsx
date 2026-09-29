@@ -322,6 +322,16 @@ export default function Cluster() {
     }
   }
 
+  const deleteEnrollKey = async (k: EnrollKey) => {
+    if (!window.confirm(`Permanently delete ${k.status} enrollment key “${k.name || k.key_prefix}”? This cannot be undone.`)) return
+    try {
+      await api.deleteEnrollKey(k.id)
+      load()
+    } catch (e: any) {
+      setErr(e.message)
+    }
+  }
+
   // ---- derived ----
   const online = nodes.filter(ONLINE).length
   const serving = nodes.filter(SERVING).length
@@ -621,6 +631,7 @@ ${bridgeAlt}`
         created={newEnrollKey}
         onCreate={createEnrollKey}
         onRevoke={revokeEnrollKey}
+        onDelete={deleteEnrollKey}
         onDismiss={() => setNewEnrollKey(null)}
       />
 
@@ -976,6 +987,7 @@ function EnrollKeys({
   created,
   onCreate,
   onRevoke,
+  onDelete,
   onDismiss,
 }: {
   keys: EnrollKey[]
@@ -984,6 +996,7 @@ function EnrollKeys({
   created: { name: string; key: string } | null
   onCreate: (name: string, ttlHours: number, maxUses: number) => void
   onRevoke: (k: EnrollKey) => void
+  onDelete: (k: EnrollKey) => void
   onDismiss: () => void
 }) {
   const [name, setName] = useState('')
@@ -1077,11 +1090,18 @@ function EnrollKeys({
                   {k.created_by ? ` · ${k.created_by}` : ''}
                 </td>
                 <td>
-                  {!k.revoked && (
-                    <button className="del" onClick={() => onRevoke(k)} title="Revoke key">
-                      Revoke
-                    </button>
-                  )}
+                  <div className="agent-remove-btns">
+                    {!k.revoked && (
+                      <button className="del" onClick={() => onRevoke(k)} title="Revoke key">
+                        Revoke
+                      </button>
+                    )}
+                    {k.status !== 'active' && (
+                      <button className="del" onClick={() => onDelete(k)} title="Permanently delete key">
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

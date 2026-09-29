@@ -1922,6 +1922,18 @@ button.move:disabled {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Tables of short values (times, node/client names, badges): keep every cell on
+   one line so a hyphenated name like site-dns02-ct isn't broken over three lines.
+   Only a .wrap cell absorbs the squeeze; past that the table overflows and the
+   .table-scroll wrapper scrolls instead. */
+table.nowrap td {
+  white-space: nowrap;
+}
+table.nowrap td.wrap {
+  white-space: normal;
+  word-break: break-all;
+}
+
 /* Full-width vertical stack (e.g. the synced Traffic + Latency charts). */
 .charts-stack {
   display: flex;

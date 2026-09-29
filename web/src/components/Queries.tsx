@@ -172,7 +172,7 @@ export default function Queries() {
       </div>
 
       <div className="table-scroll">
-      <table className="sortable">
+      <table className="sortable nowrap">
         <thead>
           <tr>
             <th className="sortable" onClick={() => setSort('time')}>Time{arrow('time')}</th>
@@ -192,7 +192,7 @@ export default function Queries() {
               <td>{new Date(e.ts).toLocaleTimeString()}</td>
               <td>{e.node || 'master'}</td>
               <td><ClientLabel ip={e.client} names={clientNames} /></td>
-              <td>{e.name}</td>
+              <td className="wrap">{e.name}</td>
               <td>{e.qtype}</td>
               <td>
                 <span className={`badge ${e.action}`}>{e.action}</span>

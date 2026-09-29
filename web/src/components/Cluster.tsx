@@ -510,7 +510,7 @@ ${bridgeAlt}`
         )
       })()}
       <div className="table-scroll">
-        <table className="agents-table">
+        <table className="agents-table nowrap">
           <thead>
             <tr>
               <Th table={agentsTable} col="status">Status</Th>
@@ -586,7 +586,7 @@ ${bridgeAlt}`
             <strong>Delete forever</strong> permanently removes the record.
           </p>
           <div className="table-scroll">
-            <table className="agents-table">
+            <table className="agents-table nowrap">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -1058,7 +1058,7 @@ function EnrollKeys({
       )}
 
       <div className="table-scroll">
-        <table className="agents-table">
+        <table className="agents-table nowrap">
           <thead>
             <tr>
               <th>Key</th>
@@ -1076,7 +1076,7 @@ function EnrollKeys({
                 <td>
                   <code>{k.key_prefix}…</code>
                 </td>
-                <td>{k.name || <span className="muted">—</span>}</td>
+                <td className="wrap">{k.name || <span className="muted">—</span>}</td>
                 <td>
                   <span className={`badge ${k.status === 'active' ? 'allow' : 'info'}`}>{k.status}</span>
                 </td>

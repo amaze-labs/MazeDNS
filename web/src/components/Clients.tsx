@@ -144,7 +144,7 @@ export default function Clients() {
       </div>
 
       <div className="table-scroll">
-        <table className="sortable">
+        <table className="sortable nowrap">
           <thead>
             <tr>
               <Th table={table} col="client">Client</Th>

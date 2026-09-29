@@ -68,6 +68,9 @@ type Agent struct {
 	stateApplied bool
 	appliedPause int64
 	appliedMaint bool
+	// settingsVer is the SettingsVersion of the central settings persisted on
+	// this node (loaded at start, updated on every change).
+	settingsVer string
 }
 
 // SetProcessLogs installs the ring buffer of this process's recent log lines;
@@ -121,6 +124,7 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 	}
 	nonce := make([]byte, 8)
 	_, _ = rand.Read(nonce)
+	settings, _ := st.ClusterSettings()
 	return &Agent{
 		masterURL:      strings.TrimRight(masterURL, "/"),
 		nodeKey:        nodeKey,
@@ -134,6 +138,7 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 		client:         &http.Client{Timeout: 15 * time.Second, Transport: masterTransport(masterIP)},
 		lastShipped:    last,
 		bootID:         hex.EncodeToString(nonce),
+		settingsVer:    SettingsVersion([]byte(settings)),
 	}
 }
 
@@ -353,7 +358,21 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		a.setMaintenance(snap.Maintenance)
 	}
 	a.appliedPause, a.appliedMaint, a.stateApplied = snap.PausedUntil, snap.Maintenance, true
+	// The central resolver settings are versioned apart from the rules: persist
+	// them whenever they changed, and re-apply even if the rules did not.
+	settingsChanged := false
+	if v := SettingsVersion(snap.Settings); v != a.settingsVer {
+		if err := a.store.SetClusterSettings(string(snap.Settings)); err != nil {
+			slog.Warn("cluster apply failed (settings)", "err", err)
+		} else {
+			a.settingsVer, settingsChanged = v, true
+		}
+	}
 	if snap.Version == a.localVersion() {
+		if settingsChanged && a.applySettings != nil {
+			a.applySettings()
+			slog.Info("cluster settings synced", "settings_version", a.settingsVer)
+		}
 		return // rules already up to date
 	}
 	// The local tables are about to change: forget the cached version so a
@@ -412,6 +431,7 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 			maint = "1"
 		}
 		req.Header.Set(HeaderMaintenance, maint)
+		req.Header.Set(HeaderSettingsVersion, a.settingsVer)
 	}
 	if a.advertiseAddr != "" {
 		req.Header.Set("X-MazeDNS-Advertise-Addr", a.advertiseAddr)

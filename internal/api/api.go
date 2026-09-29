@@ -779,13 +779,18 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.TouchNode(node.ID, addr, ver, appVer, st)
 
 	pausedUntil, _ := s.store.GetBlockPausedUntil()
+	settings, err := s.replicatedSettings()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	// Unchanged poll: an agent that can handle it gets "304 Not Modified" and no
 	// payload when it already holds everything the snapshot would carry. This
 	// is the steady state, and it costs a cached-version lookup instead of
 	// loading, hashing and serializing the whole rule set. A key rotated on this
 	// very poll must reach the agent, so it always gets the full snapshot.
-	if newNodeKey == "" && agentHoldsSnapshotState(r, node, ver, pausedUntil) {
+	if newNodeKey == "" && agentHoldsSnapshotState(r, node, ver, pausedUntil, cluster.SettingsVersion(settings)) {
 		cur, err := s.store.CachedConfigVersionForNode(node.Name, node.Site)
 		if err == nil && cur == ver {
 			w.WriteHeader(http.StatusNotModified)
@@ -814,16 +819,34 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	// re-enrolling — so it can prove ownership on a future re-enroll. NewNodeKey is
 	// set only when the control plane rotated the key on this poll; the agent
 	// persists it and authenticates with it from the next request.
-	writeJSON(w, http.StatusOK, cluster.Snapshot{NodeID: node.ID, NewNodeKey: newNodeKey, Version: snap.Version, Rules: rules, Rewrites: rewrites, Forwarders: snap.Forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance})
+	writeJSON(w, http.StatusOK, cluster.Snapshot{NodeID: node.ID, NewNodeKey: newNodeKey, Version: snap.Version, Rules: rules, Rewrites: rewrites, Forwarders: snap.Forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance, Settings: settings})
+}
+
+// replicatedSettings returns the operational settings pushed to every agent:
+// the saved settings normalized as GET /api/settings shows them, minus the
+// conditional forwarders (this control plane's local entries; cluster-wide
+// forwarders travel in the snapshot's own list). nil when none are saved.
+func (s *Server) replicatedSettings() (json.RawMessage, error) {
+	raw, err := s.store.GetSettings()
+	if err != nil || raw == "" {
+		return nil, err
+	}
+	var set resolver.Settings
+	if err := json.Unmarshal([]byte(raw), &set); err != nil {
+		return nil, err
+	}
+	set.NormalizeUpstreams()
+	set.Forwarders = nil
+	return json.Marshal(set)
 }
 
 // agentHoldsSnapshotState reports whether the polling agent advertised 304
 // support and already has every field of the snapshot except the config
 // itself (compared by version afterwards): its node id, the cluster-wide
-// block-pause deadline and its maintenance flag. Those three are not part of
-// the version hash, so a 304 must not be sent while any of them differs —
-// the agent would never learn the change.
-func agentHoldsSnapshotState(r *http.Request, node *store.Node, ver string, pausedUntil int64) bool {
+// block-pause deadline, its maintenance flag and the replicated settings.
+// Those are not part of the version hash, so a 304 must not be sent while any
+// of them differs — the agent would never learn the change.
+func agentHoldsSnapshotState(r *http.Request, node *store.Node, ver string, pausedUntil int64, settingsVer string) bool {
 	maint := "0"
 	if node.Maintenance {
 		maint = "1"
@@ -832,7 +855,8 @@ func agentHoldsSnapshotState(r *http.Request, node *store.Node, ver string, paus
 		ver != "" &&
 		r.Header.Get(cluster.HeaderNodeID) == node.ID &&
 		r.Header.Get(cluster.HeaderPausedUntil) == strconv.FormatInt(pausedUntil, 10) &&
-		r.Header.Get(cluster.HeaderMaintenance) == maint
+		r.Header.Get(cluster.HeaderMaintenance) == maint &&
+		(r.Header.Get(cluster.HeaderSettingsVersion) == "" || r.Header.Get(cluster.HeaderSettingsVersion) == settingsVer)
 }
 
 // maybeRotateNodeKey implements server-driven per-node key rotation on an

@@ -41,7 +41,8 @@ func (f *fakeCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Get(HeaderNodeVersion) == f.snap.Version &&
 		r.Header.Get(HeaderNodeID) == f.snap.NodeID &&
 		r.Header.Get(HeaderPausedUntil) == jsonInt(f.snap.PausedUntil) &&
-		r.Header.Get(HeaderMaintenance) == maint {
+		r.Header.Get(HeaderMaintenance) == maint &&
+		(r.Header.Get(HeaderSettingsVersion) == "" || r.Header.Get(HeaderSettingsVersion) == SettingsVersion(f.snap.Settings)) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -231,5 +232,41 @@ func TestAgentPersistsVersionOnApply(t *testing.T) {
 	restarted2 := NewAgent("http://unused.example.lan", "", "tok", "", time.Second, st, nil, nil, nil, nil)
 	if got := restarted2.localVersion(); got != want {
 		t.Fatalf("changed tables must invalidate the persisted version: got %q want %q", got, want)
+	}
+}
+
+// Central settings are delivered, persisted and re-applied on their own
+// version: a settings-only change (rules untouched) withholds the 304, triggers
+// applySettings without a rules reload, and the next poll is a 304 again.
+func TestAgentAppliesCentralSettings(t *testing.T) {
+	snap := testSnapshot(t)
+	snap.Settings = json.RawMessage(`{"upstreams":["192.0.2.53:53"]}`)
+	cp := &fakeCP{snap: snap}
+	ag, st, p := newAgentAgainst(t, cp)
+	applied := 0
+	ag.SetApplySettings(func() { applied++ })
+
+	ag.syncOnce(context.Background())
+	if raw, _ := st.ClusterSettings(); raw != string(snap.Settings) || applied != 1 {
+		t.Fatalf("first poll: settings %q, applied %d", raw, applied)
+	}
+
+	cp.mu.Lock()
+	cp.snap.Settings = json.RawMessage(`{"upstreams":["192.0.2.54:53"]}`)
+	cp.mu.Unlock()
+	ag.syncOnce(context.Background())
+	if raw, _ := st.ClusterSettings(); raw != `{"upstreams":["192.0.2.54:53"]}` || applied != 2 || p.reloads != 1 {
+		t.Fatalf("settings-only change: settings %q, applied %d, reloads %d", raw, applied, p.reloads)
+	}
+
+	ag.syncOnce(context.Background())
+	if got := cp.last().Get(HeaderSettingsVersion); got != SettingsVersion(cp.snap.Settings) || applied != 2 {
+		t.Fatalf("up-to-date poll should report %s and get a 304: header %q, applied %d", SettingsVersion(cp.snap.Settings), got, applied)
+	}
+
+	// A restarted agent reports the persisted settings version.
+	restarted := NewAgent("http://unused.example.lan", "", "tok", "", time.Second, st, nil, nil, nil, nil)
+	if restarted.settingsVer != SettingsVersion(cp.snap.Settings) {
+		t.Fatalf("restart lost the settings version: %q", restarted.settingsVer)
 	}
 }

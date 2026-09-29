@@ -188,3 +188,30 @@ func TestLoadOrSeedSettingsUpstreamStrategy(t *testing.T) {
 		})
 	}
 }
+
+// Central settings replace the node's local ones, except the local conditional
+// forwarders; without central settings the local ones apply.
+func TestEffectiveSettingsCentralWins(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SaveSettings(`{"upstreams":["1.1.1.1:53"],"forwarders":[{"suffix":"printers.lan","upstreams":["10.0.0.8:53"]}]}`); err != nil {
+		t.Fatal(err)
+	}
+	if s := EffectiveSettings(st, config.Default()); s.Upstreams[0] != "1.1.1.1:53" {
+		t.Fatalf("no central settings: want local upstreams, got %+v", s)
+	}
+	if err := st.SetClusterSettings(`{"upstreams":["tls://192.0.2.53:853"],"rate_limit_qpm":600}`); err != nil {
+		t.Fatal(err)
+	}
+	s := EffectiveSettings(st, config.Default())
+	if len(s.Upstreams) != 1 || s.Upstreams[0] != "tls://192.0.2.53:853" || s.RateLimitQPM != 600 ||
+		s.UpstreamStrategy != resolver.StrategyOrdered {
+		t.Fatalf("central settings must win: %+v", s)
+	}
+	if len(s.Forwarders) != 1 || s.Forwarders[0].Suffix != "printers.lan" {
+		t.Fatalf("local forwarders must survive: %+v", s.Forwarders)
+	}
+}

@@ -202,10 +202,22 @@ func MergeForwarders(s resolver.Settings, central []store.ForwardSpec) resolver.
 	return s
 }
 
-// EffectiveSettings returns what the resolver should actually run: the node's
-// local (seeded/DB) settings with the centrally-pushed forwarders merged in.
+// EffectiveSettings returns what the resolver should actually run: the
+// centrally-pushed settings when this agent has received some (central wins),
+// else the node's local (seeded/DB) settings; either way with the node's local
+// conditional forwarders, and the centrally-pushed forwarders merged over them.
 func EffectiveSettings(st *store.Store, cfg config.Config) resolver.Settings {
 	s := LoadOrSeedSettings(st, cfg)
+	if raw, _ := st.ClusterSettings(); raw != "" {
+		var c resolver.Settings
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			slog.Warn("load cluster settings", "err", err)
+		} else {
+			c.NormalizeUpstreams()
+			c.Forwarders = s.Forwarders
+			s = c
+		}
+	}
 	fws, err := st.ClusterForwarders()
 	if err != nil {
 		slog.Warn("load cluster forwarders", "err", err)

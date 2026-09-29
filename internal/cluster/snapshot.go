@@ -1,7 +1,13 @@
 // Package cluster provides master->worker configuration replication.
 package cluster
 
-import "github.com/IPMaze/MazeDNS/internal/store"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+
+	"github.com/IPMaze/MazeDNS/internal/store"
+)
 
 // Snapshot is the replicated configuration the master serves to a worker.
 // It is computed PER NODE: rewrites and forwarders are pre-filtered to the
@@ -16,6 +22,22 @@ type Snapshot struct {
 	Forwarders  []store.ForwardSpec `json:"forwarders,omitempty"`
 	PausedUntil int64               `json:"paused_until"` // cluster-wide block pause deadline (unix)
 	Maintenance bool                `json:"maintenance"`  // this node is drained (answers SERVFAIL)
+	// Settings are the cluster-wide resolver settings (upstreams, cache, block
+	// response, …; resolver.Settings JSON without the conditional forwarders,
+	// which stay node-local). They are versioned apart from the rules — see
+	// SettingsVersion — and override the agent's local settings. Absent = none.
+	Settings json.RawMessage `json:"settings,omitempty"`
+}
+
+// SettingsVersion hashes a snapshot's Settings payload exactly as sent. It is
+// kept out of Version so the frozen config-hash line format doesn't change.
+// "none" = no central settings.
+func SettingsVersion(raw []byte) string {
+	if len(raw) == 0 {
+		return "none"
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:6])
 }
 
 // Snapshot-poll request headers (agent -> control plane).
@@ -34,4 +56,8 @@ const (
 	HeaderNodeID            = "X-MazeDNS-Node-ID"
 	HeaderPausedUntil       = "X-MazeDNS-Paused-Until" // decimal unix seconds the agent has applied
 	HeaderMaintenance       = "X-MazeDNS-Maintenance"  // "1" | "0", as the agent has applied it
+	// HeaderSettingsVersion is the SettingsVersion the agent has applied. Agents
+	// that predate replicated settings don't send it and can't apply them, so the
+	// control plane only withholds a 304 over settings when it is present.
+	HeaderSettingsVersion = "X-MazeDNS-Settings-Version"
 )

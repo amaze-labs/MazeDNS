@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/IPMaze/MazeDNS/internal/cluster"
+	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -27,6 +28,7 @@ type pollOpts struct {
 	nodeID       string
 	pausedUntil  int64
 	maintenance  bool
+	settingsVer  string // "" = an agent that predates replicated settings
 	stats        string
 	advertise    string
 }
@@ -51,6 +53,9 @@ func poll(s *Server, o pollOpts) *httptest.ResponseRecorder {
 			m = "1"
 		}
 		req.Header.Set(cluster.HeaderMaintenance, m)
+		if o.settingsVer != "" {
+			req.Header.Set(cluster.HeaderSettingsVersion, o.settingsVer)
+		}
 	}
 	rr := httptest.NewRecorder()
 	s.clusterSnapshot(rr, req)
@@ -452,5 +457,38 @@ func TestAgentAndControlPlaneEndToEnd(t *testing.T) {
 	want, _ := st.ConfigVersionForNode("agent-01", "")
 	if n := mustNode(t, st, "agent-01"); n.Version != want {
 		t.Fatalf("control plane should see the agent in sync: reported %q, expected %q", n.Version, want)
+	}
+}
+
+// The control plane's operational settings ride in the snapshot without its
+// local forwarders, and a stale settings version withholds the 304 — unless the
+// agent predates replicated settings (no header) and couldn't apply them anyway.
+func TestSnapshotReplicatesSettings(t *testing.T) {
+	s, st, key, node, _ := enrolledAgent(t)
+	if err := st.SaveSettings(`{"upstreams":["tls://192.0.2.53:853"],"forwarders":[{"suffix":"cp.lan","upstreams":["10.0.0.1:53"]}],"block_response":"zeroip"}`); err != nil {
+		t.Fatal(err)
+	}
+	snap := decodeSnap(t, poll(s, pollOpts{key: key}))
+	var got resolver.Settings
+	if err := json.Unmarshal(snap.Settings, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Upstreams) != 1 || got.Upstreams[0] != "tls://192.0.2.53:853" || got.BlockResponse != "zeroip" ||
+		got.Forwarders != nil || got.UpstreamStrategy != resolver.StrategyOrdered {
+		t.Fatalf("replicated settings: %+v", got)
+	}
+
+	o := upToDate(key, node, snap)
+	o.settingsVer = cluster.SettingsVersion(snap.Settings)
+	if rr := poll(s, o); rr.Code != http.StatusNotModified {
+		t.Fatalf("matching settings: status = %d, want 304", rr.Code)
+	}
+	o.settingsVer = "none"
+	if len(decodeSnap(t, poll(s, o)).Settings) == 0 {
+		t.Fatal("stale settings version must get the full snapshot")
+	}
+	o.settingsVer = ""
+	if rr := poll(s, o); rr.Code != http.StatusNotModified {
+		t.Fatalf("agent without the header: status = %d, want 304", rr.Code)
 	}
 }

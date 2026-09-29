@@ -30,7 +30,16 @@ action, and sort by processing time (`ms`) to find slow lookups.
 ## Upstreams, cache, and DNS behavior
 
 Operational DNS settings live under **Settings** and apply live across the cluster
-(no restart):
+(no restart): every agent picks them up on its next config poll, and they override
+the agent's own settings. Only the conditional forwarders listed there stay local to
+the control plane (see below). An agent keeps its local settings until its first
+successful sync, and keeps the last synced ones if the control plane is unreachable.
+Agents older than the control plane ignore replicated settings until upgraded.
+
+> **Upgrading:** before replicated settings, agents ignored this page and ran the
+> settings seeded from their own config file. After upgrading, the control plane's
+> settings replace them on every agent, so check this page (e.g. the upstreams)
+> before rolling the upgrade out.
 
 - **Upstream resolvers** — plain (`1.1.1.1:53`), DoT
   (`tls://1.1.1.1:853#cloudflare-dns.com`), or DoH (`https://dns.quad9.net/dns-query`).
@@ -53,7 +62,8 @@ Operational DNS settings live under **Settings** and apply live across the clust
 - **Block response** — `nxdomain` (default) or `zeroip` (`0.0.0.0` / `::`).
 
 The config file only *seeds* these on first run; afterwards the database is the
-source of truth and the file is ignored for them.
+source of truth and the file is ignored for them. On an agent in a cluster, the
+control plane's settings take precedence over both.
 
 ## Blocklists and allow/deny rules
 

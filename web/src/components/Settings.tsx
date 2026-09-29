@@ -588,6 +588,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       {view === 'resolver' && (
         <>
+      <p className="muted" style={{ textAlign: 'left' }}>
+        These settings are pushed to every DNS agent on its next config poll and override the agent's own
+        settings — except the conditional forwarders below, which stay local to this control plane.
+      </p>
       <details className="settings-card" open>
         <summary>Upstream resolvers</summary>
         <label className="muted">

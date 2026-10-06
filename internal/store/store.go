@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	token_prefix TEXT NOT NULL DEFAULT '',   -- first chars, for display
 	role TEXT NOT NULL,
 	created_by TEXT NOT NULL DEFAULT '',
+	created_by_id INTEGER NOT NULL DEFAULT 0, -- users.id of the creator (ids are never reused)
 	created_at INTEGER NOT NULL DEFAULT 0,
 	last_used_at INTEGER NOT NULL DEFAULT 0, -- unix secs, 0 = never
 	expires_at INTEGER NOT NULL DEFAULT 0    -- unix secs, 0 = never

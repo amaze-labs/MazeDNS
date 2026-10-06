@@ -259,7 +259,8 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 - **SSO-only mode** has no effect on tokens: it only disables password login.
 - **A token never outranks the admin who created it.** If that admin is
   demoted to readonly, their admin tokens act as readonly; if their account is
-  deleted, their tokens stop working. Removing someone's access therefore also
+  deleted, their tokens stop working for good (re-creating an account with the
+  same name doesn't revive them). Removing someone's access therefore also
   removes it from any token they kept a copy of. For a long-lived integration,
   create its token from an account that will stay.
 - **Revoke** a token from the same list. It stops working on the next request.

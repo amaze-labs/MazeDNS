@@ -14,6 +14,10 @@ type APIToken struct {
 	TokenPrefix string `json:"token_prefix"`
 	Role        string `json:"role"`
 	CreatedBy   string `json:"created_by"`
+	// CreatedByID is the creator's users.id. A token is only valid while that
+	// account exists; matching on the id (never reused) rather than the
+	// username keeps a later account with the same name from reviving it.
+	CreatedByID int64 `json:"-"`
 	CreatedAt   int64  `json:"created_at"`
 	LastUsedAt  int64  `json:"last_used_at"` // 0 = never
 	ExpiresAt   int64  `json:"expires_at"`   // 0 = never
@@ -28,9 +32,9 @@ func (s *Store) CreateAPIToken(t APIToken, tokenHash string) error {
 		return errors.New("token hash is required")
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO api_tokens(id, name, token_hash, token_prefix, role, created_by, created_at, last_used_at, expires_at)
-		 VALUES(?,?,?,?,?,?,?,0,?)`,
-		t.ID, t.Name, tokenHash, t.TokenPrefix, t.Role, t.CreatedBy, t.CreatedAt, t.ExpiresAt)
+		`INSERT INTO api_tokens(id, name, token_hash, token_prefix, role, created_by, created_by_id, created_at, last_used_at, expires_at)
+		 VALUES(?,?,?,?,?,?,?,?,0,?)`,
+		t.ID, t.Name, tokenHash, t.TokenPrefix, t.Role, t.CreatedBy, t.CreatedByID, t.CreatedAt, t.ExpiresAt)
 	return err
 }
 
@@ -63,9 +67,9 @@ func (s *Store) GetAPITokenByHash(tokenHash string, now int64) (*APIToken, error
 	}
 	var t APIToken
 	err := s.read.QueryRow(
-		`SELECT id, name, token_prefix, role, created_by, created_at, last_used_at, expires_at
+		`SELECT id, name, token_prefix, role, created_by, created_by_id, created_at, last_used_at, expires_at
 		 FROM api_tokens WHERE token_hash=?`, tokenHash).
-		Scan(&t.ID, &t.Name, &t.TokenPrefix, &t.Role, &t.CreatedBy, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
+		Scan(&t.ID, &t.Name, &t.TokenPrefix, &t.Role, &t.CreatedBy, &t.CreatedByID, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

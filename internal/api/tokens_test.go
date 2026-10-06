@@ -268,7 +268,7 @@ func TestAPITokenFollowsCreator(t *testing.T) {
 	}
 	tok, _ := auth.NewAPIToken()
 	if err := e.st.CreateAPIToken(store.APIToken{ID: "ops-tok", Name: "ipam-sync", Role: roleAdmin,
-		CreatedBy: "ops", CreatedAt: time.Now().Unix()}, auth.HashAPIToken(tok)); err != nil {
+		CreatedBy: "ops", CreatedByID: opsID, CreatedAt: time.Now().Unix()}, auth.HashAPIToken(tok)); err != nil {
 		t.Fatal(err)
 	}
 	write := `{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}`
@@ -291,5 +291,14 @@ func TestAPITokenFollowsCreator(t *testing.T) {
 	}
 	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("creator deleted: %d, want 401", rr.Code)
+	}
+
+	// A new account with the same username (e.g. an SSO email re-provisioned)
+	// is a different person: it must not revive the old creator's token.
+	if _, err := e.st.CreateLocalUser("ops", hash, roleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("same-name account recreated: %d, want 401", rr.Code)
 	}
 }

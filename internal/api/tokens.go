@@ -63,6 +63,11 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		ID: uuid.NewString(), Name: in.Name, TokenPrefix: auth.APITokenDisplayPrefix(value),
 		Role: in.Role, CreatedBy: auditUser(s, r), CreatedAt: time.Now().Unix(), ExpiresAt: in.ExpiresAt,
 	}
+	if s.authEnabled && s.auth != nil {
+		if u, ok := s.auth.UserFromRequest(r); ok {
+			t.CreatedByID = u.ID // the route is session-only, so this is a real account
+		}
+	}
 	if err := s.store.CreateAPIToken(t, auth.HashAPIToken(value)); err != nil {
 		writeError(w, http.StatusInternalServerError, "create failed: "+err.Error())
 		return

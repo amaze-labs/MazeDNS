@@ -77,7 +77,7 @@ func (m *Manager) userFromAPIToken(token string) (*SessionUser, bool) {
 	if err != nil || t == nil {
 		return nil, false
 	}
-	creator, err := m.store.GetUserByUsername(t.CreatedBy)
+	creator, err := m.store.GetUserByID(t.CreatedByID)
 	if err != nil || creator == nil {
 		return nil, false
 	}

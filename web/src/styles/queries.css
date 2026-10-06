@@ -1,0 +1,197 @@
+/* Queries (/queries) and Clients (/clients), plus the client drawer they share.
+   Layout only: every primitive (tables, chips, tags, drawer) comes from base.css. */
+
+/* ---- Shared by both pages ---- */
+:is(.pg-queries, .pg-clients) .page-head .seg + select,
+:is(.pg-queries, .pg-clients) .page-head > select {
+  width: auto;
+}
+:is(.pg-queries, .pg-clients) .chip .num {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+:is(.pg-queries, .pg-clients) .chip.on .num {
+  color: var(--muted);
+}
+:is(.pg-queries, .pg-clients) .chip .dot {
+  width: 7px;
+  height: 7px;
+}
+:is(.pg-queries, .pg-clients) .toolbar > select.q-filter {
+  width: auto;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 13px;
+}
+:is(.pg-queries, .pg-clients) td .tag:not(.block):not(.fwd):not(.cache):not(.rewrite):not(.ok):not(.warn):not(.info) {
+  --k: var(--faint);
+}
+
+/* ---- Queries ---- */
+.pg-queries .q-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.pg-queries .q-table td.when {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pg-queries .q-table td.when small {
+  display: block;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.2;
+}
+.pg-queries .q-table td.lead .domain {
+  color: var(--text);
+}
+.pg-queries .q-table td.res {
+  white-space: nowrap;
+}
+.pg-queries .q-title {
+  font-size: 17px;
+}
+.pg-queries .q-askers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.pg-queries .q-askers li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.pg-queries .q-askers .linklike {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Clients ---- */
+.pg-clients .c-table td.lead {
+  min-width: 0;
+}
+.pg-clients .c-table td.c-blocked {
+  white-space: nowrap;
+}
+.pg-clients .c-table td .c-vol {
+  min-width: 120px;
+}
+.pg-clients .c-table td.c-seen .dot {
+  margin-right: 4px;
+}
+
+/* ---- Client drawer (opened from either page) ---- */
+.drawer .cd-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.drawer .cd-eyebrow .dot.pulse {
+  margin-right: 2px;
+}
+.drawer .cd-namefield {
+  display: flex;
+  gap: 8px;
+}
+.drawer .cd-namefield input {
+  flex: 1;
+}
+.drawer .cd-split {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.drawer .cd-split > div {
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.drawer .cd-split b {
+  display: block;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.drawer .cd-split span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.drawer .cd-bar {
+  height: 10px;
+  border-radius: 5px;
+  min-width: 0;
+}
+.drawer .cd-kv {
+  font-size: 13.5px;
+  gap: 6px 18px;
+}
+.drawer .cd-toplist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.drawer .cd-toplist li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 56px;
+  gap: 10px;
+  align-items: center;
+}
+.drawer .cd-toplist .domain {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.drawer .cd-toplist .meter {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  :is(.pg-queries, .pg-clients) .page-head .spacer {
+    flex-basis: 100%;
+    height: 0;
+  }
+  .pg-queries .page-head .spacer {
+    display: none;
+  }
+  .pg-queries .q-live {
+    flex-wrap: wrap;
+  }
+  .pg-queries .q-table td.lead .domain {
+    font-size: 13.5px;
+  }
+  .pg-queries .q-table td.when {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .pg-queries .q-table td.when small {
+    display: inline;
+    margin-right: 4px;
+  }
+  .pg-clients .c-table td.c-blocked {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
+  .pg-clients .c-table td.c-seen {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .drawer .cd-toplist li {
+    grid-template-columns: minmax(0, 1fr) 60px 48px;
+  }
+  .drawer .cd-split b {
+    font-size: 16px;
+  }
+}

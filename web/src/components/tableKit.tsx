@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import Spinner from './Spinner'
+import { RANGES } from './filters'
 
 // tableKit standardizes every client-side table in the app: clickable header
 // sorting (click again to flip) and pagination capped at PAGE_SIZE rows per
@@ -65,32 +66,43 @@ export function useTable<T>(rows: T[], accessors: SortAccessors<T>, defaultKey: 
   return { rows: pageRows, sortKey, desc, sort, page: cur, lastPage, total: sorted.length, setPage }
 }
 
+// Sortable is the part of a table Th needs: useTable's result, or a server-side
+// table's own sort state ({ sortKey, desc, sort }).
+export type Sortable = Pick<Table<unknown>, 'sortKey' | 'desc' | 'sort'>
+
 // Th renders a sortable header cell with the active column's direction arrow.
-export function Th<T>({ table, col, children, className }: { table: Table<T>; col: string; children: ReactNode; className?: string }) {
-  const arrow = table.sortKey === col ? (table.desc ? ' ↓' : ' ↑') : ''
+export function Th({ table, col, children, className }: { table: Sortable; col: string; children: ReactNode; className?: string }) {
+  const on = table.sortKey === col
+  const arrow = on ? (table.desc ? ' ↓' : ' ↑') : ''
   return (
-    <th className={`sortable ${className || ''}`} onClick={() => table.sort(col)}>
+    <th
+      className={`sortable${on ? ' sorted' : ''}${className ? ` ${className}` : ''}`}
+      aria-sort={on ? (table.desc ? 'descending' : 'ascending') : undefined}
+      onClick={() => table.sort(col)}
+    >
       {children}
       {arrow}
     </th>
   )
 }
 
-// Pager renders the standard "N items · page X of Y · Prev/Next" bar. Hidden
-// when everything fits on one page and there is nothing to page through.
+// Pager renders the standard "Showing 1–25 of N items · Previous/Next" bar.
+// Hidden when everything fits on one page and there is nothing to page through.
 export function Pager<T>({ table, unit = 'items' }: { table: Table<T>; unit?: string }) {
   if (table.total <= PAGE_SIZE) return null
+  const from = table.page * PAGE_SIZE + 1
+  const to = Math.min(table.total, (table.page + 1) * PAGE_SIZE)
   return (
     <div className="pager">
-      <span className="muted">
-        {table.total.toLocaleString()} {unit} · page {table.page + 1} of {table.lastPage + 1}
+      <span>
+        Showing {from.toLocaleString()}–{to.toLocaleString()} of {table.total.toLocaleString()} {unit}
       </span>
       <div className="spacer" />
-      <button className="btn" disabled={table.page <= 0} onClick={() => table.setPage(Math.max(0, table.page - 1))}>
-        ‹ Prev
+      <button className="btn sm" disabled={table.page <= 0} onClick={() => table.setPage(Math.max(0, table.page - 1))}>
+        Previous
       </button>
-      <button className="btn" disabled={table.page >= table.lastPage} onClick={() => table.setPage(Math.min(table.lastPage, table.page + 1))}>
-        Next ›
+      <button className="btn sm" disabled={table.page >= table.lastPage} onClick={() => table.setPage(Math.min(table.lastPage, table.page + 1))}>
+        Next
       </button>
     </div>
   )
@@ -149,4 +161,86 @@ export function timeAgo(ms: number): string {
   const h = Math.floor(m / 60)
   if (h < 48) return `${h}h ago`
   return `${Math.floor(h / 24)}d ago`
+}
+
+// fmtMs renders a latency: two decimals under 1 ms (so 0.04 ms doesn't read as
+// "0 ms"), one under 10 ms, whole milliseconds above.
+export function fmtMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '—'
+  if (ms < 1) return `${ms.toFixed(2)} ms`
+  if (ms < 10) return `${ms.toFixed(1)} ms`
+  return `${Math.round(ms).toLocaleString()} ms`
+}
+
+// fmtWhen splits a timestamp into the time of day and, when it isn't today, a
+// short date ("5 Oct") — so multi-day windows don't show bare times.
+export function fmtWhen(ts: number): { time: string; date: string; full: string } {
+  const d = new Date(ts)
+  const now = new Date()
+  const today = d.toDateString() === now.toDateString()
+  return {
+    time: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    date: today ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' }),
+    full: d.toLocaleString(),
+  }
+}
+
+// windowLabel names a time window the way the window picker shows it ("24h").
+export const windowLabel = (hours: number) => RANGES.find((r) => r.hours === hours)?.label ?? `${hours}h`
+
+// WindowPicker is the time-window control of a page header: a segmented control
+// on wide screens, a compact select on phones.
+export function WindowPicker({ hours, onChange }: { hours: number; onChange: (h: number) => void }) {
+  return (
+    <>
+      <div className="seg hide-sm" role="group" aria-label="Time window">
+        {RANGES.map((r) => (
+          <button key={r.hours} className={hours === r.hours ? 'on' : ''} aria-pressed={hours === r.hours} onClick={() => onChange(r.hours)}>
+            {r.label}
+          </button>
+        ))}
+      </div>
+      <select className="show-sm" aria-label="Time window" value={hours} onChange={(e) => onChange(Number(e.target.value))} style={{ width: 'auto' }}>
+        {RANGES.map((r) => (
+          <option key={r.hours} value={r.hours}>
+            Last {r.label}
+          </option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+// SearchBox is the search field of a list toolbar, with its magnifier icon.
+export function SearchBox({
+  value,
+  onChange,
+  placeholder,
+  maxWidth = 420,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+  maxWidth?: number
+}) {
+  return (
+    <label style={{ position: 'relative', flex: '1 1 220px', minWidth: 0, maxWidth, display: 'block' }}>
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', width: 15, height: 15, stroke: 'var(--faint)', fill: 'none', strokeWidth: 2, pointerEvents: 'none' }}
+      >
+        <circle cx="11" cy="11" r="7" />
+        <path d="M20 20l-3.5-3.5" />
+      </svg>
+      <input
+        type="search"
+        aria-label={placeholder}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ paddingLeft: 33 }}
+      />
+    </label>
+  )
 }

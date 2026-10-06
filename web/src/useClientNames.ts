@@ -3,19 +3,40 @@ import { api, type ClientIdentity } from './api'
 
 // Shared client-IP -> identity (static name / NetBird peer / rewrite / reverse-DNS) resolver. Requests
 // from every table are coalesced into one debounced batch and cached for the
-// session, so the same IP is never looked up twice.
+// session, so the same IP is never looked up twice unless it is invalidated.
 const cache = new Map<string, ClientIdentity>()
 const inflight = new Set<string>()
 const listeners = new Set<() => void>()
+// IPs whose cached identity is out of date: re-requested even though cached. The
+// old identity keeps showing until the new one arrives, so a name never blinks
+// out while it is being refreshed.
+const stale = new Set<string>()
 let queue = new Set<string>()
 let timer: ReturnType<typeof setTimeout> | null = null
 
+// The server resolves at most 500 IPs per request (and a long list would not fit
+// in a URL anyway), so big lists go out in chunks.
+const CHUNK = 200
+
+const notify = () => listeners.forEach((l) => l())
+
+function schedule() {
+  if (!timer && queue.size > 0) timer = setTimeout(flush, 50)
+}
+
 function flush() {
   timer = null
-  const ips = [...queue].filter((ip) => !cache.has(ip) && !inflight.has(ip))
+  const ips = [...queue].filter((ip) => (!cache.has(ip) || stale.has(ip)) && !inflight.has(ip))
   queue = new Set()
   if (ips.length === 0) return
-  ips.forEach((ip) => inflight.add(ip))
+  for (let i = 0; i < ips.length; i += CHUNK) fetchChunk(ips.slice(i, i + CHUNK))
+}
+
+function fetchChunk(ips: string[]) {
+  ips.forEach((ip) => {
+    inflight.add(ip)
+    stale.delete(ip)
+  })
   api
     .resolveClients(ips)
     .then((res) => {
@@ -25,34 +46,41 @@ function flush() {
     .catch(() => {})
     .finally(() => {
       ips.forEach((ip) => inflight.delete(ip))
-      listeners.forEach((l) => l())
+      // An IP invalidated while its lookup was in flight got an answer that may
+      // predate the change: ask again.
+      for (const ip of ips) if (stale.has(ip)) queue.add(ip)
+      schedule()
+      notify()
     })
 }
 
-// invalidateClientName drops a cached identity (e.g. after an operator sets a
-// static hostname) so the next render re-resolves it and the new name shows
+// invalidateClientName refreshes a cached identity (e.g. after an operator sets a
+// static hostname): the IP is looked up again right away and the new name shows
 // everywhere without a full reload.
 export function invalidateClientName(ip: string) {
-  cache.delete(ip)
-  listeners.forEach((l) => l())
+  if (!ip) return
+  if (cache.has(ip) || inflight.has(ip)) stale.add(ip)
+  queue.add(ip)
+  schedule()
+  notify()
 }
 
-// invalidateAllClientNames drops every cached identity (e.g. after a Local DNS
-// rewrite changes, which can rename any number of clients).
+// invalidateAllClientNames refreshes every cached identity (e.g. after a Local
+// DNS rewrite changes, which can rename any number of clients).
 export function invalidateAllClientNames() {
-  cache.clear()
-  listeners.forEach((l) => l())
+  for (const ip of [...cache.keys(), ...inflight]) {
+    stale.add(ip)
+    queue.add(ip)
+  }
+  schedule()
+  notify()
 }
 
 function request(ips: string[]) {
-  let need = false
   for (const ip of ips) {
-    if (ip && !cache.has(ip) && !inflight.has(ip)) {
-      queue.add(ip)
-      need = true
-    }
+    if (ip && !cache.has(ip) && !inflight.has(ip)) queue.add(ip)
   }
-  if (need && !timer) timer = setTimeout(flush, 50)
+  schedule()
 }
 
 // useClientNames resolves a set of client IPs and returns a lookup map. It

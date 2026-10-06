@@ -77,6 +77,22 @@ func (s *Store) PruneRollups(beforeMs int64) error {
 	return err
 }
 
+// seriesBounds returns the first and last bucket start (unix seconds) of a
+// series covering sinceMs..now in step-second buckets. The last bucket is the
+// one containing now: it is still filling, so its count is partial (the UI marks
+// a point whose ts+step is past now as in progress). Ending at the last complete
+// bucket instead hid up to a whole step of the newest traffic — 30 minutes on
+// the 24h window, 7.5 hours on 15 days — so the chart looked flat while the
+// totals already counted thousands of queries.
+func seriesBounds(sinceMs, step int64, now time.Time) (start, end int64) {
+	start = (sinceMs / 1000 / step) * step
+	end = (now.Unix() / step) * step
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
 // RollupTimeSeries returns per-bucket query counts from the rollup, re-bucketed to
 // stepSec, with empty buckets filled in. Mirrors QueryTimeSeries but reads the
 // pre-aggregated table instead of scanning query_log.
@@ -127,15 +143,7 @@ func (s *Store) RollupTimeSeries(sinceMs int64, stepSec int, nodes []string) ([]
 			p.AvgLatencyMS = elapsed[b] / float64(p.Total)
 		}
 	}
-	start := (sinceMs / 1000 / step) * step
-	// End at the last COMPLETE bucket. The current in-progress bucket only holds
-	// partial data (and may not be rolled up yet), so including it makes the newest
-	// point dip toward zero every time a bucket rolls over. Cutting it keeps the
-	// line continuous — the same way dashboards drop the current incomplete interval.
-	end := (time.Now().Unix()/step)*step - step
-	if end < start {
-		end = start
-	}
+	start, end := seriesBounds(sinceMs, step, time.Now())
 	out := make([]SeriesPoint, 0, (end-start)/step+1)
 	for b := start; b <= end; b += step {
 		if p := m[b]; p != nil {
@@ -200,13 +208,7 @@ func (s *Store) RollupLatency(sinceMs int64, stepSec int, nodes []string) ([]Lat
 	}
 	sort.Strings(names)
 
-	start := (sinceMs / 1000 / step) * step
-	// End at the last COMPLETE bucket (see RollupTimeSeries): the in-progress bucket
-	// would otherwise pull the newest latency point toward zero each rollover.
-	end := (time.Now().Unix()/step)*step - step
-	if end < start {
-		end = start
-	}
+	start, end := seriesBounds(sinceMs, step, time.Now())
 	out := make([]LatencyPoint, 0, (end-start)/step+1)
 	for b := start; b <= end; b += step {
 		p := LatencyPoint{TS: b, ByNode: map[string]float64{}}

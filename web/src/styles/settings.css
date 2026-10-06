@@ -1,0 +1,559 @@
+/* Settings: a sub-navigation on the left and, per section, groups laid out as
+   "title + one-line explanation | controls", separated by hairlines. One sticky
+   save bar under every section. */
+
+.pg-settings .st-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 880px);
+  gap: 32px;
+  align-items: start;
+}
+
+/* Sub-navigation (vertical; a tab strip on mobile). */
+.pg-settings .st-nav {
+  position: sticky;
+  top: 22px;
+  display: grid;
+  gap: 2px;
+}
+.pg-settings .st-nav button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pg-settings .st-nav button:hover {
+  color: var(--text);
+}
+.pg-settings .st-nav button.on {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+.pg-settings .st-nav button .dot {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+}
+.pg-settings .st-nav small {
+  display: block;
+  color: var(--faint);
+  font-size: 12px;
+  padding: 14px 12px 0;
+  line-height: 1.45;
+}
+
+.pg-settings .st-main {
+  min-width: 0;
+}
+.pg-settings .st-fs {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* Read-only (viewer role): editing affordances are hidden, fields disabled. */
+.pg-settings .st-fs:disabled .up-act,
+.pg-settings .st-fs:disabled .presets,
+.pg-settings .st-fs:disabled .rw-only {
+  display: none;
+}
+.pg-settings .st-fs:disabled .up .addr {
+  cursor: default;
+}
+
+/* A group: title + explanation | controls. */
+.pg-settings .sg {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  padding: 22px 0;
+  border-top: 1px solid var(--line);
+}
+.pg-settings .sg:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+.pg-settings .sg > header h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.pg-settings .sg > header p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+.pg-settings .sg-body {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  align-content: start;
+}
+.pg-settings .sg-body > .hint {
+  margin: -6px 0 0;
+}
+.pg-settings .sg-body > .error,
+.pg-settings .sg-body > .ok-msg,
+.pg-settings .sg-body > .callout {
+  margin: 0;
+}
+
+/* Field rows. */
+.pg-settings .row2,
+.pg-settings .row3 {
+  display: grid;
+  gap: 12px 14px;
+  align-items: start;
+}
+.pg-settings .row2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.pg-settings .row3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pg-settings .span2 {
+  grid-column: span 2;
+}
+.pg-settings .span3 {
+  grid-column: 1 / -1;
+}
+.pg-settings .field > span .tag {
+  margin-left: 4px;
+}
+
+/* Toggle rows: the first one in a group sits flush with the group title. */
+.pg-settings .sg-body > .check-row {
+  padding: 0;
+  border: 0;
+}
+.pg-settings .sg-body > .check-row + .check-row {
+  padding-top: 14px;
+  border-top: 1px solid var(--soft);
+}
+.pg-settings .check-row.toggle .track {
+  margin-top: 2px;
+}
+.pg-settings .check-row .num-wrap {
+  width: 120px;
+  flex: none;
+}
+.pg-settings .toggles {
+  display: grid;
+}
+.pg-settings .toggles > .check-row:first-child {
+  padding-top: 0;
+}
+.pg-settings .toggles > .sub-field {
+  padding: 0 0 12px;
+}
+
+/* Upstream resolvers: one row per resolver, editable in place. */
+.pg-settings .ups {
+  display: grid;
+  gap: 8px;
+}
+.pg-settings .up {
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+.pg-settings .up.open {
+  border-color: color-mix(in srgb, var(--focus) 45%, var(--line));
+}
+.pg-settings .up-line {
+  display: grid;
+  grid-template-columns: 18px 52px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 8px 8px 14px;
+}
+.pg-settings .up .ord {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pg-settings .proto {
+  --k: var(--ok);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  border-radius: 6px;
+  padding: 2px 0;
+  color: var(--k);
+  background: color-mix(in srgb, var(--k) 13%, transparent);
+}
+.pg-settings .proto.plain {
+  --k: var(--warn);
+}
+.pg-settings .up .addr {
+  display: grid;
+  min-width: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.pg-settings .up .addr .a {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-settings .up .addr .a.unset {
+  color: var(--faint);
+  font-family: var(--sans);
+}
+.pg-settings .up .addr small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-settings .up .addr:hover .a {
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+.pg-settings .up-act {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.pg-settings .ib {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pg-settings .ib:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--raise);
+}
+.pg-settings .ib:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.pg-settings .up-edit {
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--line);
+}
+.pg-settings .up-edit .seg {
+  justify-self: start;
+}
+.pg-settings .up-edit input:not([type='checkbox']):not([type='radio']):not([type='range']) {
+  background: var(--panel);
+}
+.pg-settings .up-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 12px;
+}
+.pg-settings .up-fields.tls {
+  grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr);
+}
+
+.pg-settings .presets {
+  display: flex;
+  gap: 6px 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 13px;
+}
+.pg-settings .presets .qf {
+  width: auto;
+  padding: 4px 9px;
+  font-size: 12.5px;
+  border-radius: 7px;
+}
+
+/* Conditional forwarders. */
+.pg-settings .fwd-list {
+  display: grid;
+  gap: 8px;
+}
+.pg-settings .fwd-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.6fr) 28px;
+  gap: 8px;
+  align-items: center;
+}
+.pg-settings .fwd-head {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* Choice cards (one of two). */
+.pg-settings .choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.pg-settings .choice label {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.pg-settings .choice label:hover {
+  border-color: color-mix(in srgb, var(--text) 25%, var(--line));
+}
+.pg-settings .choice label.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pg-settings .choice label.danger.on {
+  border-color: var(--block);
+  background: color-mix(in srgb, var(--block) 7%, transparent);
+}
+.pg-settings .choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.pg-settings .choice label:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.pg-settings .choice b {
+  font-weight: 500;
+}
+.pg-settings .choice small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Sign-in method cards. */
+.pg-settings .method {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--sunk);
+}
+.pg-settings .method .ic {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--raise);
+  border: 1px solid var(--line);
+}
+.pg-settings .method .ic svg,
+.pg-settings .callout > svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pg-settings .callout > svg {
+  stroke: var(--k);
+}
+.pg-settings .method b {
+  display: block;
+  font-weight: 600;
+}
+.pg-settings .method small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-settings .method-act {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.pg-settings .method-body {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.pg-settings .method-body input:not([type='checkbox']):not([type='radio']):not([type='range']) {
+  background: var(--panel);
+}
+.pg-settings .method-body > .check-row {
+  padding: 0;
+  border: 0;
+}
+
+/* One-time secrets and the change history. */
+.pg-settings .codebox {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: all;
+}
+.pg-settings .audit {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pg-settings .audit th,
+.pg-settings .audit td {
+  padding: 8px 12px;
+  vertical-align: top;
+}
+.pg-settings .audit td:first-child,
+.pg-settings .audit th:first-child {
+  width: 1%;
+}
+.pg-settings .audit td:nth-child(2) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+/* The save bar. */
+.pg-settings .savebar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px 10px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.pg-settings .savebar:not(.dirty) {
+  box-shadow: none;
+}
+.pg-settings .savebar .grow {
+  min-width: 0;
+}
+.pg-settings .savebar .dot {
+  margin: -2px 6px 0 0;
+}
+
+@media (max-width: 1100px) {
+  .pg-settings .sg {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
+@media (max-width: 900px) {
+  .pg-settings .st-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .pg-settings .st-nav {
+    position: static;
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+    border-bottom: 1px solid var(--line);
+    gap: 0;
+  }
+  .pg-settings .st-nav button {
+    padding: 9px 12px;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .pg-settings .st-nav button.on {
+    background: none;
+    border-color: var(--accent);
+  }
+  .pg-settings .st-nav small {
+    display: none;
+  }
+  .pg-settings .row2,
+  .pg-settings .row3,
+  .pg-settings .choice,
+  .pg-settings .up-fields,
+  .pg-settings .up-fields.tls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-settings .span2,
+  .pg-settings .span3 {
+    grid-column: auto;
+  }
+  .pg-settings .up-line {
+    grid-template-columns: 14px 44px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-left: 10px;
+  }
+  .pg-settings .fwd-row {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+  .pg-settings .fwd-row > input:nth-child(2) {
+    grid-column: 1;
+  }
+  .pg-settings .fwd-row > .del {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .pg-settings .fwd-row {
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--soft);
+  }
+  .pg-settings .method {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .pg-settings .method > .method-act {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .pg-settings .savebar {
+    bottom: calc(66px + env(safe-area-inset-bottom));
+  }
+  .pg-settings .savebar.idle {
+    display: none;
+  }
+  .pg-settings .savebar {
+    gap: 6px;
+    padding: 8px 8px 8px 14px;
+  }
+  .pg-settings .savebar .grow {
+    flex: 1 1 120px;
+    font-size: 13px;
+  }
+  .pg-settings .savebar .btn {
+    padding: 7px 10px;
+  }
+  .pg-settings .audit table.stackable tr {
+    padding: 10px 12px;
+  }
+}

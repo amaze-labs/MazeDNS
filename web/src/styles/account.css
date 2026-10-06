@@ -1,0 +1,163 @@
+/* Account: profile + change password in one card, then the people table. */
+
+.pg-account .acct-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 32px;
+  padding: 24px 28px;
+}
+.pg-account .profile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 16px;
+  align-content: start;
+  align-items: center;
+}
+.pg-account .avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--fwd);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 600;
+}
+.pg-account .avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.pg-account .who {
+  min-width: 0;
+}
+.pg-account .who b {
+  display: block;
+  font-size: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pg-account .role-note {
+  grid-column: 1 / -1;
+  margin: 12px 0 0;
+  max-width: 44ch;
+}
+.pg-account .pw h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+.pg-account .pw > p {
+  margin: 0;
+}
+.pg-account .pw-form {
+  display: grid;
+  gap: 14px;
+  max-width: 420px;
+}
+.pg-account .pw-form > .error,
+.pg-account .pw-form > .ok-msg {
+  margin: 0;
+}
+
+/* Live password strength (also used in dialogs and by Setup). */
+.pw-meter {
+  display: grid;
+  gap: 5px;
+  font-weight: 400;
+}
+.pw-meter .meter {
+  height: 4px;
+}
+.pw-meter small,
+.pw-hint {
+  font-size: 12.5px;
+  font-weight: 400;
+}
+.pw-hint {
+  color: var(--muted);
+}
+
+/* People. */
+.pg-account .people-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 30px;
+}
+.pg-account .people-head h2.section {
+  margin-top: 0;
+}
+.pg-account .people-head .btn {
+  margin-bottom: 14px;
+}
+.pg-account .add-user {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 0.8fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--sunk);
+}
+.pg-account .add-user input:not([type='checkbox']):not([type='radio']):not([type='range']),
+.pg-account .add-user select {
+  background: var(--panel);
+}
+.pg-account .add-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 25px;
+}
+.pg-account td .uname {
+  font-weight: 500;
+}
+.pg-account .role-select {
+  width: auto;
+  padding: 4px 9px;
+  font-size: 13px;
+}
+.pg-account td.actions .btn + .btn {
+  margin-left: 6px;
+}
+.pg-account-dialog {
+  display: grid;
+  gap: 14px;
+}
+.dialog .pg-account-dialog .error {
+  margin: 0;
+}
+
+@media (max-width: 1000px) {
+  .pg-account .acct-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .pg-account .pw {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+  }
+}
+@media (max-width: 900px) {
+  .pg-account .acct-card {
+    padding: 18px;
+  }
+  .pg-account .add-user {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+  }
+  .pg-account .add-actions {
+    padding-top: 0;
+  }
+  .pg-account table.stackable td.actions {
+    grid-column: 1 / -1;
+    text-align: left;
+    padding-top: 8px !important;
+  }
+}
+.pg-account .field > small.bad-text,
+.pg-account-dialog .field > small.bad-text {
+  color: var(--block);
+}

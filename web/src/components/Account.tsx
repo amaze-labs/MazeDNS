@@ -1,7 +1,30 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, type SessionUser, type User } from '../api'
-import { PASSWORD_RULE, passwordPolicyError } from '../passwordPolicy'
+import { PASSWORD_RULE, passwordPolicyError, passwordStrength } from '../passwordPolicy'
 import { TableStatusRow } from './tableKit'
+import Modal from './Modal'
+import { SKIP_AUTOLOGIN_KEY } from './Login'
+import '../styles/account.css'
+
+const ROLE_LABEL: Record<string, string> = { admin: 'Administrator', readonly: 'Viewer' }
+const roleLabel = (r: string) => ROLE_LABEL[r] || r
+const sourceLabel = (s?: string) => (s === 'oidc' ? 'Single sign-on' : 'Local')
+
+// PasswordMeter is the live strength read-out under a new-password field. It
+// uses the same rule as the server, so "weak" means "will be refused".
+export function PasswordMeter({ password }: { password: string }) {
+  if (!password) return <small className="pw-hint">{PASSWORD_RULE}.</small>
+  const st = passwordStrength(password)
+  const k = st.level === 'weak' ? 'var(--block)' : st.level === 'ok' ? 'var(--warn)' : 'var(--ok)'
+  return (
+    <span className="pw-meter" aria-live="polite">
+      <span className="meter">
+        <i style={{ width: `${Math.round(st.fill * 100)}%`, ['--k' as string]: k }} />
+      </span>
+      <small style={{ color: k }}>{st.label}</small>
+    </span>
+  )
+}
 
 export default function Account({ me, oidc = false }: { me: SessionUser | null; oidc?: boolean }) {
   // With SSO enabled, accounts and roles are governed by the identity provider's
@@ -14,6 +37,7 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
   const [confirm, setConfirm] = useState('')
   const [pwErr, setPwErr] = useState('')
   const [pwMsg, setPwMsg] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
 
   // User management (admin)
   const [users, setUsers] = useState<User[]>([])
@@ -21,6 +45,14 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
   const [nu, setNu] = useState({ username: '', password: '', role: 'readonly' })
   const [uErr, setUErr] = useState('')
   const [uMsg, setUMsg] = useState('')
+  const [adding, setAdding] = useState(false)
+
+  // Dialogs: reset someone's password, delete someone.
+  const [resetFor, setResetFor] = useState<User | null>(null)
+  const [resetPw, setResetPw] = useState('')
+  const [resetErr, setResetErr] = useState('')
+  const [delFor, setDelFor] = useState<User | null>(null)
+  const [busy, setBusy] = useState(false)
 
   const loadUsers = () => {
     if (!isAdmin) return
@@ -42,7 +74,7 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
     setPwErr('')
     setPwMsg('')
     if (next !== confirm) {
-      setPwErr('New passwords do not match')
+      setPwErr('The new passwords don’t match.')
       return
     }
     const policyErr = passwordPolicyError(next)
@@ -50,14 +82,17 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
       setPwErr(policyErr)
       return
     }
+    setPwBusy(true)
     try {
       await api.changePassword(cur, next)
       setCur('')
       setNext('')
       setConfirm('')
-      setPwMsg('Password updated.')
+      setPwMsg('Password changed.')
     } catch (e: any) {
       setPwErr(e.message)
+    } finally {
+      setPwBusy(false)
     }
   }
 
@@ -73,7 +108,8 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
     try {
       await api.createUser(nu.username.trim(), nu.password, nu.role)
       setNu({ username: '', password: '', role: 'readonly' })
-      setUMsg(`User “${nu.username.trim()}” created.`)
+      setUMsg(`Added ${nu.username.trim()} as ${roleLabel(nu.role).toLowerCase()}.`)
+      setAdding(false)
       loadUsers()
     } catch (e: any) {
       setUErr(e.message)
@@ -85,7 +121,7 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
     setUMsg('')
     try {
       await api.setUserRole(u.id, role)
-      setUMsg(`${u.username} is now ${role}. Their sessions were revoked.`)
+      setUMsg(`${u.username} is now ${roleLabel(role).toLowerCase()}. Their sessions were signed out.`)
       loadUsers()
     } catch (e: any) {
       setUErr(e.message)
@@ -93,170 +129,321 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
     }
   }
 
-  const resetPw = async (u: User) => {
-    const p = window.prompt(`New password for ${u.username} (${PASSWORD_RULE}):`)
-    if (!p) return
-    setUErr('')
-    setUMsg('')
-    const policyErr = passwordPolicyError(p)
+  const doReset = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!resetFor) return
+    const policyErr = passwordPolicyError(resetPw)
     if (policyErr) {
-      setUErr(policyErr)
+      setResetErr(policyErr)
       return
     }
+    setBusy(true)
+    setResetErr('')
     try {
-      await api.resetUserPassword(u.id, p)
-      setUMsg(`Password reset for ${u.username}. Their sessions were revoked.`)
+      await api.resetUserPassword(resetFor.id, resetPw)
+      setUErr('')
+      setUMsg(`Password reset for ${resetFor.username}. Their sessions were signed out.`)
+      setResetFor(null)
     } catch (e: any) {
-      setUErr(e.message)
+      setResetErr(e.message)
+    } finally {
+      setBusy(false)
     }
   }
 
-  const del = async (u: User) => {
-    if (!window.confirm(`Delete user “${u.username}”? This cannot be undone.`)) return
+  const doDelete = async () => {
+    if (!delFor) return
+    setBusy(true)
     setUErr('')
     setUMsg('')
     try {
-      await api.deleteUser(u.id)
+      await api.deleteUser(delFor.id)
+      setUMsg(`Removed ${delFor.username}.`)
       loadUsers()
     } catch (e: any) {
       setUErr(e.message)
+    } finally {
+      setBusy(false)
+      setDelFor(null)
     }
+  }
+
+  const signOut = async () => {
+    // Keep SSO auto-login from bouncing straight back in after signing out.
+    sessionStorage.setItem(SKIP_AUTOLOGIN_KEY, '1')
+    await api.logout().catch(() => {})
+    window.location.assign('/')
   }
 
   // SSO (OIDC) accounts have no local password — managed by the identity provider.
   const isSSO = me?.source === 'oidc'
+  const initial = (me?.username || '?').charAt(0).toUpperCase()
 
   return (
-    <div className="settings">
-      <h2>Account</h2>
+    <div className="pg-account">
+      <header className="page-head">
+        <h1>Account</h1>
+        <span className="spacer" />
+        <button className="btn" onClick={signOut}>
+          Sign out
+        </button>
+      </header>
+      <p className="intro">
+        {me?.role === 'admin' ? 'Your sign-in and, as an administrator, everyone else’s.' : 'Your sign-in.'}
+      </p>
 
-      {isSSO ? (
-        <section className="settings-card">
-          <h3>Password</h3>
-          <p className="muted" style={{ textAlign: 'left' }}>
-            Your account is managed by single sign-on, so there is no password to change here. Update it with your SSO
-            provider.
+      <section className="card acct-card">
+        <div className="profile">
+          <span className="avatar" aria-hidden>
+            {me?.avatar_url ? <img src={me.avatar_url} alt="" /> : initial}
+          </span>
+          <div className="who">
+            <b>{me?.username}</b>
+            <span className="muted">
+              {roleLabel(me?.role || '')} · {isSSO ? 'single sign-on account' : 'local account'}
+            </span>
+          </div>
+          <p className="muted small role-note">
+            {me?.role === 'admin'
+              ? 'Administrators can change settings, rules, agents and people.'
+              : 'Viewers see everything but can’t change settings, rules or agents.'}
           </p>
-        </section>
-      ) : (
-        <section className="settings-card">
-          <h3>Change my password</h3>
-          {pwErr && <div className="error">{pwErr}</div>}
-          {pwMsg && <div className="ok-msg">{pwMsg}</div>}
-          <form onSubmit={changePw}>
-            <div className="field">
-              <label>Current password</label>
-              <input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>New password ({PASSWORD_RULE})</label>
-              <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>Confirm new password</label>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-            </div>
-            <button type="submit" className="btn primary">
-              Update password
-            </button>
-          </form>
-        </section>
-      )}
+        </div>
+
+        <div className="pw">
+          <h2>{isSSO ? 'Password' : 'Change password'}</h2>
+          {isSSO ? (
+            <p className="muted">
+              Your account is managed by single sign-on, so there is no password to change here. Change it with your
+              identity provider.
+            </p>
+          ) : (
+            <form className="pw-form" onSubmit={changePw}>
+              {pwErr && <div className="error">{pwErr}</div>}
+              {pwMsg && <div className="ok-msg">{pwMsg}</div>}
+              <label className="field">
+                <span>Current password</span>
+                <input type="password" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>New password</span>
+                <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+                <PasswordMeter password={next} />
+              </label>
+              <label className="field">
+                <span>Confirm new password</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                />
+                {confirm && next !== confirm && <small className="bad-text">Doesn’t match yet.</small>}
+              </label>
+              <div>
+                <button type="submit" className="btn primary" disabled={pwBusy || !cur || !next || !confirm}>
+                  {pwBusy ? 'Changing…' : 'Change password'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </section>
 
       {oidc && me?.role === 'admin' && (
-        <section className="settings-card">
-          <h3>Users</h3>
-          <p className="muted" style={{ textAlign: 'left' }}>
-            Single sign-on is enabled, so accounts and roles are managed by your identity provider's groups. There is no
-            local user management here.
-          </p>
-        </section>
+        <>
+          <h2 className="section">People</h2>
+          <div className="callout">
+            <div>
+              <b>Managed by your identity provider</b>
+              <p>Single sign-on is on, so accounts and roles come from your identity provider’s groups.</p>
+            </div>
+          </div>
+        </>
       )}
 
       {isAdmin && (
-        <section className="settings-card">
-          <h3>Users</h3>
+        <>
+          <div className="people-head">
+            <div>
+              <h2 className="section">People</h2>
+              <p className="section">Viewers see everything but can’t change settings, rules or agents.</p>
+            </div>
+            <span className="spacer" />
+            {!adding && (
+              <button className="btn" onClick={() => setAdding(true)}>
+                Add person
+              </button>
+            )}
+          </div>
           {uErr && <div className="error">{uErr}</div>}
           {uMsg && <div className="ok-msg">{uMsg}</div>}
-          <table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Role</th>
-                <th>Source</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td>
-                    {u.username}
-                    {me?.id === u.id && <span className="muted"> (you)</span>}
-                  </td>
-                  <td>
-                    {u.source === 'local' ? (
-                      <select value={u.role} onChange={(e) => changeRole(u, e.target.value)}>
-                        <option value="admin">admin</option>
-                        <option value="readonly">readonly</option>
-                      </select>
-                    ) : (
-                      <span className={`role-badge ${u.role}`}>{u.role}</span>
-                    )}
-                  </td>
-                  <td>
-                    <span className="muted">{u.source}</span>
-                  </td>
-                  <td>
-                    <div className="actions">
+          <section className="card flush">
+            {adding && (
+              <form className="add-user" onSubmit={createUser}>
+                <label className="field">
+                  <span>Username</span>
+                  <input
+                    autoFocus
+                    autoComplete="off"
+                    value={nu.username}
+                    onChange={(e) => setNu({ ...nu, username: e.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span>Password</span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={nu.password}
+                    onChange={(e) => setNu({ ...nu, password: e.target.value })}
+                  />
+                  <PasswordMeter password={nu.password} />
+                </label>
+                <label className="field">
+                  <span>Role</span>
+                  <select value={nu.role} onChange={(e) => setNu({ ...nu, role: e.target.value })}>
+                    <option value="readonly">Viewer</option>
+                    <option value="admin">Administrator</option>
+                  </select>
+                </label>
+                <div className="add-actions">
+                  <button type="submit" className="btn primary" disabled={!nu.username.trim() || !nu.password}>
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    className="btn quiet"
+                    onClick={() => {
+                      setAdding(false)
+                      setNu({ username: '', password: '', role: 'readonly' })
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+            <table className="stackable">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Role</th>
+                  <th className="hide-sm">Sign-in</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td className="lead">
+                      <b className="uname">{u.username}</b>
+                      {me?.id === u.id && <span className="muted"> (you)</span>}
+                    </td>
+                    <td className="lead-r">
+                      {u.source === 'local' && me?.id !== u.id ? (
+                        <select
+                          className="role-select"
+                          aria-label={`Role of ${u.username}`}
+                          value={u.role}
+                          onChange={(e) => changeRole(u, e.target.value)}
+                        >
+                          <option value="admin">Administrator</option>
+                          <option value="readonly">Viewer</option>
+                        </select>
+                      ) : (
+                        <span className={`tag${u.role === 'admin' ? ' ok' : ''}`}>{roleLabel(u.role)}</span>
+                      )}
+                    </td>
+                    <td className="hide-sm">{sourceLabel(u.source)}</td>
+                    <td className="actions">
                       {u.source === 'local' && (
-                        <button className="btn ghost" onClick={() => resetPw(u)}>
+                        <button
+                          className="btn sm"
+                          onClick={() => {
+                            setResetFor(u)
+                            setResetPw('')
+                            setResetErr('')
+                          }}
+                        >
                           Reset password
                         </button>
                       )}
                       {me?.id !== u.id && (
-                        <button className="del" onClick={() => del(u)}>
-                          ✕
+                        <button className="btn sm quiet" onClick={() => setDelFor(u)}>
+                          Remove
                         </button>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              <TableStatusRow loading={!usersLoaded} error={uErr} empty={users.length === 0} colSpan={4}>
-                No users
-              </TableStatusRow>
-            </tbody>
-          </table>
+                    </td>
+                  </tr>
+                ))}
+                <TableStatusRow loading={!usersLoaded} error={uErr} empty={users.length === 0} colSpan={4}>
+                  No people yet
+                </TableStatusRow>
+              </tbody>
+            </table>
+          </section>
+        </>
+      )}
 
-          <h3 style={{ marginTop: 20 }}>Add user</h3>
-          <form className="row" onSubmit={createUser}>
-            <input
-              placeholder="username"
-              value={nu.username}
-              onChange={(e) => setNu({ ...nu, username: e.target.value })}
-            />
-            <input
-              type="password"
-              autoComplete="new-password"
-              placeholder="password (min 10, mixed)"
-              value={nu.password}
-              onChange={(e) => setNu({ ...nu, password: e.target.value })}
-            />
-            <select value={nu.role} onChange={(e) => setNu({ ...nu, role: e.target.value })}>
-              <option value="readonly">readonly</option>
-              <option value="admin">admin</option>
-            </select>
-            <button type="submit" className="btn primary">
-              Create
-            </button>
+      {resetFor && (
+        <Modal
+          kind="dialog"
+          title={`Reset ${resetFor.username}’s password`}
+          onClose={() => setResetFor(null)}
+          footer={
+            <>
+              <span className="spacer" />
+              <button className="btn quiet" onClick={() => setResetFor(null)}>
+                Cancel
+              </button>
+              <button className="btn primary" form="reset-pw" type="submit" disabled={busy || !resetPw}>
+                {busy ? 'Resetting…' : 'Reset password'}
+              </button>
+            </>
+          }
+        >
+          <form id="reset-pw" className="pg-account-dialog" onSubmit={doReset}>
+            <p className="muted" style={{ margin: 0 }}>
+              They’ll be signed out everywhere and need the new password to sign back in.
+            </p>
+            {resetErr && <div className="error">{resetErr}</div>}
+            <label className="field">
+              <span>New password</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                autoFocus
+                value={resetPw}
+                onChange={(e) => setResetPw(e.target.value)}
+              />
+              <PasswordMeter password={resetPw} />
+            </label>
           </form>
-        </section>
+        </Modal>
+      )}
+
+      {delFor && (
+        <Modal
+          kind="dialog"
+          title={`Remove ${delFor.username}?`}
+          onClose={() => setDelFor(null)}
+          footer={
+            <>
+              <span className="spacer" />
+              <button className="btn quiet" onClick={() => setDelFor(null)}>
+                Cancel
+              </button>
+              <button className="btn danger solid" onClick={doDelete} disabled={busy}>
+                {busy ? 'Removing…' : 'Remove'}
+              </button>
+            </>
+          }
+        >
+          <p className="muted" style={{ margin: 0 }}>
+            Their account and sessions are deleted. This can’t be undone.
+          </p>
+        </Modal>
       )}
     </div>
   )

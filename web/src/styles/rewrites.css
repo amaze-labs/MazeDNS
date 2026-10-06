@@ -1,0 +1,171 @@
+/* Rewrites page: local records + conditional forwarding. */
+
+.pg-rewrites .rw-explain {
+  display: flex;
+  gap: 8px 22px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 13px;
+  margin: -8px 0 18px;
+}
+.pg-rewrites .rw-explain b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Inline add row at the top of a card. */
+.pg-rewrites .rw-addrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 96px minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px 20px 16px;
+  border-bottom: 1px solid var(--line);
+  align-items: start;
+}
+.pg-rewrites .rw-addrow.fw {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr) auto;
+  padding-top: 16px;
+}
+.pg-rewrites .rw-addrow > .btn {
+  /* Align with the inputs (label row is ~26px high). */
+  margin-top: 26px;
+  min-height: 38px;
+}
+.pg-rewrites .card-head + .rw-addrow {
+  padding-top: 4px;
+}
+.pg-rewrites .card-head .sub {
+  margin-bottom: 8px;
+}
+.pg-rewrites .rw-err {
+  margin: 12px 20px 0;
+}
+
+/* Tables */
+.pg-rewrites .rw-table td {
+  vertical-align: middle;
+}
+.pg-rewrites .rw-table .tag.rewrite {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.pg-rewrites .rw-table tr.off td:not(.rw-switch):not(.actions) {
+  opacity: 0.55;
+}
+.pg-rewrites .rw-table td.rw-switch {
+  width: 56px;
+  text-align: right;
+}
+.pg-rewrites .rw-table td.actions {
+  width: 1%;
+}
+.pg-rewrites .switch-btn {
+  border: 0;
+  background: none;
+  padding: 4px;
+  margin: -4px;
+  cursor: pointer;
+  display: inline-flex;
+  border-radius: 999px;
+}
+.pg-rewrites .rw-del:hover:not(:disabled) {
+  color: var(--block);
+  background: color-mix(in srgb, var(--block) 10%, transparent);
+}
+
+/* Scope picker + chips (ScopePicker.tsx, only used on this page). */
+.pg-rewrites .scope-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.pg-rewrites .scope-options,
+.pg-rewrites .scope-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pg-rewrites .scope-options .chip {
+  font-weight: 400;
+}
+.pg-rewrites .chip.unknown {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+.pg-rewrites .sr-only,
+.rw-edit .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Edit dialog. */
+.rw-edit {
+  display: grid;
+  gap: 16px;
+}
+.rw-edit p {
+  margin: 0;
+}
+.rw-edit .scope-picker {
+  display: grid;
+  gap: 8px;
+}
+.rw-edit .scope-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rw-edit .error {
+  margin: 0;
+}
+
+/* .actions (flex) from base.css would turn the cell into a flex box and break
+   the row's borders; keep it a table cell on desktop. */
+.pg-rewrites td.actions {
+  display: table-cell;
+}
+.pg-rewrites td.actions .btn + .btn {
+  margin-left: 6px;
+}
+
+@media (max-width: 900px) {
+  .pg-rewrites .rw-addrow,
+  .pg-rewrites .rw-addrow.fw {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 14px 16px;
+  }
+  .pg-rewrites .rw-addrow > :first-child {
+    grid-column: 1 / -1;
+  }
+  .pg-rewrites .rw-addrow.fw > :nth-child(2),
+  .pg-rewrites .rw-addrow > .field:has(.scope-picker) {
+    grid-column: 1 / -1;
+  }
+  .pg-rewrites .rw-addrow > .btn {
+    margin-top: 0;
+    grid-column: 1 / -1;
+  }
+  .pg-rewrites .rw-err {
+    margin: 12px 16px 0;
+  }
+  .pg-rewrites table.stackable td.rw-switch {
+    width: auto;
+  }
+  .pg-rewrites table.stackable td.actions {
+    width: auto;
+    display: flex;
+    gap: 6px;
+    justify-content: flex-start;
+    margin-top: 4px;
+  }
+  .pg-rewrites table.stackable td.actions .btn {
+    padding-left: 0;
+    padding-right: 10px;
+  }
+  .pg-rewrites table.stackable td .domain {
+    color: var(--text);
+  }
+}

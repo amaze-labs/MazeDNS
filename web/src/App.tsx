@@ -14,31 +14,35 @@ import Setup from './components/Setup'
 import Spinner from './components/Spinner'
 import { Icon, type IconName } from './components/icons'
 import { useTheme } from './theme'
-import { api, type SessionUser, type AuthInfo } from './api'
+import { useNavBadges } from './useNavBadges'
+import { api, UNAUTHORIZED, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'dashboard' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'cluster' | 'logs' | 'settings' | 'account'
-const ALL_TABS: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites', 'cluster', 'logs', 'settings', 'account']
+type Tab = 'overview' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'agents' | 'logs' | 'settings' | 'account'
+const ALL_TABS: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'rewrites', 'agents', 'logs', 'settings', 'account']
 
-// Sidebar presentation: icon + human label per tab.
-const TAB_META: Record<Tab, { icon: IconName; label: string }> = {
-  dashboard: { icon: 'dashboard', label: 'Dashboard' },
-  queries: { icon: 'queries', label: 'Requests' },
+// Sidebar presentation: icon + human label per tab. `extra` tabs drop out of the
+// mobile bottom bar, which only has room for the everyday ones.
+const TAB_META: Record<Tab, { icon: IconName; label: string; extra?: boolean }> = {
+  overview: { icon: 'dashboard', label: 'Overview' },
+  queries: { icon: 'queries', label: 'Queries' },
   clients: { icon: 'clients', label: 'Clients' },
   filtering: { icon: 'filtering', label: 'Filtering' },
-  rewrites: { icon: 'rewrites', label: 'Rewrites' },
-  cluster: { icon: 'cluster', label: 'Cluster' },
-  logs: { icon: 'logs', label: 'Logs' },
+  rewrites: { icon: 'rewrites', label: 'Rewrites', extra: true },
+  agents: { icon: 'cluster', label: 'Agents' },
+  logs: { icon: 'logs', label: 'Logs', extra: true },
   settings: { icon: 'settings', label: 'Settings' },
   account: { icon: 'account', label: 'Account' },
 }
 
-// The current tab is reflected in the URL path (/dashboard, /queries, …) so
+// Paths from before the redesign keep working.
+const ALIASES: Record<string, Tab> = { '': 'overview', dashboard: 'overview', cluster: 'agents', requests: 'queries', ai: 'filtering' }
+
+// The current tab is reflected in the URL path (/overview, /queries, …) so
 // pages are linkable and the browser back/forward buttons work.
 const tabFromPath = (): Tab => {
   const seg = window.location.pathname.replace(/^\/+|\/+$/g, '')
-  // AI classification moved under Filtering; keep old /ai links working.
-  if (seg === 'ai') return 'filtering'
-  return ALL_TABS.includes(seg as Tab) ? (seg as Tab) : 'dashboard'
+  if (seg in ALIASES) return ALIASES[seg]
+  return ALL_TABS.includes(seg as Tab) ? (seg as Tab) : 'overview'
 }
 
 export default function App() {
@@ -59,7 +63,7 @@ export default function App() {
   // navigate switches tab and pushes the matching path into history.
   const navigate = (t: Tab) => {
     setTab(t)
-    if (tabFromPath() !== t) window.history.pushState({}, '', `/${t}`)
+    if (window.location.pathname !== `/${t}`) window.history.pushState({}, '', `/${t}`)
   }
 
   const refresh = async () => {
@@ -77,14 +81,24 @@ export default function App() {
 
   useEffect(() => {
     refresh().catch(() => setLoading(false))
-    // Normalize the URL on first load (e.g. "/" -> "/dashboard").
+    // Normalize the URL on first load (e.g. "/" or "/dashboard" -> "/overview").
     if (window.location.pathname !== `/${tabFromPath()}`) {
-      window.history.replaceState({}, '', `/${tabFromPath()}`)
+      window.history.replaceState({}, '', `/${tabFromPath()}${window.location.search}`)
     }
     const onPop = () => setTab(tabFromPath())
+    // A 401 from any call means the session expired: show the login screen.
+    const onUnauthorized = () => setUser(null)
     window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
+    window.addEventListener(UNAUTHORIZED, onUnauthorized)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      window.removeEventListener(UNAUTHORIZED, onUnauthorized)
+    }
   }, [])
+
+  const isAdmin = user?.role === 'admin'
+  const clusterOn = !!info?.cluster_enabled
+  const badges = useNavBadges({ agents: !!user && clusterOn, filtering: !!user })
 
   const logout = async () => {
     // Prevent auto-login from immediately bouncing back into SSO on the next render.
@@ -96,7 +110,9 @@ export default function App() {
   if (loading) {
     return (
       <div className="app">
-        <Spinner size={22} label="Loading…" />
+        <div className="boot">
+          <Spinner size={22} label="Loading…" />
+        </div>
       </div>
     )
   }
@@ -105,40 +121,47 @@ export default function App() {
     return <Setup onDone={() => refresh()} />
   }
 
-  if (info?.auth_enabled && !user) {
+  // A failed /api/auth/info leaves info null: never render the app unauthenticated.
+  if (!info || (info.auth_enabled && !user)) {
     return (
       <Login
-        oidc={!!info.oidc_enabled}
-        passwordDisabled={!!info.password_login_disabled}
-        autoLogin={!!info.oidc_auto_login}
+        oidc={!!info?.oidc_enabled}
+        passwordDisabled={!!info?.password_login_disabled}
+        autoLogin={!!info?.oidc_auto_login}
         onLogin={() => refresh()}
       />
     )
   }
 
-  // 'account' is reached from the avatar menu, not the nav.
-  const classifierOn = !!(info?.classifier_available && info?.classifier_enabled)
-  const tabs: Tab[] = ['dashboard', 'queries', 'clients', 'filtering', 'rewrites']
-  if (info?.cluster_enabled) tabs.push('cluster')
+  // 'account' is reached from the avatar, not the nav.
+  const classifierOn = !!(info.classifier_available && info.classifier_enabled)
+  const tabs: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'rewrites']
+  if (clusterOn) tabs.push('agents')
   // Process logs are admin-only server-side (they can carry client IPs and
   // usernames), so don't offer the tab to readonly users at all.
-  if (user?.role === 'admin') tabs.push('logs')
+  if (isAdmin) tabs.push('logs')
   tabs.push('settings')
+  const counts: Partial<Record<Tab, number>> = { agents: badges.agents, filtering: badges.filtering }
+
+  // A tab the user can't open (role, cluster off, auth off) falls back to Overview.
+  const allowed = tabs.includes(tab) || (tab === 'account' && info.auth_enabled)
+  const shown: Tab = allowed ? tab : 'overview'
 
   return (
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="side-brand">
           <span className="brand-logo">
-            <Icon name="brand" size={22} />
+            <Icon name="brand" size={22} strokeWidth={2} />
           </span>
           <span className="brand-name">MazeDNS</span>
         </div>
-        <nav className="side-nav">
+        <nav className="side-nav" aria-label="Main">
           {tabs.map((t) => (
             <button
               key={t}
-              className={tab === t ? 'active' : ''}
+              className={`${shown === t ? 'active' : ''} ${TAB_META[t].extra ? 'extra' : ''} ${counts[t] ? 'has-count' : ''}`}
+              aria-current={shown === t ? 'page' : undefined}
               onClick={() => navigate(t)}
               title={TAB_META[t].label}
             >
@@ -146,52 +169,49 @@ export default function App() {
                 <Icon name={TAB_META[t].icon} />
               </span>
               <span className="side-label">{TAB_META[t].label}</span>
+              {!!counts[t] && (
+                <span className="side-count" title="Needs attention">
+                  {counts[t]}
+                </span>
+              )}
             </button>
           ))}
         </nav>
         <div className="spacer" />
-        <button
-          className="side-collapse"
-          onClick={toggle}
-          title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-        >
-          <span className="side-ic">
-            <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
-          </span>
-          <span className="side-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
-        </button>
-        <button
-          className="side-collapse"
-          onClick={toggleSidebar}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <span className="side-ic">
-            <Icon name={collapsed ? 'chevrons-right' : 'chevrons-left'} />
-          </span>
-          <span className="side-label">Collapse</span>
-        </button>
+        <div className="side-foot">
+          <button onClick={toggle} title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
+            <span className="side-ic">
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+            </span>
+            <span className="side-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
+          </button>
+          <button onClick={toggleSidebar} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+            <span className="side-ic">
+              <Icon name={collapsed ? 'chevrons-right' : 'chevrons-left'} />
+            </span>
+            <span className="side-label">Collapse</span>
+          </button>
+        </div>
         {user && (
           <div className="side-account">
-            <AccountMenu
-              user={user}
-              authEnabled={!!info?.auth_enabled}
-              onSettings={() => navigate('account')}
-              onLogout={logout}
-            />
-            <span className="side-label side-username">{user.username}</span>
+            <AccountMenu user={user} authEnabled={!!info.auth_enabled} onSettings={() => navigate('account')} onLogout={logout} />
+            <span className="side-username">
+              <b>{user.username}</b>
+              <small>{isAdmin ? 'Administrator' : 'Viewer'}</small>
+            </span>
           </div>
         )}
       </aside>
       <main>
-        {tab === 'dashboard' && <Dashboard />}
-        {tab === 'queries' && <Queries />}
-        {tab === 'clients' && <Clients />}
-        {tab === 'filtering' && <Filtering classifier={classifierOn} />}
-        {tab === 'rewrites' && <Rewrites />}
-        {tab === 'cluster' && info?.cluster_enabled && <Cluster />}
-        {tab === 'logs' && user?.role === 'admin' && <Logs />}
-        {tab === 'settings' && <Settings onClassifierChange={() => refresh()} />}
-        {tab === 'account' && info?.auth_enabled && <Account me={user} oidc={!!info.oidc_enabled} />}
+        {shown === 'overview' && <Dashboard />}
+        {shown === 'queries' && <Queries />}
+        {shown === 'clients' && <Clients />}
+        {shown === 'filtering' && <Filtering classifier={classifierOn} />}
+        {shown === 'rewrites' && <Rewrites />}
+        {shown === 'agents' && <Cluster />}
+        {shown === 'logs' && <Logs />}
+        {shown === 'settings' && <Settings onClassifierChange={() => refresh()} />}
+        {shown === 'account' && <Account me={user} oidc={!!info.oidc_enabled} />}
       </main>
     </div>
   )

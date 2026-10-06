@@ -30,13 +30,8 @@ const PATHS: Record<IconName, JSX.Element> = {
       <rect x="3" y="16" width="7" height="5" rx="1.5" />
     </>
   ),
-  // search / requests
-  queries: (
-    <>
-      <circle cx="11" cy="11" r="7" />
-      <path d="M21 21l-4.3-4.3" />
-    </>
-  ),
+  // lines / query log
+  queries: <path d="M4 6h16M4 12h16M4 18h10" />,
   // monitor / clients
   clients: (
     <>
@@ -46,16 +41,8 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   // shield / filtering
   filtering: <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />,
-  // shuffle / rewrites
-  rewrites: (
-    <>
-      <path d="M16 3h5v5" />
-      <path d="M4 20L21 3" />
-      <path d="M21 16v5h-5" />
-      <path d="M15 15l6 6" />
-      <path d="M4 4l5 5" />
-    </>
-  ),
+  // opposed arrows / rewrites
+  rewrites: <path d="M4 7h11l-3-3M20 17H9l3 3" />,
   // network / cluster
   cluster: (
     <>
@@ -88,11 +75,11 @@ const PATHS: Record<IconName, JSX.Element> = {
       <path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6" />
     </>
   ),
-  // compass / brand (MazeDNS navigation motif)
+  // maze mark / brand: a square with one path through it
   brand: (
     <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M15.5 8.5l-2 5-5 2 2-5 5-2z" />
+      <path d="M4 4h16v16H4z" opacity=".35" />
+      <path d="M4 9h7v6M15 4v7h5M9 20v-5h6v-4" />
     </>
   ),
   'chevrons-left': <path d="M11 7l-5 5 5 5M18 7l-5 5 5 5" />,

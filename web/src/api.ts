@@ -456,20 +456,26 @@ export interface LogEntry {
   msg: string
 }
 
+// UNAUTHORIZED is dispatched on window whenever an API call answers 401, so the
+// app can drop back to the login screen when the session expires mid-use.
+export const UNAUTHORIZED = 'mazedns:unauthorized'
+
+// failure turns a non-2xx response into an Error carrying the API's message.
+// statusText is empty over HTTP/2, so fall back to the status code.
+async function failure(r: Response): Promise<Error> {
+  if (r.status === 401 && !r.url.includes('/api/auth/')) window.dispatchEvent(new Event(UNAUTHORIZED))
+  const body = await r.json().catch(() => ({}))
+  return new Error(body.error || r.statusText || `HTTP ${r.status}`)
+}
+
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}))
-    throw new Error(body.error || r.statusText)
-  }
+  if (!r.ok) throw await failure(r)
   return r.json() as Promise<T>
 }
 
 // ok handles empty-body (204) responses, throwing the API error message on failure.
 async function ok(r: Response): Promise<void> {
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}))
-    throw new Error(body.error || r.statusText)
-  }
+  if (!r.ok) throw await failure(r)
 }
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
@@ -590,7 +596,7 @@ export const api = {
     fetch('/api/rules', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ action, domain, category }) }).then(j),
   importRules: (text: string, category: string) =>
     fetch('/api/rules/import', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, category }) }).then(j<{ imported: number }>),
-  deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }),
+  deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }).then(ok),
 
   settings: () => fetch('/api/settings').then(j<Settings>),
   saveSettings: (s: Settings) =>
@@ -650,7 +656,7 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ value, enabled, scope_type: scopeType, scope_values: scopeValues }),
     }).then(j),
-  deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }),
+  deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }).then(ok),
 
   // Centrally-managed conditional forwarders (pushed to agents via the snapshot).
   forwarders: () => fetch('/api/forwarders').then(j<Forwarder[]>),
@@ -666,7 +672,7 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ upstreams, enabled, scope_type: scopeType, scope_values: scopeValues }),
     }).then(j),
-  deleteForwarder: (id: number) => fetch(`/api/forwarders/${id}`, { method: 'DELETE' }),
+  deleteForwarder: (id: number) => fetch(`/api/forwarders/${id}`, { method: 'DELETE' }).then(ok),
 
   // LLM classifier
   classifier: () => fetch('/api/classifier').then(j<ClassifierStatus>),
@@ -756,7 +762,7 @@ export const api = {
   renewNodeKey: (id: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/key`, { method: 'POST' }).then(j<{ id: string; key: string }>),
   deleteNode: (id: string, revoke = true) =>
-    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }),
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }).then(ok),
   listRevoked: () => fetch('/api/cluster/revoked').then(j<RevokedNode[]>),
   unrevokeNode: (id: string) => fetch(`/api/cluster/revoked/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(ok),
   // Permanently delete a revoked agent's record (audited as a purge, not an

@@ -154,7 +154,10 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/auth/oidc/login", s.oidcLogin)
 		mux.HandleFunc("GET /api/auth/oidc/callback", s.oidcCallback)
 
-		// Data endpoints (protected: readonly may GET, admin may mutate).
+		// Data endpoints (protected: readonly may GET, admin may mutate). Routes
+		// wrapped in requireRole also accept an API token of the right role;
+		// requireSession routes (users, tokens, auth/SSO settings, credentials,
+		// config backup, cluster membership) are console-session only.
 		mux.HandleFunc("GET /api/stats", s.requireRole(roleReadonly, s.getStats))
 		// The windowed aggregations are cached briefly (see ttlCache) so frequent
 		// polling and multiple widgets don't recompute the same query_log slice.
@@ -194,8 +197,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		// LLM domain classifier.
 		mux.HandleFunc("GET /api/classifier", s.requireRole(roleReadonly, s.getClassifier))
 		mux.HandleFunc("GET /api/classifier/list", s.requireRole(roleReadonly, s.getList))
-		mux.HandleFunc("PUT /api/classifier/settings", s.requireRole(roleAdmin, s.putClassifierSettings))
-		mux.HandleFunc("POST /api/classifier/test", s.requireRole(roleAdmin, s.testClassifier))
+		mux.HandleFunc("PUT /api/classifier/settings", s.requireSession(roleAdmin, s.putClassifierSettings))
+		mux.HandleFunc("POST /api/classifier/test", s.requireSession(roleAdmin, s.testClassifier))
 		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))
 		mux.HandleFunc("GET /api/classifications", s.requireRole(roleReadonly, s.listClassifications))
 		mux.HandleFunc("DELETE /api/classifications", s.requireRole(roleAdmin, s.clearClassifications))
@@ -207,58 +210,64 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("PUT /api/clients/name", s.requireRole(roleAdmin, s.putClientName))
 		mux.HandleFunc("GET /api/clients/resolve", s.requireRole(roleReadonly, s.resolveClients))
 		mux.HandleFunc("GET /api/netbird", s.requireRole(roleReadonly, s.getNetbird))
-		mux.HandleFunc("PUT /api/netbird", s.requireRole(roleAdmin, s.putNetbird))
-		mux.HandleFunc("POST /api/netbird/test", s.requireRole(roleAdmin, s.testNetbird))
+		mux.HandleFunc("PUT /api/netbird", s.requireSession(roleAdmin, s.putNetbird))
+		mux.HandleFunc("POST /api/netbird/test", s.requireSession(roleAdmin, s.testNetbird))
 		mux.HandleFunc("GET /api/reverse-dns", s.requireRole(roleReadonly, s.getReverseDNS))
 		mux.HandleFunc("PUT /api/reverse-dns", s.requireRole(roleAdmin, s.putReverseDNS))
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
 		// Control-plane runtime settings (SSO, session TTL, cluster policy, general).
-		mux.HandleFunc("GET /api/settings/cp", s.requireRole(roleAdmin, s.getCPSettings))
-		mux.HandleFunc("PUT /api/settings/cp", s.requireRole(roleAdmin, s.putCPSettings))
+		mux.HandleFunc("GET /api/settings/cp", s.requireSession(roleAdmin, s.getCPSettings))
+		mux.HandleFunc("PUT /api/settings/cp", s.requireSession(roleAdmin, s.putCPSettings))
 		mux.HandleFunc("GET /api/settings/audit", s.requireRole(roleAdmin, s.getSettingsAudit))
-		mux.HandleFunc("POST /api/settings/metrics-token", s.requireRole(roleAdmin, s.generateMetricsToken))
-		mux.HandleFunc("DELETE /api/settings/metrics-token", s.requireRole(roleAdmin, s.clearMetricsToken))
+		mux.HandleFunc("POST /api/settings/metrics-token", s.requireSession(roleAdmin, s.generateMetricsToken))
+		mux.HandleFunc("DELETE /api/settings/metrics-token", s.requireSession(roleAdmin, s.clearMetricsToken))
 		mux.HandleFunc("GET /api/metrics/export", s.requireRole(roleReadonly, s.getMetricsExport))
-		mux.HandleFunc("PUT /api/metrics/export", s.requireRole(roleAdmin, s.putMetricsExport))
+		mux.HandleFunc("PUT /api/metrics/export", s.requireSession(roleAdmin, s.putMetricsExport))
 		mux.HandleFunc("GET /api/logs/export", s.requireRole(roleReadonly, s.getLogsExport))
-		mux.HandleFunc("PUT /api/logs/export", s.requireRole(roleAdmin, s.putLogsExport))
+		mux.HandleFunc("PUT /api/logs/export", s.requireSession(roleAdmin, s.putLogsExport))
 		// Process logs (control plane + shipped agent rings). Admin: the lines can
 		// contain client IPs and login usernames.
 		mux.HandleFunc("GET /api/logs", s.requireRole(roleAdmin, s.getLogs))
 
 		// Config backup / restore (admin): export everything as one JSON bundle.
-		mux.HandleFunc("GET /api/config/export", s.requireRole(roleAdmin, s.exportConfig))
-		mux.HandleFunc("POST /api/config/import", s.requireRole(roleAdmin, s.importConfig))
+		mux.HandleFunc("GET /api/config/export", s.requireSession(roleAdmin, s.exportConfig))
+		mux.HandleFunc("POST /api/config/import", s.requireSession(roleAdmin, s.importConfig))
 
 		// Account (self) + user management (admin).
-		mux.HandleFunc("POST /api/auth/password", s.requireRole(roleReadonly, s.changePassword))
-		mux.HandleFunc("GET /api/users", s.requireRole(roleAdmin, s.listUsers))
-		mux.HandleFunc("POST /api/users", s.requireRole(roleAdmin, s.createUser))
-		mux.HandleFunc("PUT /api/users/{id}/role", s.requireRole(roleAdmin, s.setUserRole))
-		mux.HandleFunc("PUT /api/users/{id}/password", s.requireRole(roleAdmin, s.resetUserPassword))
-		mux.HandleFunc("DELETE /api/users/{id}", s.requireRole(roleAdmin, s.deleteUser))
+		mux.HandleFunc("POST /api/auth/password", s.requireSession(roleReadonly, s.changePassword))
+		mux.HandleFunc("GET /api/users", s.requireSession(roleAdmin, s.listUsers))
+		mux.HandleFunc("POST /api/users", s.requireSession(roleAdmin, s.createUser))
+		mux.HandleFunc("PUT /api/users/{id}/role", s.requireSession(roleAdmin, s.setUserRole))
+		mux.HandleFunc("PUT /api/users/{id}/password", s.requireSession(roleAdmin, s.resetUserPassword))
+		mux.HandleFunc("DELETE /api/users/{id}", s.requireSession(roleAdmin, s.deleteUser))
+
+		// API tokens for integrations (admin, console session only: a token can
+		// never mint or revoke tokens).
+		mux.HandleFunc("GET /api/tokens", s.requireSession(roleAdmin, s.listAPITokens))
+		mux.HandleFunc("POST /api/tokens", s.requireSession(roleAdmin, s.createAPIToken))
+		mux.HandleFunc("DELETE /api/tokens/{id}", s.requireSession(roleAdmin, s.deleteAPIToken))
 
 		// Cluster control plane (master only).
 		if clusterEnabled {
 			mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
-			mux.HandleFunc("POST /api/cluster/nodes", s.requireRole(roleAdmin, s.addNode))
-			mux.HandleFunc("POST /api/cluster/nodes/{id}/key", s.requireRole(roleAdmin, s.renewNodeKey))
-			mux.HandleFunc("PUT /api/cluster/nodes/{id}/maintenance", s.requireRole(roleAdmin, s.setNodeMaintenance))
-			mux.HandleFunc("PUT /api/cluster/nodes/{id}/approve", s.requireRole(roleAdmin, s.approveNode))
-			mux.HandleFunc("PUT /api/cluster/nodes/{id}/site", s.requireRole(roleAdmin, s.setNodeSite))
-			mux.HandleFunc("PUT /api/cluster/nodes/{id}/name", s.requireRole(roleAdmin, s.renameNode))
+			mux.HandleFunc("POST /api/cluster/nodes", s.requireSession(roleAdmin, s.addNode))
+			mux.HandleFunc("POST /api/cluster/nodes/{id}/key", s.requireSession(roleAdmin, s.renewNodeKey))
+			mux.HandleFunc("PUT /api/cluster/nodes/{id}/maintenance", s.requireSession(roleAdmin, s.setNodeMaintenance))
+			mux.HandleFunc("PUT /api/cluster/nodes/{id}/approve", s.requireSession(roleAdmin, s.approveNode))
+			mux.HandleFunc("PUT /api/cluster/nodes/{id}/site", s.requireSession(roleAdmin, s.setNodeSite))
+			mux.HandleFunc("PUT /api/cluster/nodes/{id}/name", s.requireSession(roleAdmin, s.renameNode))
 			mux.HandleFunc("GET /api/cluster/sites", s.requireRole(roleReadonly, s.listSites))
-			mux.HandleFunc("POST /api/cluster/sites", s.requireRole(roleAdmin, s.createSite))
-			mux.HandleFunc("DELETE /api/cluster/sites/{name}", s.requireRole(roleAdmin, s.deleteSite))
-			mux.HandleFunc("DELETE /api/cluster/nodes/{id}", s.requireRole(roleAdmin, s.deleteNode))
-			mux.HandleFunc("GET /api/cluster/revoked", s.requireRole(roleAdmin, s.listRevoked))
-			mux.HandleFunc("DELETE /api/cluster/revoked/{id}", s.requireRole(roleAdmin, s.unrevokeNode))
-			mux.HandleFunc("GET /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.listEnrollKeys))
-			mux.HandleFunc("POST /api/cluster/enroll-keys", s.requireRole(roleAdmin, s.createEnrollKey))
-			mux.HandleFunc("DELETE /api/cluster/enroll-keys/{id}", s.requireRole(roleAdmin, s.revokeEnrollKey))
+			mux.HandleFunc("POST /api/cluster/sites", s.requireSession(roleAdmin, s.createSite))
+			mux.HandleFunc("DELETE /api/cluster/sites/{name}", s.requireSession(roleAdmin, s.deleteSite))
+			mux.HandleFunc("DELETE /api/cluster/nodes/{id}", s.requireSession(roleAdmin, s.deleteNode))
+			mux.HandleFunc("GET /api/cluster/revoked", s.requireSession(roleAdmin, s.listRevoked))
+			mux.HandleFunc("DELETE /api/cluster/revoked/{id}", s.requireSession(roleAdmin, s.unrevokeNode))
+			mux.HandleFunc("GET /api/cluster/enroll-keys", s.requireSession(roleAdmin, s.listEnrollKeys))
+			mux.HandleFunc("POST /api/cluster/enroll-keys", s.requireSession(roleAdmin, s.createEnrollKey))
+			mux.HandleFunc("DELETE /api/cluster/enroll-keys/{id}", s.requireSession(roleAdmin, s.revokeEnrollKey))
 			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)    // enrollment-key auth
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
@@ -286,8 +295,21 @@ func (s *Server) ListenAndServe() error { return s.http.ListenAndServe() }
 // Shutdown gracefully stops the HTTP server.
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
 
-// requireRole wraps a handler with authentication and a minimum-role check.
+// requireRole wraps a handler with authentication (a session cookie or an API
+// token) and a minimum-role check.
 func (s *Server) requireRole(minRole string, h http.HandlerFunc) http.HandlerFunc {
+	return s.guard(minRole, true, h)
+}
+
+// requireSession is requireRole for routes an API token may never call, whatever
+// its role: anything that manages users, tokens, authentication, credentials or
+// cluster membership. A token gets 403, so a leaked integration token cannot
+// escalate into accounts, secrets or new nodes.
+func (s *Server) requireSession(minRole string, h http.HandlerFunc) http.HandlerFunc {
+	return s.guard(minRole, false, h)
+}
+
+func (s *Server) guard(minRole string, tokensAllowed bool, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.authEnabled {
 			h(w, r)
@@ -296,6 +318,10 @@ func (s *Server) requireRole(minRole string, h http.HandlerFunc) http.HandlerFun
 		u, ok := s.auth.UserFromRequest(r)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if !tokensAllowed && u.Kind == auth.KindToken {
+			writeError(w, http.StatusForbidden, "not available to API tokens: sign in to the console")
 			return
 		}
 		if minRole == roleAdmin && u.Role != roleAdmin {
@@ -1302,8 +1328,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if full, _ := s.store.GetUserByID(u.ID); full != nil {
 		source, avatar = full.Source, full.AvatarURL
 	}
+	if u.Kind == auth.KindToken {
+		source = "token"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id": u.ID, "username": u.Username, "role": u.Role,
+		"id": u.ID, "username": u.Username, "role": u.Role, "kind": u.Kind,
 		"source": source, "avatar_url": avatar,
 	})
 }

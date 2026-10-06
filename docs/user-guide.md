@@ -12,6 +12,7 @@ replicate it automatically. You never edit files on an agent.
 - [Pause blocking](#pause-blocking)
 - [Clustering operations](#clustering-operations)
 - [Authentication and SSO](#authentication-and-sso)
+- [API tokens](#api-tokens)
 - [Backup and restore](#backup-and-restore)
 - [Seeing real client IPs](#seeing-real-client-ips)
 
@@ -226,6 +227,46 @@ shows the exact value to register, and it's logged at startup so you can compare
 (The `MAZEDNS_OIDC_*` variables still exist, but they only **seed** the database on
 first boot and are ignored afterwards — see
 [configuration.md](configuration.md#control-plane).)
+
+## API tokens
+
+Integrations, such as an IPAM that pushes its hosts as rewrites, call the API with
+an **API token** instead of a user's password. Create one under **Settings →
+Access & SSO → API tokens**: give it a name that says what it is for, a role
+(**readonly** or **admin**) and an optional expiry. The token (`mzd_…`) is shown
+**once**; only a hash is stored. Send it as a bearer header:
+
+```bash
+TOKEN=mzd_…   # paste the token shown at creation
+
+# list rewrites (readonly or admin)
+curl -H "Authorization: Bearer $TOKEN" https://dns.example.internal/api/rewrites
+
+# add or update a rewrite (admin)
+curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}' \
+  https://dns.example.internal/api/rewrites
+```
+
+- **What a token can do:** whatever its role allows on DNS data: rewrites,
+  forwarders, rules, lists, clients, resolver settings and the read-only views.
+- **What it can never do, whatever its role:** manage users, API tokens, your
+  own password, SSO / sessions / login settings, the metrics scrape token,
+  credentials for integrations (NetBird, classifier, metrics/log export),
+  config backup and restore, or cluster nodes, sites and enrollment keys. Those
+  answer **403** to a token and need a console sign-in.
+- **SSO-only mode** has no effect on tokens: it only disables password login.
+- **Revoke** a token from the same list. It stops working on the next request.
+  The list shows each token's role, last use (updated at most once a minute) and
+  expiry, never its value.
+- A request with an `Authorization: Bearer` header is judged on that header
+  only: an invalid or revoked token gets **401**, even if the same client also
+  sends a session cookie. Other schemes (e.g. `Basic`, added by a proxy in front of
+  the console) are ignored.
+- Creating and revoking tokens is recorded in the settings audit log, under the
+  admin who did it. Changes to DNS data (rewrites, rules, …) have no change log
+  yet, whoever makes them; where a token's action is recorded, it appears as
+  `token:<name>`.
 
 ## Backup and restore
 

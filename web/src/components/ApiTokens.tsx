@@ -83,8 +83,9 @@ export default function ApiTokens() {
         Let integrations (an IPAM sync, scripts) call the API with <code>Authorization: Bearer &lt;token&gt;</code>{' '}
         instead of a user's password. A token can do what its role allows on DNS data — rewrites, forwarders, rules,
         lists, clients and read-only views — but never manages users, tokens, sign-in, credentials, backups or cluster
-        nodes. Tokens keep working when password login is disabled for SSO. Each token is shown once, then stored
-        hashed; revoking it takes effect on the next request.
+        nodes. Tokens keep working when password login is disabled for SSO, but never outrank their creator: they
+        stop working if the creator's account is deleted, and act as readonly if the creator is no longer an admin.
+        Each token is shown once, then stored hashed; revoking it takes effect on the next request.
       </p>
       {err && <div className="error">{err}</div>}
       <form className="row" onSubmit={submit}>

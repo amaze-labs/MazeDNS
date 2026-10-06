@@ -144,6 +144,8 @@ func TestAPITokenSessionOnlyRoutes(t *testing.T) {
 		{http.MethodGet, "/api/config/export", ""},
 		{http.MethodPost, "/api/config/import", `{}`},
 		{http.MethodPut, "/api/classifier/settings", `{}`},
+		// Would send the stored LLM API key to an endpoint named in the request.
+		{http.MethodPost, "/api/classifier/test", `{"provider":"openai","endpoint":"http://127.0.0.1:1","model":"m"}`},
 		{http.MethodPut, "/api/netbird", `{}`},
 		{http.MethodGet, "/api/cluster/enroll-keys", ""},
 		{http.MethodPost, "/api/cluster/enroll-keys", `{"name":"k"}`},
@@ -252,5 +254,42 @@ func TestAPITokenCreateValidationAndListing(t *testing.T) {
 	entries, _ := e.st.ListAudit()
 	if len(entries) == 0 || entries[len(entries)-1].Action != "apitoken.create" || entries[len(entries)-1].User != "admin" {
 		t.Fatalf("audit = %+v", entries)
+	}
+}
+
+// A token never outranks its creator: it acts as readonly once the creator is
+// demoted, and stops working once the creator's account is deleted.
+func TestAPITokenFollowsCreator(t *testing.T) {
+	e := newTokenEnv(t)
+	hash, _ := auth.HashPassword("correcthorse7")
+	opsID, err := e.st.CreateLocalUser("ops", hash, roleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := auth.NewAPIToken()
+	if err := e.st.CreateAPIToken(store.APIToken{ID: "ops-tok", Name: "ipam-sync", Role: roleAdmin,
+		CreatedBy: "ops", CreatedAt: time.Now().Unix()}, auth.HashAPIToken(tok)); err != nil {
+		t.Fatal(err)
+	}
+	write := `{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}`
+	if rr := e.do(http.MethodPost, "/api/rewrites", write, false, bearer(tok)); rr.Code != http.StatusCreated {
+		t.Fatalf("creator is admin: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if err := e.st.UpdateUserRole(opsID, roleReadonly); err != nil {
+		t.Fatal(err)
+	}
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)); rr.Code != http.StatusOK {
+		t.Fatalf("creator demoted, GET: %d, want 200", rr.Code)
+	}
+	if rr := e.do(http.MethodPost, "/api/rewrites", `{"domain":"x.lan","rrtype":"A","value":"10.0.0.6"}`, false, bearer(tok)); rr.Code != http.StatusForbidden {
+		t.Fatalf("creator demoted, POST: %d, want 403", rr.Code)
+	}
+
+	if err := e.st.DeleteUser(opsID); err != nil {
+		t.Fatal(err)
+	}
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("creator deleted: %d, want 401", rr.Code)
 	}
 }

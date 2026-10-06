@@ -198,7 +198,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/classifier", s.requireRole(roleReadonly, s.getClassifier))
 		mux.HandleFunc("GET /api/classifier/list", s.requireRole(roleReadonly, s.getList))
 		mux.HandleFunc("PUT /api/classifier/settings", s.requireSession(roleAdmin, s.putClassifierSettings))
-		mux.HandleFunc("POST /api/classifier/test", s.requireRole(roleAdmin, s.testClassifier))
+		mux.HandleFunc("POST /api/classifier/test", s.requireSession(roleAdmin, s.testClassifier))
 		mux.HandleFunc("PUT /api/classifier/mode", s.requireRole(roleAdmin, s.setClassifierMode))
 		mux.HandleFunc("GET /api/classifications", s.requireRole(roleReadonly, s.listClassifications))
 		mux.HandleFunc("DELETE /api/classifications", s.requireRole(roleAdmin, s.clearClassifications))

@@ -62,6 +62,12 @@ func bearerToken(r *http.Request) (string, bool) {
 
 // userFromAPIToken resolves a bearer token to its principal. Revocation and
 // expiry take effect on the next request: every request looks the token up.
+//
+// A token never outranks the admin who created it, checked on every request: it
+// stops working once its creator's account is deleted, and an admin token acts
+// as readonly once its creator is no longer an admin (including an SSO user
+// whose role changed at the provider). So removing someone's access also removes
+// the access of any token they may have kept a copy of.
 func (m *Manager) userFromAPIToken(token string) (*SessionUser, bool) {
 	if !strings.HasPrefix(token, APITokenPrefix) {
 		return nil, false
@@ -71,8 +77,16 @@ func (m *Manager) userFromAPIToken(token string) (*SessionUser, bool) {
 	if err != nil || t == nil {
 		return nil, false
 	}
+	creator, err := m.store.GetUserByUsername(t.CreatedBy)
+	if err != nil || creator == nil {
+		return nil, false
+	}
+	role := t.Role
+	if creator.Role != "admin" {
+		role = creator.Role
+	}
 	m.touchAPIToken(t, now)
-	return &SessionUser{Username: "token:" + t.Name, Role: t.Role, Kind: KindToken, TokenID: t.ID}, true
+	return &SessionUser{Username: "token:" + t.Name, Role: role, Kind: KindToken, TokenID: t.ID}, true
 }
 
 // touchAPIToken records the token's use, at most once per apiTokenTouchEvery.

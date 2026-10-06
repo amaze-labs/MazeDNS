@@ -252,10 +252,16 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   forwarders, rules, lists, clients, resolver settings and the read-only views.
 - **What it can never do, whatever its role:** manage users, API tokens, your
   own password, SSO / sessions / login settings, the metrics scrape token,
-  credentials for integrations (NetBird, classifier, metrics/log export),
+  credentials for integrations (NetBird, classifier and its connection test,
+  metrics/log export),
   config backup and restore, or cluster nodes, sites and enrollment keys. Those
   answer **403** to a token and need a console sign-in.
 - **SSO-only mode** has no effect on tokens: it only disables password login.
+- **A token never outranks the admin who created it.** If that admin is
+  demoted to readonly, their admin tokens act as readonly; if their account is
+  deleted, their tokens stop working. Removing someone's access therefore also
+  removes it from any token they kept a copy of. For a long-lived integration,
+  create its token from an account that will stay.
 - **Revoke** a token from the same list. It stops working on the next request.
   The list shows each token's role, last use (updated at most once a minute) and
   expiry, never its value.

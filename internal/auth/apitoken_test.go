@@ -42,8 +42,11 @@ func TestAPITokenWorksWithSSOOnly(t *testing.T) {
 		t.Fatal("precondition: SSO-only")
 	}
 
+	if _, err := st.CreateLocalUser("admin", "", "admin"); err != nil {
+		t.Fatal(err)
+	}
 	tok, _ := NewAPIToken()
-	if err := st.CreateAPIToken(store.APIToken{ID: "t1", Name: "ipam-sync", Role: "admin"}, HashAPIToken(tok)); err != nil {
+	if err := st.CreateAPIToken(store.APIToken{ID: "t1", Name: "ipam-sync", Role: "admin", CreatedBy: "admin"}, HashAPIToken(tok)); err != nil {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest("GET", "/api/rewrites", nil)

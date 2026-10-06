@@ -89,6 +89,19 @@ export interface EnrollKey {
   status: 'active' | 'expired' | 'exhausted' | 'revoked'
 }
 
+// APIToken is a bearer credential for integrations. The token value is only ever
+// returned once, at creation.
+export interface APIToken {
+  id: string
+  name: string
+  token_prefix: string
+  role: 'admin' | 'readonly'
+  created_by: string
+  created_at: number
+  last_used_at: number // 0 = never
+  expires_at: number // 0 = never
+}
+
 export interface Site {
   name: string
   description: string
@@ -504,6 +517,14 @@ export const api = {
       if (!r.ok) throw new Error('failed to clear token')
     }),
   settingsAudit: () => fetch('/api/settings/audit').then(j<AuditEntry[]>),
+  apiTokens: () => fetch('/api/tokens').then(j<APIToken[]>),
+  createAPIToken: (name: string, role: string, expires_at: number) =>
+    fetch('/api/tokens', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, role, expires_at }),
+    }).then(j<APIToken & { token: string }>),
+  deleteAPIToken: (id: string) => fetch(`/api/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(ok),
   // auth
   authInfo: () => fetch('/api/auth/info').then(j<AuthInfo>),
   me: async (): Promise<SessionUser | null> => {

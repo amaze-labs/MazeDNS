@@ -261,6 +261,18 @@ CREATE TABLE IF NOT EXISTS enroll_keys (
 	revoked INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_enroll_keys_hash ON enroll_keys(key_hash);
+CREATE TABLE IF NOT EXISTS api_tokens (
+	id TEXT PRIMARY KEY,                     -- uuid
+	name TEXT NOT NULL DEFAULT '',           -- what it is for, e.g. "ipam-sync"
+	token_hash TEXT NOT NULL,                -- sha256 of the token (the token itself is never stored)
+	token_prefix TEXT NOT NULL DEFAULT '',   -- first chars, for display
+	role TEXT NOT NULL,
+	created_by TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL DEFAULT 0,
+	last_used_at INTEGER NOT NULL DEFAULT 0, -- unix secs, 0 = never
+	expires_at INTEGER NOT NULL DEFAULT 0    -- unix secs, 0 = never
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
 CREATE TABLE IF NOT EXISTS settings (
 	id INTEGER PRIMARY KEY CHECK (id = 1),
 	data TEXT NOT NULL

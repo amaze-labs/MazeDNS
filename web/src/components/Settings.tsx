@@ -11,6 +11,7 @@ import {
   type VLExportSettings,
   type CPSettings,
 } from '../api'
+import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
 import { invalidateAllClientNames } from '../useClientNames'
 
@@ -585,6 +586,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </div>
         </>
       )}
+
+      {view === 'access' && cp && <ApiTokens />}
 
       {view === 'resolver' && (
         <>

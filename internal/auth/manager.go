@@ -16,11 +16,15 @@ const CookieName = "mazedns_session"
 // ErrInvalidCredentials is returned for a failed local login.
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
-// SessionUser is the authenticated principal for a request.
+// SessionUser is the authenticated principal for a request: a user's session
+// (Kind KindSession) or an API token (Kind KindToken, ID 0, Username
+// "token:<name>").
 type SessionUser struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	Kind     string `json:"kind"`
+	TokenID  string `json:"-"`
 }
 
 // Manager handles local login, server-side sessions, and optional OIDC. The OIDC
@@ -31,6 +35,9 @@ type Manager struct {
 	mu    sync.RWMutex
 	oidc  *OIDCProvider // nil if OIDC is not configured
 	ttl   time.Duration
+	// tokenTouched maps an API token id to the last last_used_at written (unix
+	// secs), so its use is recorded at most once per apiTokenTouchEvery.
+	tokenTouched sync.Map
 }
 
 // NewManager builds a Manager. oidc may be nil.
@@ -105,11 +112,17 @@ func (m *Manager) StartSession(id int64, username, role string) (string, *Sessio
 	if err := m.store.CreateSession(token, id, username, role, exp); err != nil {
 		return "", nil, err
 	}
-	return token, &SessionUser{ID: id, Username: username, Role: role}, nil
+	return token, &SessionUser{ID: id, Username: username, Role: role, Kind: KindSession}, nil
 }
 
-// UserFromRequest returns the authenticated user for r, if the session is valid.
+// UserFromRequest returns the authenticated principal for r. A request with an
+// "Authorization: Bearer" header is judged on that header alone — a valid API
+// token or nothing, never falling back to a cookie sent alongside. Otherwise the
+// session cookie is checked.
 func (m *Manager) UserFromRequest(r *http.Request) (*SessionUser, bool) {
+	if tok, ok := bearerToken(r); ok {
+		return m.userFromAPIToken(tok)
+	}
 	ck, err := r.Cookie(CookieName)
 	if err != nil {
 		return nil, false
@@ -118,7 +131,7 @@ func (m *Manager) UserFromRequest(r *http.Request) (*SessionUser, bool) {
 	if err != nil || sess == nil {
 		return nil, false
 	}
-	return &SessionUser{ID: sess.UserID, Username: sess.Username, Role: sess.Role}, true
+	return &SessionUser{ID: sess.UserID, Username: sess.Username, Role: sess.Role, Kind: KindSession}, true
 }
 
 // Logout deletes the session referenced by the request's cookie.

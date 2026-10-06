@@ -1,8 +1,8 @@
 // Command dns-agent runs a MazeDNS resolver node (the data plane): it serves DNS
 // (UDP/TCP, optionally DoT/DoH), replicates its filtering config from the control
-// plane, ships its query log and stats back, and exposes only /healthz + /metrics
-// over HTTP. It carries no dashboard, auth, or classifier, so nothing competes
-// with the resolver hot path.
+// plane, ships its query log and stats back, and exposes only /healthz, /readyz
+// and /metrics over HTTP. It carries no dashboard, auth, or classifier, so nothing
+// competes with the resolver hot path.
 package main
 
 import (
@@ -48,6 +48,7 @@ const cpIPMeta = "cp_ip"
 
 func main() {
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
+	healthcheck := flag.Bool("healthcheck", false, "query this node's /readyz and exit 0 (ready) or 1 (not ready); for container health checks")
 	flag.Parse()
 
 	boot.TuneGC()
@@ -56,6 +57,9 @@ func main() {
 	if err != nil {
 		slog.Error("config", "err", err)
 		os.Exit(1)
+	}
+	if *healthcheck {
+		os.Exit(runHealthcheck(cfg, os.Stdout))
 	}
 	// Keep recent log lines in memory; the cluster agent ships them to the
 	// control plane so the dashboard's Logs page can show this node.
@@ -124,7 +128,12 @@ func main() {
 	// order) the locally-persisted key, self-enrollment with the join token, or an
 	// explicitly-supplied key.
 	agentCtx, agentCancel := context.WithCancel(context.Background())
-	startAgent(agentCtx, st, cfg, res, reload, procRing, liveTap)
+	var syncHealth *cluster.SyncHealth // nil = standalone
+	if cfg.Cluster.ControlPlaneURL() != "" {
+		syncHealth = &cluster.SyncHealth{}
+	}
+	startAgent(agentCtx, st, cfg, res, reload, procRing, liveTap, syncHealth)
+	registerHealthMetrics(mx, res, syncHealth)
 
 	// Bound local query-log growth: the agent only needs a short buffer before
 	// shipping to the control plane.
@@ -187,14 +196,15 @@ func main() {
 		}
 	}
 
-	// Minimal HTTP surface: liveness + Prometheus metrics only (no API/UI). Bind
+	// Minimal HTTP surface: liveness, readiness + Prometheus metrics only (no API/UI). Bind
 	// follows cfg.API.Address, whose default is loopback (secure by default): the
 	// endpoint is unauthenticated, so exposing it on the network is an explicit
 	// operator choice via MAZEDNS_API_ADDRESS (set to 0.0.0.0 in the compose files,
 	// or to the overlay IP on a bare host).
-	httpSrv := healthServer(net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port)), mx)
+	ready := &readiness{res: res, srv: dnsSrv, sync: syncHealth}
+	httpSrv := healthServer(net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port)), mx, ready)
 	go func() {
-		slog.Info("MazeDNS agent HTTP starting (healthz + metrics)", "addr", httpSrv.Addr)
+		slog.Info("MazeDNS agent HTTP starting (healthz + readyz + metrics)", "addr", httpSrv.Addr)
 		if e := httpSrv.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 			slog.Error("http server stopped", "err", e)
 		}
@@ -219,7 +229,7 @@ func main() {
 
 // startAgent resolves this node's API key and launches the replication agent. It
 // no-ops (serving standalone DNS) when no control plane is configured.
-func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer, liveTap *cluster.LiveTap) {
+func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer, liveTap *cluster.LiveTap, syncHealth *cluster.SyncHealth) {
 	cpURL := cfg.Cluster.ControlPlaneURL()
 	if cpURL == "" {
 		slog.Info("standalone mode: no control plane configured (set MAZEDNS_CP_URL)")
@@ -311,6 +321,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		// Ship recent process-log lines to the control plane's Logs page.
 		ag.SetProcessLogs(procRing)
 		ag.SetLiveTap(liveTap)
+		ag.SetSyncHealth(syncHealth)
 		// Re-merge local + centrally pushed settings after every applied snapshot
 		// (central forwarders win per suffix).
 		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
@@ -411,15 +422,36 @@ func hintUnresolvableCP(err error, pinnedIP string) {
 	}
 }
 
-// healthServer builds the agent's minimal HTTP server: liveness + metrics only.
-func healthServer(addr string, mx *metrics.Metrics) *http.Server {
+// healthServer builds the agent's minimal HTTP server: liveness, readiness and
+// metrics only. /healthz is liveness — the process is up and serving HTTP — and
+// says nothing about DNS; /readyz is DNS readiness (see readiness).
+func healthServer(addr string, mx *metrics.Metrics, ready http.Handler) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+	mux.Handle("GET /readyz", ready)
 	mux.Handle("GET /metrics", mx.Handler())
 	return &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+}
+
+// registerHealthMetrics exports what the resolver and the control-plane sync last
+// did, so an outage and its recovery show on dashboards without probing /readyz.
+func registerHealthMetrics(mx *metrics.Metrics, res *resolver.Resolver, sync *cluster.SyncHealth) {
+	mx.RegisterTimestamp("last_query_timestamp_seconds", "When this node last answered a DNS query.",
+		func() time.Time { return res.Health().LastQuery })
+	mx.RegisterTimestamp("last_forward_success_timestamp_seconds", "When an upstream forward last succeeded.",
+		func() time.Time { return res.Health().LastForwardOK })
+	mx.RegisterTimestamp("last_forward_error_timestamp_seconds", "When an upstream forward last failed.",
+		func() time.Time { return res.Health().LastForwardError })
+	if sync == nil {
+		return
+	}
+	mx.RegisterTimestamp("cluster_last_sync_success_timestamp_seconds", "When this node last reached the control plane for its config.",
+		func() time.Time { return sync.Status().LastOK })
+	mx.RegisterTimestamp("cluster_last_sync_error_timestamp_seconds", "When this node last failed to reach the control plane for its config.",
+		func() time.Time { return sync.Status().LastError })
 }
 
 // startMetricsExport runs the VictoriaMetrics pusher for this node.

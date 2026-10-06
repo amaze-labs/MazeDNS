@@ -3,6 +3,7 @@ package metrics
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -78,6 +79,22 @@ func (m *Metrics) RegisterQueryLogDropped(fn func() float64) {
 		Name:      "querylog_dropped_total",
 		Help:      "Query-log entries dropped because the async writer buffer was full.",
 	}, fn))
+}
+
+// RegisterTimestamp registers a gauge mazedns_<name> reporting fn's time as unix
+// seconds (0 = never). fn is polled on each scrape.
+func (m *Metrics) RegisterTimestamp(name, help string, fn func() time.Time) {
+	m.reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace: "mazedns",
+		Name:      name,
+		Help:      help,
+	}, func() float64 {
+		t := fn()
+		if t.IsZero() {
+			return 0
+		}
+		return float64(t.UnixMilli()) / 1000
+	}))
 }
 
 // Handler returns the Prometheus metrics HTTP handler.

@@ -14,7 +14,7 @@ var threatFeeds = []ThreatFeed{
 	{"urlhaus", "abuse.ch URLhaus", "Domains hosting active malware", DefaultThreatURL},
 	{"threatfox", "abuse.ch ThreatFox", "Malware IOCs (C2 / payload domains)", "https://threatfox.abuse.ch/downloads/hostfile/"},
 	{"phishing_army", "Phishing Army", "Phishing domains (extended blocklist)", "https://phishing.army/download/phishing_army_blocklist_extended.txt"},
-	{"hagezi_tif", "HaGeZi TIF", "Aggregated malware/phishing/scam threat-intel feed", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/tif.txt"},
+	{"hagezi_tif", "HaGeZi TIF", "Aggregated malware/phishing/scam threat-intel feed", "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt"},
 	{"openphish", "OpenPhish", "Community phishing feed", "https://openphish.com/feed.txt"},
 }
 

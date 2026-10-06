@@ -116,7 +116,7 @@ func LoadTrusted(source string, topN int) (*TrustedSet, error) {
 		}
 		if resp.StatusCode != http.StatusOK {
 			resp.Body.Close()
-			return nil, fmt.Errorf("trusted list: status %d", resp.StatusCode)
+			return nil, fmt.Errorf("download %s: HTTP %d", source, resp.StatusCode)
 		}
 		r = resp.Body
 	} else {

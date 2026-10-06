@@ -37,7 +37,7 @@ control-plane reset-admin --username admin [--password …]
 - **Sessions are stored hashed.** On upgrade, existing sessions no longer resolve —
   everyone is logged out once and must sign in again. Expected, one-time.
 - **Login is rate-limited** per source IP and per username (default 10 attempts /
-  60s; `0` disables). Tune under **Settings → Access & SSO**; applied live.
+  60s; `0` disables). Tune under **Settings → Access & sign-in**; applied live.
 - **Password policy:** at least 10 characters mixing letters with digits or symbols,
   enforced on every password path (setup, user create/reset, self-change,
   `reset-admin`).
@@ -74,7 +74,7 @@ The variable that applies to a component depends on which image it is:
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`/`info`/`warn`/`error`. |
 
 Clustering has no enable flag: the control plane **always** serves the cluster
-endpoints. To let agents join, create an **enrollment key** in the UI (Cluster →
+endpoints. To let agents join, create an **enrollment key** in the UI (Agents →
 Enrollment keys) or via the admin API and pass it to each agent as
 `MAZEDNS_JOIN_TOKEN`. The removed `MAZEDNS_CLUSTER_ENABLED` and
 `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` env vars are ignored (a startup warning is logged
@@ -85,7 +85,7 @@ approval flow, and the server-assigned-UUID identity model.
 To **pause replication** for a node (previously `cp_url` + `enabled: false`), either
 unset `MAZEDNS_CP_URL`/`cp_url` so the agent runs standalone, or — to keep it
 enrolled — put the node into **maintenance/drain** from the control-plane UI
-(Cluster → the node), which stops it serving without de-enrolling it.
+(Agents → the node), which stops it serving without de-enrolling it.
 
 **Runtime** (seed-only — configured in the UI after first boot). The variables below
 still work, but **only to seed the database on first boot**; afterwards they are
@@ -98,7 +98,7 @@ ignored and the values are edited under **Settings** (or the setup wizard):
 | `MAZEDNS_KEY_MAX_AGE` / `MAZEDNS_KEY_GRACE` | Settings → Access → Cluster policy | Per-node key rotation policy. |
 | `MAZEDNS_ADVERTISE_ADDR` | Settings → Access → Cluster policy | Address handed to agents at enrollment. |
 | `MAZEDNS_CLASSIFIER_*` | Settings → AI classification | Endpoint/model/mode/API key. |
-| `MAZEDNS_OIDC_*` | Settings → Access & SSO | Issuer, client ID/secret, redirect URL, groups, flags. |
+| `MAZEDNS_OIDC_*` | Settings → Access & sign-in | Issuer, client ID/secret, redirect URL, groups, flags. |
 
 Runtime **secrets** (OIDC client secret, metrics passwords, classifier API keys)
 are stored in the database and are **write-only over the API**: the UI shows them
@@ -124,7 +124,7 @@ never the secret values), viewable at `GET /api/settings/audit`.
 |---|---|---|---|
 | `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | Bind address of the HTTP server. Control plane: UI + API + `/metrics` (optionally token-gated — see [Scraping /metrics](#scraping-metrics-prometheus)) + `/healthz`. Agent: `/healthz` + `/metrics` only (unauthenticated). Set to `0.0.0.0` so a mapped port is reachable; for an agent, prefer the node's private/overlay IP. |
 | `MAZEDNS_API_PORT` | No | `8080` | Port of the HTTP server (YAML: `api.port`). Move it when two components share a host — the prod compose sets `9090` on the agent so the control plane keeps `:8080` under host networking. |
-| `MAZEDNS_JOIN_TOKEN` | For clustering | *(empty)* | The **enrollment key** an agent presents to self-enroll and receive a per-node key. Create/list/revoke enrollment keys in the UI (Cluster → Enrollment keys) with optional expiry and max-uses. On the **control plane** this variable is *deprecated*: if set it is auto-imported once as a never-expiring enrollment key so existing agents keep working — prefer managing keys in the UI. Enrollment keys only work at `/api/cluster/enroll`, never for serving DNS or shipping logs. |
+| `MAZEDNS_JOIN_TOKEN` | For clustering | *(empty)* | The **enrollment key** an agent presents to self-enroll and receive a per-node key. Create/list/revoke enrollment keys in the UI (Agents → Enrollment keys) with optional expiry and max-uses. On the **control plane** this variable is *deprecated*: if set it is auto-imported once as a never-expiring enrollment key so existing agents keep working — prefer managing keys in the UI. Enrollment keys only work at `/api/cluster/enroll`, never for serving DNS or shipping logs. |
 | `MAZEDNS_KEY_MAX_AGE` | No | `720h` (30d) | Control plane: rotate a node's per-node key once it exceeds this age. The new key is handed to the agent on its next poll; the old key stays valid for `MAZEDNS_KEY_GRACE`. |
 | `MAZEDNS_KEY_GRACE` | No | `15m` | Control plane: how long a rotated-out node key stays valid — the zero-downtime overlap window. |
 | `MAZEDNS_ADVERTISE_ADDR` | No | *(auto)* | Site-reachable address a node advertises. On the control plane it's the CP address handed to agents (which pin it); on an agent it's the DNS address reported to the CP for display and generated client config. Set it when the auto-detected address (e.g. a docker-internal IP) would be wrong. |
@@ -177,7 +177,7 @@ by the database and edited under **Settings** (secrets are write-only):
 
 | Section / setting | UI location |
 |---|---|
-| `auth.session_ttl`, login rate limit (attempts/window, default 10/60s), `auth.oidc.*` | Settings → Access & SSO |
+| `auth.session_ttl`, login rate limit (attempts/window, default 10/60s), `auth.oidc.*` | Settings → Access & sign-in |
 | Metrics scrape token for `/metrics` (generate/clear) | Settings → Integrations |
 | `cluster.require_approval`, `key_max_age` (`720h`), `key_grace` (`15m`), `advertise_addr`; `join_token` (deprecated → auto-imported as an enrollment key) | Settings → Access → Cluster policy |
 | `classifier.*` | Settings → AI classification |

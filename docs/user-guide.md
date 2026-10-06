@@ -27,7 +27,7 @@ cards; the choice is remembered in your browser.
 Use the **Requests** tab to inspect individual queries — filter by node, client, or
 action, and sort by processing time (`ms`) to find slow lookups.
 
-Switch the Requests tab to **Live** to watch queries as the agents answer them
+Switch the Queries page to **Live** to watch queries as the agents answer them
 (within about a second), newest first — e.g. while debugging a client or checking
 that a new block rule takes effect. Filter by node or site, client (IP or resolved
 name), domain, type, action, classification, and rcode; blocked and rewritten
@@ -179,16 +179,16 @@ authenticated snapshot and applies them live. The control plane never answers DN
 so its dashboard/classifier load can't affect resolver latency.
 
 - **Enrollment** — agents self-register with an **enrollment key** (created under
-  Cluster → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
+  Agents → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
   **Cluster** tab automatically, no key to copy. Toggle **require approval**
   (setup wizard, or Settings → Access → Cluster policy) to hold new agents until you
   approve them there — `MAZEDNS_REQUIRE_APPROVAL` only seeds this on first boot.
 - **Per-node keys** — issued automatically when an agent enrolls with a key, and
-  rotated by the control plane. You can also issue one manually in the Cluster tab
+  rotated by the control plane. You can also issue one manually on the Agents page
   (used via `MAZEDNS_NODE_KEY`). An agent whose key was *rotated* re-attaches to the
   same node by itself; a *revoked* node is refused at re-enrollment until you
   un-revoke it (see [install.md](install.md#removing-an-agent-revoke-vs-remove-only)).
-- **Node health** — the Cluster tab shows each node's address, status, and counters.
+- **Node health** — the Agents page shows each node's address, status, and counters.
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
 - **Removing agents** — *Remove & revoke* tombstones the node so the still-running

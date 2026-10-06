@@ -473,5 +473,5 @@ func importDeprecatedJoinToken(st *store.Store, token string) {
 		return
 	}
 	slog.Warn("cluster.join_token / MAZEDNS_JOIN_TOKEN is deprecated: imported as a never-expiring enrollment key " +
-		"(manage and revoke it under Cluster → Enrollment keys in the UI)")
+		"(manage and revoke it under Agents → Enrollment keys in the UI)")
 }

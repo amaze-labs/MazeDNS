@@ -68,7 +68,7 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_CP_URL: "http://${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}:8080"
       MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}"
-      # Enrollment key created in the setup wizard / Cluster → Enrollment keys.
+      # Enrollment key created in the setup wizard / Agents → Enrollment keys.
       MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN}"
       MAZEDNS_NODE_NAME: "agent-1"
     volumes:

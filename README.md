@@ -25,7 +25,7 @@ MazeDNS is two containers:
 | Image | Serves | Run |
 |-------|--------|-----|
 | `ghcr.io/amaze-labs/mazedns-control-plane` | web UI + API + `/metrics` (**no DNS**) | **one**, on the host you manage |
-| `ghcr.io/amaze-labs/mazedns-agent` | DNS (UDP/TCP, opt. DoT/DoH) + `/healthz` + `/metrics` | **one or more**, wherever you serve DNS |
+| `ghcr.io/amaze-labs/mazedns-agent` | DNS (UDP/TCP, opt. DoT/DoH) + `/healthz` + `/readyz` + `/metrics` | **one or more**, wherever you serve DNS |
 
 Clients point at the **agents**. Agents keep resolving from their local copy even
 if the control plane is briefly down. This split keeps dashboard load off the
@@ -79,7 +79,7 @@ Start at the **[documentation index](docs/README.md)**.
 
 - Never expose the control-plane UI/API to the internet — keep it on a management
   network or VPN, behind a TLS reverse proxy.
-- The agent's `/metrics` + `/healthz` endpoint is unauthenticated — bind it to a
+- The agent's `/metrics` + `/healthz` + `/readyz` endpoint is unauthenticated — bind it to a
   private address (it defaults to loopback).
 - **The resolver has no client ACL** — anything that can reach an agent's `:53`
   gets answers. Keep agents on a private network or firewall the port; never

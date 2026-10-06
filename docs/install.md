@@ -250,8 +250,11 @@ docker run -d --name mazedns-agent \
 > history, site, and role included — instead of duplicating it. Only two *live*
 > agents claiming the same name still produce a de-duplicated `-2` entry.
 
-`MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/metrics` port reachable
-from outside the container (it defaults to loopback). The control plane's `/metrics`
+`MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/readyz` + `/metrics`
+port reachable from outside the container (it defaults to loopback). The agent
+image has a built-in Docker health check against `/readyz` (DNS readiness over UDP
+and TCP); see [troubleshooting.md](troubleshooting.md#health-checks-and-watchdogs)
+for what it does and doesn't do. The control plane's `/metrics`
 can be locked behind a bearer token (**Settings → Integrations → Metrics scrape
 token**); see [configuration.md](configuration.md#scraping-metrics-prometheus) for
 the Prometheus scrape job.
@@ -363,7 +366,10 @@ spec:
             - { name: dns-tcp, containerPort: 53, protocol: TCP }
             - { name: http,    containerPort: 8080 }
           livenessProbe:  { httpGet: { path: /healthz, port: 8080 } }
-          readinessProbe: { httpGet: { path: /healthz, port: 8080 } }
+          # /readyz probes the DNS listener over UDP + TCP (not the WAN or the
+          # control plane), so a node is pulled from the Service only when it
+          # really can't answer.
+          readinessProbe: { httpGet: { path: /readyz, port: 8080 } }
           volumeMounts: [{ name: data, mountPath: /data }]
       # emptyDir loses the node's identity when the pod is recreated, so the agent
       # re-enrolls as a NEW node (a duplicate, -2-suffixed entry). Fine only with an

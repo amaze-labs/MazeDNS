@@ -13,6 +13,7 @@ compose names them `mazedns-agent` and `mazedns-control-plane`).
 - [conntrack table exhaustion](#conntrack-table-exhaustion)
 - [DNSSEC is slow or some sites break](#dnssec-is-slow-or-some-sites-break)
 - [Is it the resolver, or the path to it?](#is-it-the-resolver-or-the-path-to-it)
+- [DNS seems broken during or after a WAN outage](#dns-seems-broken-during-or-after-a-wan-outage)
 
 ---
 
@@ -76,6 +77,9 @@ dig @<agent-host> doubleclick.net        # should be blocked
   A brand-new deployment ships no default blocklist.
 - **`SERVFAIL`** → the node may be in maintenance/drain, or all upstreams are failing.
   Check **Settings → Upstream resolvers** and the agent logs for `forward failed`.
+  `dig @<agent-host> probe.mazedns.internal` tells the two apart: the agent answers
+  that name itself (`127.0.0.1`), so it resolves whenever the listener works, even
+  with every upstream down.
 
 ## The dashboard shows only one client
 
@@ -197,3 +201,67 @@ MazeDNS records per-query processing time. Compare it against what clients feel:
 
 If MazeDNS's `ms` is **low** but the client's query time is **high**, the problem is
 the **path** (UDP buffers / conntrack / NAT) covered above — not the resolver.
+
+## DNS seems broken during or after a WAN outage
+
+When the internet (or the VPN to the control plane) drops, an agent is built to:
+
+- keep answering **local records** (rewrites, zones) and blocking from its own
+  database, with no WAN and no control plane;
+- serve recently cached public names **stale** for up to 30 s past their TTL;
+- fail other **public** names with `SERVFAIL` within the upstream timeout, and log
+  `forward failed` for each. That is expected while the WAN is down;
+- resume forwarding and config sync **by itself** once connectivity returns.
+
+A restart should never be needed. Before restarting, find out which case you are in:
+
+```bash
+# 1. Does the resolver answer? (built in, needs no upstream; try UDP and TCP)
+dig @<agent-host> probe.mazedns.internal
+dig @<agent-host> probe.mazedns.internal +tcp
+# 2. Do local records answer?
+dig @<agent-host> <a-local-rewrite>
+# 3. Can the agent's host reach the upstreams at all?
+dig @1.1.1.1 example.com
+# 4. What does the agent itself report?
+curl -s http://<agent-http-addr>/readyz
+```
+
+`/readyz` returns 200 when the agent answers the probe over UDP **and** TCP and is
+not in maintenance, 503 otherwise. Its JSON body also reports when a query was last
+answered, when forwarding last succeeded and failed (with the error), and when the
+control plane was last reached. WAN and control-plane state are informational:
+they never make `/readyz` fail, because a node cut off from both still serves its
+local records. The same timestamps are exported on `/metrics` as
+`mazedns_last_query_timestamp_seconds`, `mazedns_last_forward_success_timestamp_seconds`,
+`mazedns_last_forward_error_timestamp_seconds` and
+`mazedns_cluster_last_sync_{success,error}_timestamp_seconds`.
+
+- **Probe fails** → the listener itself is not answering. This is the case worth a
+  restart. Capture `docker logs`, `/readyz` and the output above first, and open
+  an issue.
+- **Probe and local records answer, public names `SERVFAIL`** → the WAN or the
+  upstreams are down. Restarting will not help; it comes back on its own.
+- **Everything answers from `dig`, but clients still fail** → look at which DNS
+  server the clients actually use. A common trap is **split DNS**: the router
+  hands out a second resolver (often itself) that answers your local names with
+  their *public* IPs, or not at all. Clients that fail over to it during an
+  outage stop reaching local services. Give clients only MazeDNS agents as
+  resolvers, or make the router forward your local domains to them.
+
+### Health checks and watchdogs
+
+`/healthz` is **liveness** only: the process is up and serving HTTP. It does not
+check DNS. Use `/readyz` for DNS readiness.
+
+The agent image has a built-in Docker `HEALTHCHECK` (`dns-agent -healthcheck`,
+which calls `/readyz`), so `docker ps` shows `healthy` / `unhealthy`. Docker
+**does not restart** an unhealthy container by itself, and `restart: unless-stopped`
+only covers a process that exits. If you want automatic restarts, use an external
+watchdog (for example an autoheal container, or Kubernetes' `livenessProbe`), and
+have it:
+
+- probe `probe.mazedns.internal` (or `/readyz`), **never a public name**. A public
+  lookup failing during a WAN outage is expected, and restarting won't fix it;
+- require several consecutive failures (e.g. 3 × 30 s) before acting;
+- wait (e.g. 10 minutes) after a restart before restarting again.

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { api, type Settings, type OIDCSettings } from '../api'
-import { Icon } from './icons'
 import { passwordPolicyError } from '../passwordPolicy'
 import { PasswordMeter } from './Account'
 import '../styles/auth.css'
@@ -314,7 +313,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
       <aside className="setup-side">
         <div className="setup-brand">
           <span className="brand-logo">
-            <Icon name="brand" size={22} strokeWidth={2} />
+            <img src="/favicon.svg" alt="" width={22} height={22} />
           </span>
           MazeDNS setup
         </div>

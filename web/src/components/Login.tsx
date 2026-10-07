@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api } from '../api'
-import { Icon } from './icons'
 import '../styles/auth.css'
 
 // Set just before logout so auto-login doesn't immediately bounce the user back
@@ -93,7 +92,7 @@ export default function Login({
         <MazeArt />
         <div className="art-brand">
           <span className="brand-logo">
-            <Icon name="brand" size={24} strokeWidth={2} />
+            <img src="/favicon.svg" alt="" width={24} height={24} />
           </span>
           MazeDNS
         </div>

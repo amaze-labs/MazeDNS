@@ -152,7 +152,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="side-brand">
           <span className="brand-logo">
-            <Icon name="brand" size={22} strokeWidth={2} />
+            <img src="/favicon.svg" alt="" width={22} height={22} />
           </span>
           <span className="brand-name">MazeDNS</span>
         </div>

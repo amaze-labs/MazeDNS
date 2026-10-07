@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="MazeDNS">
+  <rect width="32" height="32" rx="7" fill="#0c1118"/>
+  <g transform="translate(4 4) scale(0.923)" fill="none" stroke="#2bb5a0" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.5" y="2.5" width="21" height="21" rx="6"/>
+    <path d="M2.5 9.5h8.5v5 M17 2.5v6 M23.5 16H16v7.5"/>
+  </g>
+</svg>

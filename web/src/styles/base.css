@@ -232,7 +232,6 @@ td,
   white-space: nowrap;
 }
 .brand-logo {
-  color: var(--accent);
   display: inline-flex;
 }
 .side-nav {

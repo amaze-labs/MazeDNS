@@ -13,7 +13,6 @@ type IconName =
   | 'logs'
   | 'settings'
   | 'account'
-  | 'brand'
   | 'chevrons-left'
   | 'chevrons-right'
   | 'sun'
@@ -73,13 +72,6 @@ const PATHS: Record<IconName, JSX.Element> = {
     <>
       <circle cx="12" cy="8" r="4" />
       <path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6" />
-    </>
-  ),
-  // maze mark / brand: a square with one path through it
-  brand: (
-    <>
-      <path d="M4 4h16v16H4z" opacity=".35" />
-      <path d="M4 9h7v6M15 4v7h5M9 20v-5h6v-4" />
     </>
   ),
   'chevrons-left': <path d="M11 7l-5 5 5 5M18 7l-5 5 5 5" />,

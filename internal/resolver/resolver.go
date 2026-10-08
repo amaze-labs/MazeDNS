@@ -180,6 +180,9 @@ type Resolver struct {
 	// serves no DNS: every query is answered REFUSED. Distinct from maintenance — it
 	// is a deliberate role, not a temporary drain.
 	controlPlaneOnly atomic.Bool
+	// health records when queries were last answered and forwards last
+	// succeeded/failed (see Health).
+	health healthState
 }
 
 // SetMaintenance toggles maintenance (drain) mode for this node. While on, every
@@ -358,6 +361,13 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()
 	client := clientIP(w.RemoteAddr())
 
+	// The readiness probe is answered before anything else, so it reflects only
+	// whether this listener answers — never upstream, policy or maintenance state.
+	if isProbe(req) {
+		_ = w.WriteMsg(probeResponse(req))
+		return
+	}
+
 	// Control-plane-only (master): this node serves no DNS by design, so answer
 	// REFUSED — a clear "not a resolver" signal that makes clients use another server.
 	if r.ControlPlaneOnly() {
@@ -500,11 +510,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	// Coalesce concurrent misses for the same question into one upstream exchange;
 	// the shared result is cached once and copied per caller below.
 	resp, rtt, err := r.sf.Do(forwardKey(q, wantSigned), func() (*dns.Msg, time.Duration, error) {
-		m, rtt, err := r.forward(rt, req, upstreamsFor(rt, name))
-		if err == nil && m != nil && rt.cache != nil {
-			rt.cache.Set(q, wantSigned, m)
-		}
-		return m, rtt, err
+		return r.forwardAndCache(rt, req, q, name, wantSigned)
 	})
 	if err != nil || resp == nil {
 		r.stats.Errors.Add(1)
@@ -529,6 +535,7 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 		return
 	}
 	q := req.Question[0]
+	touch(&r.health.lastQuery, start)
 	rcode := dns.RcodeToString[resp.Rcode]
 	if r.metrics != nil {
 		r.metrics.IncQuery(action)
@@ -570,13 +577,24 @@ func (r *Resolver) refreshStale(rt *runtime, req *dns.Msg, q dns.Question, name 
 	go func() {
 		defer r.refreshing.Delete(key)
 		r.sf.Do(key, func() (*dns.Msg, time.Duration, error) {
-			m, rtt, err := r.forward(rt, rc, upstreamsFor(rt, name))
-			if err == nil && m != nil && rt.cache != nil {
-				rt.cache.Set(q, wantSigned, m)
-			}
-			return m, rtt, err
+			return r.forwardAndCache(rt, rc, q, name, wantSigned)
 		})
 	}()
+}
+
+// forwardAndCache runs one upstream exchange for a single-flight leader: it
+// caches a successful answer and records the outcome for Health.
+func (r *Resolver) forwardAndCache(rt *runtime, req *dns.Msg, q dns.Question, name string, wantSigned bool) (*dns.Msg, time.Duration, error) {
+	m, rtt, err := r.forward(rt, req, upstreamsFor(rt, name))
+	if err != nil || m == nil {
+		r.health.forwardFailed(err)
+		return m, rtt, err
+	}
+	touch(&r.health.lastFwdOK, time.Now())
+	if rt.cache != nil {
+		rt.cache.Set(q, wantSigned, m)
+	}
+	return m, rtt, err
 }
 
 // conditionalFor returns the most specific conditional forwarder matching name

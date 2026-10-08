@@ -8,6 +8,7 @@ import (
 	stdruntime "runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/miekg/dns"
 )
@@ -65,7 +66,16 @@ type Server struct {
 	addr string
 	udp  []*dns.Server
 	tcp  *dns.Server
+	// udpUp/tcpUp report whether the listeners are bound (see Listening).
+	udpUp atomic.Bool
+	tcpUp atomic.Bool
 }
+
+// Addr returns the address the server listens on.
+func (s *Server) Addr() string { return s.addr }
+
+// Listening reports whether the UDP and TCP listeners are bound and serving.
+func (s *Server) Listening() (udp, tcp bool) { return s.udpUp.Load(), s.tcpUp.Load() }
 
 // NewServer wires res as the handler for both UDP and TCP on addr.
 func NewServer(addr string, res *Resolver) *Server {
@@ -123,6 +133,7 @@ func (s *Server) ListenAndServe() error {
 		go func() { errc <- srv.ActivateAndServe() }()
 	}
 	s.udp = s.udp[:bound]
+	s.udpUp.Store(true)
 	slog.Info("listener up", "net", "udp", "addr", s.addr, "sockets", bound)
 
 	go func() {
@@ -132,6 +143,7 @@ func (s *Server) ListenAndServe() error {
 			return
 		}
 		s.tcp.Listener = l
+		s.tcpUp.Store(true)
 		slog.Info("listener up", "net", "tcp", "addr", s.addr)
 		errc <- s.tcp.ActivateAndServe()
 	}()
@@ -140,6 +152,8 @@ func (s *Server) ListenAndServe() error {
 
 // Shutdown gracefully stops every listener.
 func (s *Server) Shutdown(ctx context.Context) {
+	s.udpUp.Store(false)
+	s.tcpUp.Store(false)
 	for _, u := range s.udp {
 		_ = u.ShutdownContext(ctx)
 	}

@@ -220,7 +220,7 @@ setup wizard where you create the first admin (or configure SSO) — there are n
 server-side and revocable. Roles: **admin** (full) and **readonly** (GET only).
 
 Configure single sign-on in the setup wizard or later under **Settings → Access &
-SSO**: paste the issuer URL, client ID/secret, and the admin email or group. You can
+sign-in**: paste the issuer URL, client ID/secret, and the admin email or group. You can
 map a provider group to admin, force SSO-only login, or auto-redirect to the
 provider. The redirect URI must match your provider's registration exactly — the UI
 shows the exact value to register, and it's logged at startup so you can compare.
@@ -232,7 +232,7 @@ first boot and are ignored afterwards — see
 
 Integrations, such as an IPAM that pushes its hosts as rewrites, call the API with
 an **API token** instead of a user's password. Create one under **Settings →
-Access & SSO → API tokens**: give it a name that says what it is for, a role
+Access & sign-in → API tokens**: give it a name that says what it is for, a role
 (**readonly** or **admin**) and an optional expiry. The token (`mzd_…`) is shown
 **once**; only a hash is stored. Send it as a bearer header:
 

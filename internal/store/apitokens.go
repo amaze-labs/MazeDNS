@@ -18,9 +18,9 @@ type APIToken struct {
 	// account exists; matching on the id (never reused) rather than the
 	// username keeps a later account with the same name from reviving it.
 	CreatedByID int64 `json:"-"`
-	CreatedAt   int64  `json:"created_at"`
-	LastUsedAt  int64  `json:"last_used_at"` // 0 = never
-	ExpiresAt   int64  `json:"expires_at"`   // 0 = never
+	CreatedAt   int64 `json:"created_at"`
+	LastUsedAt  int64 `json:"last_used_at"` // 0 = never
+	ExpiresAt   int64 `json:"expires_at"`   // 0 = never
 }
 
 // ErrAPITokenNotFound is returned when deleting an unknown token.

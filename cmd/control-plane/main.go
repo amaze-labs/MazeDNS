@@ -87,14 +87,10 @@ func main() {
 
 	// Auth: DB-backed session TTL + optional OIDC (built from DB settings).
 	authMgr := auth.NewManager(st, nil, time.Duration(cpset.SessionTTLSec)*time.Second)
+	oidcLoad := newOIDCLoader(authMgr.SetOIDC)
 	if cfg.Auth.Enabled {
-		if cpset.OIDC.Enabled {
-			if p, oerr := buildOIDC(context.Background(), cpset.OIDC); oerr != nil {
-				slog.Error("oidc init failed; continuing without SSO", "err", oerr)
-			} else {
-				authMgr.SetOIDC(p)
-				slog.Info("oidc enabled", "issuer", cpset.OIDC.Issuer, "redirect_uri", cpset.OIDC.RedirectURL)
-			}
+		if cpset.OIDC.Enabled && oidcLoad.Start(context.Background(), cpset.OIDC) {
+			slog.Info("oidc enabled", "issuer", cpset.OIDC.Issuer, "redirect_uri", cpset.OIDC.RedirectURL)
 		}
 		slog.Info("auth enabled", "oidc", authMgr.OIDCEnabled())
 	}
@@ -197,17 +193,14 @@ func main() {
 	apiSrv.SetEnricher(enricher)
 	// SSO settings change live: rebuild and swap the OIDC provider without a restart.
 	apiSrv.SetRebuildOIDC(func(o store.OIDCSettings) error {
-		if !o.Enabled {
-			authMgr.SetOIDC(nil)
-			slog.Info("oidc disabled via settings")
-			return nil
-		}
-		p, err := buildOIDC(context.Background(), o)
-		if err != nil {
+		if err := oidcLoad.Apply(o); err != nil {
 			return err
 		}
-		authMgr.SetOIDC(p)
-		slog.Info("oidc reconfigured via settings", "issuer", o.Issuer)
+		if !o.Enabled {
+			slog.Info("oidc disabled via settings")
+		} else {
+			slog.Info("oidc reconfigured via settings", "issuer", o.Issuer)
+		}
 		return nil
 	})
 	// Enrollment secrets are UI-managed keys in the DB. A configured join_token is

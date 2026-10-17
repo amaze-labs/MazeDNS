@@ -422,10 +422,10 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		v = vv
 	}
 
-	// Score the domain: start at 100% legitimate and let every risk factor deduct.
+	// Score the domain: start at baseLegitimacy and let the evidence move it.
 	// A lone threat-feed hit is weighed as a possible misreport (see computeScore);
 	// corroboration across feeds, or a reputation flag, blocks decisively.
-	in := ScoreInput{Domain: domain, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v}
+	in := ScoreInput{Domain: domain, Platform: platform, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v}
 	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security

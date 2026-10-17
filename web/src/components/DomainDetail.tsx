@@ -135,7 +135,8 @@ export default function DomainDetail({
   const score = typeof c.score === 'number' ? c.score : 100
   const factors = c.factors || []
   const lowered = factors.filter((f) => f.delta < 0)
-  const other = factors.filter((f) => f.delta >= 0)
+  const raised = factors.filter((f) => f.delta > 0)
+  const other = factors.filter((f) => f.delta === 0)
   // A static-only verdict has no LLM behind it (model is "static analysis" / empty).
   const aiVerdict = !!c.model && c.model !== 'static analysis'
   const headline = c.trusted
@@ -218,7 +219,7 @@ export default function DomainDetail({
       <div>
         <h3>What lowered the score</h3>
         {lowered.length === 0 ? (
-          <p className="muted nomargin">Nothing — no risk factor fired. Every domain starts at 100.</p>
+          <p className="muted nomargin">Nothing — no risk factor fired.</p>
         ) : (
           <ul className="factors">
             {lowered.map((f, i) => (
@@ -230,6 +231,20 @@ export default function DomainDetail({
             ))}
           </ul>
         )}
+        {raised.length > 0 && (
+          <>
+            <h3 className="sub-h">What raised the score</h3>
+            <ul className="factors">
+              {raised.map((f, i) => (
+                <li key={i}>
+                  <span>{f.label}</span>
+                  <span className="pts up">+{f.delta}</span>
+                  {f.detail && <small>{f.detail}</small>}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {other.length > 0 && (
           <>
             <h3 className="sub-h">Other signals</h3>
@@ -237,7 +252,7 @@ export default function DomainDetail({
               {other.map((f, i) => (
                 <li key={i}>
                   <span>{f.label}</span>
-                  <span className={`pts${f.delta > 0 ? ' up' : ' none'}`}>{f.delta > 0 ? `+${f.delta}` : '—'}</span>
+                  <span className="pts none">—</span>
                   {f.detail && <small>{f.detail}</small>}
                 </li>
               ))}

@@ -4,19 +4,22 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 // This file implements the legitimacy scoring system. Rather than trusting the
 // model's confidence as the verdict (a small local model hallucinates "phishing
-// @ 100%" against clear evidence), every domain STARTS fully legitimate (100)
-// and each risk factor — the way a SOC analyst would weigh them — deducts from
-// that score. The model's own read is just ONE bounded factor among the static
-// signals, so it can no longer single-handedly sink a legitimate domain.
+// @ 100%" against clear evidence), every domain starts at baseLegitimacy — an
+// unknown domain is probably fine, but nothing vouches for it yet — and the
+// evidence moves it both ways, the way a SOC analyst would weigh it: risk
+// factors deduct, trust factors (an old registration, a clean reputation,
+// registry locks, a named owner) add. The model's own read is just ONE bounded
+// factor among the static signals, so it can't single-handedly sink a
+// legitimate domain.
 
 // Factor is one contribution to a domain's legitimacy score. Delta is added to
-// the running score: negative raises suspicion, zero is neutral/informational.
-// The ordered list of factors is exactly what the UI shows as "what dropped the
-// score".
+// the running score: negative raises suspicion, positive is trust evidence, zero
+// is informational. The ordered list of factors is exactly what the UI shows.
 type Factor struct {
 	Label  string `json:"label"`
 	Detail string `json:"detail"`
@@ -31,6 +34,9 @@ type Score struct {
 }
 
 const (
+	baseLegitimacy   = 85  // where every (non-trusted) domain starts before the evidence
+	trustCap         = 40  // positive evidence offsets soft risk signals...
+	strongTrustCap   = 10  // ...but can't argue away a corroborated threat
 	blockThreshold   = 50  // legitimacy below this -> block (if there's a threat indicator)
 	autoThreshold    = 35  // ...and below this, confident enough to auto-block
 	establishedFloor = 55  // a non-threat established domain can't be pushed below this by soft signals
@@ -43,6 +49,7 @@ const (
 // back in here as one more (bounded) factor.
 type ScoreInput struct {
 	Domain      string
+	Platform    string     // shared hosting platform suffix (workers.dev, github.io, …), if any
 	ListTrusted bool       // on the popular/trusted-domains allowlist
 	CDN         bool       // a CDN / cloud-edge provider (whole provider is trusted)
 	NSTrustedOn string     // registered domain of trusted authoritative nameservers, if any
@@ -103,13 +110,30 @@ func computeScore(in ScoreInput) Score {
 		return Score{Legitimacy: 100, Factors: []Factor{{Label: "Trusted", Detail: detail, Delta: 0}}}
 	}
 
-	legit := 100
+	legit := baseLegitimacy
 	var fs []Factor
 	add := func(label, detail string, delta int) {
 		fs = append(fs, Factor{Label: label, Detail: detail, Delta: delta})
 		legit += delta
 	}
 	note := func(label, detail string) { fs = append(fs, Factor{Label: label, Detail: detail, Delta: 0}) }
+	trust := 0 // total positive evidence, capped below
+	vouch := func(label, detail string, delta int) {
+		add(label, detail, delta)
+		trust += delta
+	}
+	// Registration data from port-43 WHOIS travels over plain TCP, so an on-path
+	// attacker could forge it: it may lower the score, never raise it.
+	plainWhois := in.Whois.Source == "whois"
+	vouchWhois := func(label, detail string, delta int) {
+		if plainWhois {
+			note(label, detail+" (plain-text WHOIS — not counted as trust)")
+			return
+		}
+		vouch(label, detail, delta)
+	}
+
+	note("Starting point", fmt.Sprintf("every domain starts at %d — the evidence below moves it up or down", baseLegitimacy))
 
 	// Threat intel — weighed by corroboration. A domain on a single feed may be a
 	// misreport (threat lists do carry clean domains reported by mistake), so it
@@ -133,10 +157,15 @@ func computeScore(in ScoreInput) Score {
 	}
 
 	// Domain age — the single best phishing/malware indicator (they are young and
-	// ephemeral). Established domains pay nothing.
+	// ephemeral), and in the other direction a long registration history is
+	// strong evidence of a real operator. A customer subdomain on a hosting
+	// platform has no registration of its own: anyone can publish there in
+	// minutes, which phishing kits exploit.
 	switch age := in.Whois.AgeDays; {
+	case in.Platform != "":
+		add("Hosting platform", "a customer site on "+in.Platform+" — anyone can publish there in minutes", -10)
 	case age <= 0:
-		add("Domain age", "registration date unknown", -10)
+		note("Domain age", "registration date unknown — the registry doesn't publish it, or the lookup failed")
 	case age < 30:
 		add("Domain age", fmt.Sprintf("registered %d days ago — very new", age), -45)
 	case age < 90:
@@ -145,8 +174,23 @@ func computeScore(in ScoreInput) Score {
 		add("Domain age", fmt.Sprintf("registered %d days ago", age), -15)
 	case age < 365:
 		add("Domain age", fmt.Sprintf("registered %d days ago", age), -6)
+	case age < establishedDays:
+		note("Domain age", fmt.Sprintf("registered %d days ago", age))
+	case age < 5*365:
+		vouchWhois("Domain age", fmt.Sprintf("%d years old — established", age/365), 8)
+	case age < 10*365:
+		vouchWhois("Domain age", fmt.Sprintf("%d years old — long-established", age/365), 14)
 	default:
-		note("Domain age", fmt.Sprintf("%d days old — established", age))
+		vouchWhois("Domain age", fmt.Sprintf("%d years old — long-established", age/365), 20)
+	}
+
+	// Registration details — how the domain is held says a lot about who holds it.
+	for _, f := range registrationFactors(in.Whois, time.Now()) {
+		if f.Delta > 0 {
+			vouchWhois(f.Label, f.Detail, f.Delta)
+		} else {
+			add(f.Label, f.Detail, f.Delta)
+		}
 	}
 
 	// Risky TLD — some TLDs are disproportionately abused for malware/phishing.
@@ -160,21 +204,28 @@ func computeScore(in ScoreInput) Score {
 		add(f.Label, f.Detail, f.Delta)
 	}
 
-	// Reputation services — third-party corroboration. A clean VirusTotal report
-	// is a meaningful "leave it alone" signal (cuts false positives on secondary
-	// app domains); a malicious one is a strong deduction.
+	// Reputation services — third-party corroboration. A clean report is real
+	// trust evidence (cuts false positives on secondary app domains); a malicious
+	// one is a strong deduction.
 	if in.Rep.VTChecked {
 		switch {
 		case in.Rep.VTMalicious >= 2:
 			add("VirusTotal", fmt.Sprintf("%d vendors flag it malicious", in.Rep.VTMalicious), -imin(60, in.Rep.VTMalicious*12))
 		case in.Rep.VTSuspicious >= 3:
 			add("VirusTotal", fmt.Sprintf("%d vendors flag it suspicious", in.Rep.VTSuspicious), -imin(30, in.Rep.VTSuspicious*6))
-		case in.Rep.VTHarmless > 0:
-			note("VirusTotal", fmt.Sprintf("clean — %d vendors harmless, 0 malicious", in.Rep.VTHarmless))
+		case in.Rep.VTMalicious == 0 && in.Rep.VTSuspicious == 0 && in.Rep.VTHarmless > 0:
+			vouch("VirusTotal", fmt.Sprintf("clean — %d vendors harmless, 0 malicious", in.Rep.VTHarmless), 10)
+		default:
+			note("VirusTotal", fmt.Sprintf("%d malicious / %d suspicious — below the alert level", in.Rep.VTMalicious, in.Rep.VTSuspicious))
 		}
 	}
-	if in.Rep.AbuseChecked && in.Rep.AbuseScore >= 25 {
-		add("AbuseIPDB", fmt.Sprintf("IP %s abuse confidence %d%% (%d reports)", in.Rep.AbuseIP, in.Rep.AbuseScore, in.Rep.AbuseReports), -imin(50, in.Rep.AbuseScore/2))
+	if in.Rep.AbuseChecked {
+		switch {
+		case in.Rep.AbuseScore >= 25:
+			add("AbuseIPDB", fmt.Sprintf("IP %s abuse confidence %d%% (%d reports)", in.Rep.AbuseIP, in.Rep.AbuseScore, in.Rep.AbuseReports), -imin(50, in.Rep.AbuseScore/2))
+		case in.Rep.AbuseScore == 0:
+			vouch("AbuseIPDB", fmt.Sprintf("no abuse reported on IP %s", in.Rep.AbuseIP), 3)
+		}
 	}
 	if in.Rep.KasperskyChecked {
 		switch in.Rep.KasperskyZone {
@@ -185,7 +236,7 @@ func computeScore(in ScoreInput) Score {
 		case "Yellow":
 			add("Kaspersky OpenTIP", "yellow zone — adware / potentially unwanted programs", -12)
 		case "Green":
-			note("Kaspersky OpenTIP", "green zone — clean")
+			vouch("Kaspersky OpenTIP", "green zone — clean", 10)
 		default:
 			note("Kaspersky OpenTIP", "grey zone — no data")
 		}
@@ -194,6 +245,7 @@ func computeScore(in ScoreInput) Score {
 	// Model assessment — the LLM's own read, made WITH all the signals above in
 	// hand. It contributes (up to -50) but, by being one bounded factor, it can no
 	// longer by itself sink an otherwise-legitimate domain (the false-positive fix).
+	// A confident non-threat read adds a little; the model is the weakest witness.
 	if in.Verdict.ShouldBlock() {
 		conf := in.Verdict.Confidence
 		if conf <= 0 {
@@ -205,14 +257,29 @@ func computeScore(in ScoreInput) Score {
 		if cat == "" {
 			cat = "other"
 		}
-		note("Model assessment", cat+" — not a threat category")
+		if conf := in.Verdict.Confidence; cat != "other" && conf >= 0.7 {
+			vouch("Model assessment", fmt.Sprintf("%s (%.0f%% confident) — not a threat category", cat, conf*100), int(math.Round((conf-0.5)*10)))
+		} else {
+			note("Model assessment", cat+" — not a threat category")
+		}
+	}
+
+	// Trust cap — positive evidence offsets soft risk signals, but a pile of it
+	// must not outvote real threat evidence; against a corroborated threat
+	// (2+ feeds or a reputation flag) it counts for little.
+	limit := trustCap
+	if in.StrongThreat() {
+		limit = strongTrustCap
+	}
+	if trust > limit {
+		add("Trust cap", fmt.Sprintf("trust evidence counts for at most +%d", limit), limit-trust)
 	}
 
 	// Established-domain floor — phishing/malware is overwhelmingly young, so an old
 	// domain without a *corroborated* threat signal can't be dragged into block
 	// range by soft signals (model + lexical + a lone feed) alone. A single-feed
 	// hit on an old domain is treated as a likely misreport and floored here.
-	if in.Whois.AgeDays >= establishedDays && !in.StrongThreat() && legit < establishedFloor {
+	if in.Whois.AgeDays >= establishedDays && !plainWhois && !in.StrongThreat() && legit < establishedFloor {
 		add("Established floor", fmt.Sprintf("%d-day-old domain — soft signals alone don't block it", in.Whois.AgeDays), establishedFloor-legit)
 	}
 
@@ -366,4 +433,49 @@ func entropy(s string) float64 {
 		h -= p * math.Log2(p)
 	}
 	return h
+}
+
+// registrationFactors weighs how a domain is held (from WHOIS/RDAP). A registry
+// lock is a paid, manual protection big brands use; a named registrant org (not
+// a privacy service) means someone put their name on it; a registration paid
+// for years ahead is unusual for throwaway abuse domains, which are bought for
+// one; DNSSEC takes deliberate setup. A domain on hold or pending deletion has
+// typically been suspended — often a takedown.
+func registrationFactors(w WhoisInfo, now time.Time) []Factor {
+	var fs []Factor
+	status := map[string]bool{}
+	for _, st := range w.Status {
+		status[strings.ReplaceAll(strings.ToLower(st), " ", "")] = true
+	}
+	for _, st := range []string{"serverhold", "clienthold", "pendingdelete", "redemptionperiod"} {
+		if status[st] {
+			fs = append(fs, Factor{"Registration status", st + " — suspended or being deleted, typical after a takedown", -20})
+			break
+		}
+	}
+	if status["servertransferprohibited"] && (status["serverdeleteprohibited"] || status["serverupdateprohibited"]) {
+		fs = append(fs, Factor{"Registry lock", "server-side transfer/delete locks — a paid protection big brands use", 8})
+	}
+	if org := strings.TrimSpace(w.Registrant); org != "" && !privacyRegistrant(org) {
+		fs = append(fs, Factor{"Registrant", fmt.Sprintf("registered to %q", org), 5})
+	}
+	if t, ok := parseRDAPDate(w.Expires); ok && t.Sub(now) > 400*24*time.Hour {
+		fs = append(fs, Factor{"Registration term", "paid until " + t.Format("2006-01-02") + " — abuse domains are rarely bought beyond a year", 5})
+	}
+	if w.DNSSEC {
+		fs = append(fs, Factor{"DNSSEC", "the delegation is DNSSEC-signed", 4})
+	}
+	return fs
+}
+
+// privacyRegistrant reports whether a registrant name is a privacy/proxy service
+// or a redaction placeholder rather than the actual owner.
+func privacyRegistrant(org string) bool {
+	o := strings.ToLower(org)
+	for _, s := range []string{"privacy", "redacted", "proxy", "protected", "withheld", "not disclosed", "whoisguard", "data protection", "statutory masking", "anonymous"} {
+		if strings.Contains(o, s) {
+			return true
+		}
+	}
+	return false
 }

@@ -8,7 +8,7 @@ type IconName =
   | 'queries'
   | 'clients'
   | 'filtering'
-  | 'rewrites'
+  | 'local-dns'
   | 'cluster'
   | 'logs'
   | 'settings'
@@ -40,8 +40,8 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
   // shield / filtering
   filtering: <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />,
-  // opposed arrows / rewrites
-  rewrites: <path d="M4 7h11l-3-3M20 17H9l3 3" />,
+  // opposed arrows / local DNS (records + forwarding)
+  'local-dns': <path d="M4 7h11l-3-3M20 17H9l3 3" />,
   // network / cluster
   cluster: (
     <>

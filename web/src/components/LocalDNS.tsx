@@ -4,7 +4,7 @@ import Modal from './Modal'
 import ScopePicker, { ALL_SCOPE, scopeBadge, useIsAdmin, type Scope } from './ScopePicker'
 import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
 import { invalidateAllClientNames } from '../useClientNames'
-import '../styles/rewrites.css'
+import '../styles/local-dns.css'
 
 // Upstreams are edited as one comma-separated field in both the add form and
 // the edit dialog.
@@ -28,7 +28,7 @@ const FWD_COLS: SortAccessors<Forwarder> = {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)) || 'Request failed'
 
-export default function Rewrites() {
+export default function LocalDNS() {
   const admin = useIsAdmin() === true
   const [rows, setRows] = useState<Rewrite[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -184,9 +184,9 @@ export default function Rewrites() {
   const recCols = admin ? 5 : 4
 
   return (
-    <div className="pg-rewrites">
+    <div className="pg-local-dns">
       <header className="page-head">
-        <h1>Rewrites</h1>
+        <h1>Local DNS</h1>
       </header>
       <p className="intro">
         Answer names on your own network. Records are pushed to every agent; scope one to a site or a single agent for

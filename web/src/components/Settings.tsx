@@ -902,7 +902,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </button>
         </div>
         <p className="hint">
-          Cluster-wide forwarders for the agents live under Rewrites and override an agent’s own entry for the same suffix.
+          Cluster-wide forwarders for the agents live under Local DNS and override an agent’s own entry for the same suffix.
         </p>
       </Group>
 

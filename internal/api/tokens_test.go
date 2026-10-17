@@ -1,8 +1,11 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -19,10 +22,11 @@ import (
 // tokenEnv is a full control-plane router (auth on, cluster on) with one admin
 // console session, for exercising the real route table.
 type tokenEnv struct {
-	t      *testing.T
-	h      http.Handler
-	st     *store.Store
-	cookie *http.Cookie
+	t       *testing.T
+	h       http.Handler
+	st      *store.Store
+	cookie  *http.Cookie
+	adminID int64
 }
 
 func newTokenEnv(t *testing.T) *tokenEnv {
@@ -45,7 +49,7 @@ func newTokenEnv(t *testing.T) *tokenEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &tokenEnv{t: t, h: srv.http.Handler, st: st, cookie: &http.Cookie{Name: auth.CookieName, Value: sess}}
+	return &tokenEnv{t: t, h: srv.http.Handler, st: st, cookie: &http.Cookie{Name: auth.CookieName, Value: sess}, adminID: id}
 }
 
 // do sends a request; cookie and authz ("" = none) set the credentials.
@@ -166,7 +170,8 @@ func TestAPITokenSessionOnlyRoutes(t *testing.T) {
 	}
 }
 
-// A Bearer header is judged alone; other schemes fall through to the cookie.
+// An mzd_ bearer token is judged alone; any other Authorization header (Basic,
+// or a JWT an auth proxy forwards) falls through to the cookie.
 func TestAPITokenHeaderPrecedence(t *testing.T) {
 	e := newTokenEnv(t)
 	_, ro := e.mint("dashboard", roleReadonly, 0)
@@ -176,15 +181,19 @@ func TestAPITokenHeaderPrecedence(t *testing.T) {
 	if rr := e.do(http.MethodPost, "/api/rewrites", write, true, bearer(ro)); rr.Code != http.StatusForbidden {
 		t.Fatalf("token+cookie write: %d, want 403", rr.Code)
 	}
-	// Unknown bearer + valid cookie: 401, no fallback to the cookie.
-	for _, bad := range []string{"mzd_doesnotexist", "not-a-mzd-token", ""} {
-		if rr := e.do(http.MethodGet, "/api/rewrites", "", true, "Bearer "+bad); rr.Code != http.StatusUnauthorized {
-			t.Fatalf("bad bearer %q + cookie: %d, want 401", bad, rr.Code)
-		}
+	// Unknown API token + valid cookie: 401, no fallback to the cookie.
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", true, "Bearer mzd_doesnotexist"); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unknown token + cookie: %d, want 401", rr.Code)
 	}
-	// A Basic header (e.g. from a proxy in front of the console) is not ours.
-	if rr := e.do(http.MethodGet, "/api/rewrites", "", true, "Basic dXNlcjpwYXNz"); rr.Code != http.StatusOK {
-		t.Fatalf("basic + cookie: %d, want 200", rr.Code)
+	// Headers that aren't API tokens (e.g. from a proxy in front of the console)
+	// are not ours: the cookie decides, and without one it's a 401.
+	for _, h := range []string{"Basic dXNlcjpwYXNz", "Bearer eyJhbGciOiJSUzI1NiJ9.e30.sig", "Bearer "} {
+		if rr := e.do(http.MethodGet, "/api/rewrites", "", true, h); rr.Code != http.StatusOK {
+			t.Fatalf("%q + cookie: %d, want 200", h, rr.Code)
+		}
+		if rr := e.do(http.MethodGet, "/api/rewrites", "", false, h); rr.Code != http.StatusUnauthorized {
+			t.Fatalf("%q alone: %d, want 401", h, rr.Code)
+		}
 	}
 	// The scheme is case-insensitive.
 	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, "bearer "+ro); rr.Code != http.StatusOK {
@@ -212,13 +221,20 @@ func TestAPITokenRevokedAndExpired(t *testing.T) {
 		t.Fatalf("revoke twice: %d, want 404", rr.Code)
 	}
 
-	// An expired token (the API refuses a past expiry, so insert it directly).
-	expired, _ := auth.NewAPIToken()
-	if err := e.st.CreateAPIToken(store.APIToken{ID: "old", Name: "old", Role: roleAdmin,
-		ExpiresAt: time.Now().Add(-time.Second).Unix()}, auth.HashAPIToken(expired)); err != nil {
-		t.Fatal(err)
+	// Expiry (the API refuses a past expiry, so insert directly). Both tokens
+	// have a valid creator, so only the expiry tells them apart.
+	insert := func(id string, expiresAt int64) string {
+		tok, _ := auth.NewAPIToken()
+		if err := e.st.CreateAPIToken(store.APIToken{ID: id, Name: id, Role: roleAdmin,
+			CreatedBy: "admin", CreatedByID: e.adminID, ExpiresAt: expiresAt}, tok); err != nil {
+			t.Fatal(err)
+		}
+		return tok
 	}
-	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(expired)); rr.Code != http.StatusUnauthorized {
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(insert("fresh", time.Now().Add(time.Minute).Unix()))); rr.Code != http.StatusOK {
+		t.Fatalf("not yet expired: %d, want 200", rr.Code)
+	}
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(insert("old", time.Now().Add(-time.Second).Unix()))); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expired: %d, want 401", rr.Code)
 	}
 }
@@ -240,13 +256,14 @@ func TestAPITokenCreateValidationAndListing(t *testing.T) {
 	_ = e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)) // records last use
 
 	rr := e.do(http.MethodGet, "/api/tokens", "", true, "")
-	if strings.Contains(rr.Body.String(), tok) || strings.Contains(rr.Body.String(), auth.HashAPIToken(tok)) {
+	sum := sha256.Sum256([]byte(tok))
+	if strings.Contains(rr.Body.String(), tok) || strings.Contains(rr.Body.String(), hex.EncodeToString(sum[:])) {
 		t.Fatal("listing leaks the token or its hash")
 	}
 	var toks []store.APIToken
 	_ = json.Unmarshal(rr.Body.Bytes(), &toks)
 	if len(toks) != 1 || toks[0].Name != "ipam-sync" || toks[0].CreatedBy != "admin" ||
-		toks[0].LastUsedAt == 0 || !strings.HasPrefix(tok, toks[0].TokenPrefix) {
+		toks[0].EffectiveRole != roleAdmin || toks[0].LastUsedAt == 0 || !strings.HasPrefix(tok, toks[0].TokenPrefix) {
 		t.Fatalf("listing = %+v", toks)
 	}
 
@@ -268,7 +285,7 @@ func TestAPITokenFollowsCreator(t *testing.T) {
 	}
 	tok, _ := auth.NewAPIToken()
 	if err := e.st.CreateAPIToken(store.APIToken{ID: "ops-tok", Name: "ipam-sync", Role: roleAdmin,
-		CreatedBy: "ops", CreatedByID: opsID, CreatedAt: time.Now().Unix()}, auth.HashAPIToken(tok)); err != nil {
+		CreatedBy: "ops", CreatedByID: opsID, CreatedAt: time.Now().Unix()}, tok); err != nil {
 		t.Fatal(err)
 	}
 	write := `{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}`
@@ -285,12 +302,18 @@ func TestAPITokenFollowsCreator(t *testing.T) {
 	if rr := e.do(http.MethodPost, "/api/rewrites", `{"domain":"x.lan","rrtype":"A","value":"10.0.0.6"}`, false, bearer(tok)); rr.Code != http.StatusForbidden {
 		t.Fatalf("creator demoted, POST: %d, want 403", rr.Code)
 	}
+	if got := e.effectiveRole("ops-tok"); got != roleReadonly {
+		t.Fatalf("creator demoted, listed effective role %q, want readonly", got)
+	}
 
 	if err := e.st.DeleteUser(opsID); err != nil {
 		t.Fatal(err)
 	}
 	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("creator deleted: %d, want 401", rr.Code)
+	}
+	if got := e.effectiveRole("ops-tok"); got != "" {
+		t.Fatalf("creator deleted, listed effective role %q, want none", got)
 	}
 
 	// A new account with the same username (e.g. an SSO email re-provisioned)
@@ -300,5 +323,114 @@ func TestAPITokenFollowsCreator(t *testing.T) {
 	}
 	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(tok)); rr.Code != http.StatusUnauthorized {
 		t.Fatalf("same-name account recreated: %d, want 401", rr.Code)
+	}
+}
+
+// effectiveRole returns the role the console's token list shows for id.
+func (e *tokenEnv) effectiveRole(id string) string {
+	e.t.Helper()
+	var toks []store.APIToken
+	_ = json.Unmarshal(e.do(http.MethodGet, "/api/tokens", "", true, "").Body.Bytes(), &toks)
+	for _, t := range toks {
+		if t.ID == id {
+			return t.EffectiveRole
+		}
+	}
+	e.t.Fatalf("token %s not listed", id)
+	return ""
+}
+
+// Deleting an account through the console revokes the tokens it created.
+func TestAPITokenRevokedWithCreatorAccount(t *testing.T) {
+	e := newTokenEnv(t)
+	hash, _ := auth.HashPassword("correcthorse7")
+	opsID, err := e.st.CreateLocalUser("ops", hash, roleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, _ := auth.NewAPIToken()
+	if err := e.st.CreateAPIToken(store.APIToken{ID: "ops-tok", Name: "ipam-sync", Role: roleAdmin,
+		CreatedBy: "ops", CreatedByID: opsID}, tok); err != nil {
+		t.Fatal(err)
+	}
+	_, mine := e.mint("dashboard", roleReadonly, 0)
+
+	if rr := e.do(http.MethodDelete, fmt.Sprintf("/api/users/%d", opsID), "", true, ""); rr.Code != http.StatusNoContent {
+		t.Fatalf("delete user: %d %s", rr.Code, rr.Body.String())
+	}
+	toks, _ := e.st.ListAPITokens()
+	if len(toks) != 1 || toks[0].Name != "dashboard" {
+		t.Fatalf("tokens after deleting ops = %+v", toks)
+	}
+	if rr := e.do(http.MethodGet, "/api/rewrites", "", false, bearer(mine)); rr.Code != http.StatusOK {
+		t.Fatalf("other admin's token: %d, want 200", rr.Code)
+	}
+	entries, _ := e.st.ListAudit()
+	if len(entries) == 0 || !strings.Contains(entries[len(entries)-1].Detail, `deleted user "ops"`) {
+		t.Fatalf("audit = %+v", entries)
+	}
+}
+
+// With auth off there is no account to bind a token to: creation is refused
+// rather than storing a token that could never authenticate.
+func TestAPITokenCreateNeedsAuth(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := New("127.0.0.1:0", st, resolver.New(resolver.Options{}), metrics.New(),
+		func() error { return nil }, nil, auth.NewManager(st, nil, time.Hour), false, false, false)
+	rr := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/tokens",
+		strings.NewReader(`{"name":"ipam-sync","role":"admin"}`)))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("create with auth off: %d %s, want 409", rr.Code, rr.Body.String())
+	}
+	if toks, _ := st.ListAPITokens(); len(toks) != 0 {
+		t.Fatalf("tokens = %+v", toks)
+	}
+}
+
+// The live query-log stream re-checks its credentials: revoking the token
+// closes a stream that was opened with it.
+func TestAPITokenLiveStreamEndsOnRevoke(t *testing.T) {
+	old := livePing
+	livePing = 20 * time.Millisecond
+	t.Cleanup(func() { livePing = old })
+
+	e := newTokenEnv(t)
+	id, tok := e.mint("dashboard", roleReadonly, 0)
+	ts := httptest.NewServer(e.h)
+	t.Cleanup(ts.Close)
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/querylog/stream", nil)
+	req.Header.Set("Authorization", bearer(tok))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("open stream: %d", resp.StatusCode)
+	}
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("stream closed while the token was still valid")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if rr := e.do(http.MethodDelete, "/api/tokens/"+id, "", true, ""); rr.Code != http.StatusNoContent {
+		t.Fatalf("revoke: %d", rr.Code)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream still open after the token was revoked")
 	}
 }

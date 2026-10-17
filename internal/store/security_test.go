@@ -129,7 +129,7 @@ func TestSessionTokensHashed(t *testing.T) {
 	if stored == "raw-token" {
 		t.Fatal("session token stored in clear")
 	}
-	if stored != hashSessionToken("raw-token") {
+	if stored != hashSecret("raw-token") {
 		t.Fatalf("stored token is not the sha256 hash: %q", stored)
 	}
 	// Lookup by the raw token (as the cookie carries it) still works.

@@ -269,9 +269,10 @@ CREATE TABLE IF NOT EXISTS api_tokens (
 	role TEXT NOT NULL,
 	created_by TEXT NOT NULL DEFAULT '',
 	created_by_id INTEGER NOT NULL DEFAULT 0, -- users.id of the creator (ids are never reused)
-	created_at INTEGER NOT NULL DEFAULT 0,
-	last_used_at INTEGER NOT NULL DEFAULT 0, -- unix secs, 0 = never
-	expires_at INTEGER NOT NULL DEFAULT 0    -- unix secs, 0 = never
+	-- BIGINT: a user-chosen expiry may lie past 2038 (Postgres INTEGER is 32-bit).
+	created_at BIGINT NOT NULL DEFAULT 0,
+	last_used_at BIGINT NOT NULL DEFAULT 0,  -- unix secs, 0 = never
+	expires_at BIGINT NOT NULL DEFAULT 0     -- unix secs, 0 = never
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
 CREATE TABLE IF NOT EXISTS settings (
@@ -342,6 +343,26 @@ CREATE TABLE IF NOT EXISTS revoked_nodes (
 );
 `
 
+// widenAPITokenTimes moves api_tokens' timestamps to BIGINT on Postgres, for
+// tables created when they were INTEGER (32-bit there, too small for a
+// user-chosen expiry past 2038). SQLite integers are 64-bit already.
+func (s *Store) widenAPITokenTimes() error {
+	if !s.db.pg {
+		return nil
+	}
+	var typ string
+	err := s.db.QueryRow(`SELECT data_type FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'api_tokens' AND column_name = 'expires_at'`).Scan(&typ)
+	if err != nil || typ != "integer" {
+		return nil // already widened (or not there: the schema above just made it)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE api_tokens ALTER COLUMN created_at TYPE BIGINT,
+		ALTER COLUMN last_used_at TYPE BIGINT, ALTER COLUMN expires_at TYPE BIGINT`); err != nil {
+		return fmt.Errorf("migrate api_tokens timestamps: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) migrate() error {
 	// Run the schema one statement at a time (Postgres rejects multi-statement
 	// Exec), adapting the DDL dialect when the backend is Postgres.
@@ -397,6 +418,9 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)
 		}
+	}
+	if err := s.widenAPITokenTimes(); err != nil {
+		return err
 	}
 	if err := s.backfillNodeIDs(); err != nil {
 		return fmt.Errorf("migrate node ids: %w", err)

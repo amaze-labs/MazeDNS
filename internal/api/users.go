@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -163,7 +164,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	if cur, ok := s.auth.UserFromRequest(r); ok && cur.ID == id {
+	if cur, ok := s.principal(r); ok && cur.ID == id {
 		writeError(w, http.StatusBadRequest, "you cannot delete your own account")
 		return
 	}
@@ -176,12 +177,20 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.DeleteSessionsForUser(id)
+	// Their API tokens could never work again (a token is bound to its creator's
+	// account), so revoke them rather than leave dead rows in the token list.
+	if n, err := s.store.DeleteAPITokensForUser(id); err == nil && n > 0 {
+		_ = s.store.AppendAudit(store.AuditEntry{
+			User: auditUser(s, r), Action: "apitoken.delete",
+			Detail: fmt.Sprintf("revoked %d API token(s) created by deleted user %q", n, target.Username),
+		})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // changePassword lets the signed-in user change their own password.
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
-	cur, ok := s.auth.UserFromRequest(r)
+	cur, ok := s.principal(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return

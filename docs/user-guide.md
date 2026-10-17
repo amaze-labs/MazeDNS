@@ -258,18 +258,27 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   answer **403** to a token and need a console sign-in.
 - **SSO-only mode** has no effect on tokens: it only disables password login.
 - **A token never outranks the admin who created it.** If that admin is
-  demoted to readonly, their admin tokens act as readonly; if their account is
-  deleted, their tokens stop working for good (re-creating an account with the
-  same name doesn't revive them). Removing someone's access therefore also
-  removes it from any token they kept a copy of. For a long-lived integration,
-  create its token from an account that will stay.
+  demoted to readonly, their admin tokens act as readonly (the list shows
+  "Acts as a viewer"); deleting their account revokes their tokens for good
+  (re-creating an account with the same name doesn't revive them). Removing
+  someone's access therefore also removes it from any token they kept a copy of.
+  For a long-lived integration, create its token from an account that will stay.
+- **SSO accounts:** MazeDNS learns an SSO user's role from the provider only
+  when they sign in. A demotion at the provider reaches their tokens at their
+  next sign-in, and disabling them at the provider doesn't reach MazeDNS at all.
+  To cut someone off at once, delete their account under **Account → People**.
 - **Revoke** a token from the same list. It stops working on the next request.
   The list shows each token's role, last use (updated at most once a minute) and
   expiry, never its value.
-- A request with an `Authorization: Bearer` header is judged on that header
-  only: an invalid or revoked token gets **401**, even if the same client also
-  sends a session cookie. Other schemes (e.g. `Basic`, added by a proxy in front of
-  the console) are ignored.
+- **Revocation and expiry** also close a live query-log stream opened with the
+  token, within 15 seconds.
+- A request with an `Authorization: Bearer mzd_…` header is judged on that
+  token only: an invalid or revoked token gets **401**, even if the same client
+  also sends a session cookie. Any other `Authorization` header (`Basic`, or a
+  `Bearer` JWT that an authenticating proxy such as oauth2-proxy forwards) is
+  ignored, and the session cookie decides as before.
+- Tokens need authentication to be enabled: there is no account to tie them to
+  otherwise.
 - Creating and revoking tokens is recorded in the settings audit log, under the
   admin who did it. Changes to DNS data (rewrites, rules, …) have no change log
   yet, whoever makes them; where a token's action is recorded, it appears as

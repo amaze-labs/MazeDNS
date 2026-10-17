@@ -3,7 +3,6 @@ package auth
 import (
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,19 +11,22 @@ import (
 
 func TestBearerToken(t *testing.T) {
 	for h, want := range map[string]string{
-		"Bearer mzd_abc":     "mzd_abc",
-		"bearer  mzd_abc ":   "mzd_abc",
-		"BEARER mzd_abc":     "mzd_abc",
-		"Basic dXNlcjpwYXNz": "",
-		"Bearer":             "",
-		"":                   "",
+		"Bearer mzd_abc":   "mzd_abc",
+		"bearer  mzd_abc ": "mzd_abc",
+		"BEARER mzd_abc":   "mzd_abc",
+		// Not ours: left for the session cookie to decide.
+		"Basic dXNlcjpwYXNz":       "",
+		"Bearer eyJhbGciOiJSUzI1N": "", // a JWT forwarded by an auth proxy
+		"Bearer":                   "",
+		"Bearer ":                  "",
+		"":                         "",
 	} {
 		r := httptest.NewRequest("GET", "/", nil)
 		if h != "" {
 			r.Header.Set("Authorization", h)
 		}
 		got, ok := bearerToken(r)
-		if got != want || ok != (want != "" || strings.HasPrefix(strings.ToLower(h), "bearer ")) {
+		if got != want || ok != (want != "") {
 			t.Errorf("bearerToken(%q) = %q,%v; want %q", h, got, ok, want)
 		}
 	}
@@ -47,7 +49,7 @@ func TestAPITokenWorksWithSSOOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	tok, _ := NewAPIToken()
-	if err := st.CreateAPIToken(store.APIToken{ID: "t1", Name: "ipam-sync", Role: "admin", CreatedBy: "admin", CreatedByID: adminID}, HashAPIToken(tok)); err != nil {
+	if err := st.CreateAPIToken(store.APIToken{ID: "t1", Name: "ipam-sync", Role: "admin", CreatedBy: "admin", CreatedByID: adminID}, tok); err != nil {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest("GET", "/api/rewrites", nil)

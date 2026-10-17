@@ -115,9 +115,9 @@ func (m *Manager) StartSession(id int64, username, role string) (string, *Sessio
 	return token, &SessionUser{ID: id, Username: username, Role: role, Kind: KindSession}, nil
 }
 
-// UserFromRequest returns the authenticated principal for r. A request with an
-// "Authorization: Bearer" header is judged on that header alone — a valid API
-// token or nothing, never falling back to a cookie sent alongside. Otherwise the
+// UserFromRequest returns the authenticated principal for r. A request carrying
+// an API token ("Authorization: Bearer mzd_...") is judged on that token alone —
+// valid or nothing, never falling back to a cookie sent alongside. Otherwise the
 // session cookie is checked.
 func (m *Manager) UserFromRequest(r *http.Request) (*SessionUser, bool) {
 	if tok, ok := bearerToken(r); ok {

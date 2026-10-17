@@ -54,6 +54,13 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expires_at must be in the future (or 0 for never)")
 		return
 	}
+	// A token is bound to the account that creates it, so there must be one: with
+	// auth off (no sign-in) it would be stored dead, never able to authenticate.
+	creator, ok := s.principal(r)
+	if !ok || creator.ID == 0 {
+		writeError(w, http.StatusConflict, "API tokens need authentication: enable it and sign in to create one")
+		return
+	}
 	value, err := auth.NewAPIToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
@@ -61,14 +68,10 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 	}
 	t := store.APIToken{
 		ID: uuid.NewString(), Name: in.Name, TokenPrefix: auth.APITokenDisplayPrefix(value),
-		Role: in.Role, CreatedBy: auditUser(s, r), CreatedAt: time.Now().Unix(), ExpiresAt: in.ExpiresAt,
+		Role: in.Role, CreatedBy: creator.Username, CreatedByID: creator.ID,
+		CreatedAt: time.Now().Unix(), ExpiresAt: in.ExpiresAt,
 	}
-	if s.authEnabled && s.auth != nil {
-		if u, ok := s.auth.UserFromRequest(r); ok {
-			t.CreatedByID = u.ID // the route is session-only, so this is a real account
-		}
-	}
-	if err := s.store.CreateAPIToken(t, auth.HashAPIToken(value)); err != nil {
+	if err := s.store.CreateAPIToken(t, value); err != nil {
 		writeError(w, http.StatusInternalServerError, "create failed: "+err.Error())
 		return
 	}
@@ -77,6 +80,7 @@ func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
 		Detail: fmt.Sprintf("created %s API token %q (%s)", t.Role, t.Name, t.ID),
 	})
 	slog.Info("api token created", "id", t.ID, "name", t.Name, "role", t.Role, "by", t.CreatedBy, "expires_at", t.ExpiresAt)
+	t.EffectiveRole = t.Role
 	writeJSON(w, http.StatusCreated, struct {
 		store.APIToken
 		Token string `json:"token"`

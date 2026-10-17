@@ -100,6 +100,9 @@ export interface APIToken {
   created_at: number
   last_used_at: number // 0 = never
   expires_at: number // 0 = never
+  // What the token can do now: its role capped by the creator's current role,
+  // or '' once the creator's account is gone and the token no longer works.
+  effective_role: 'admin' | 'readonly' | ''
 }
 
 export interface Site {

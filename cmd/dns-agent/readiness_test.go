@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +66,9 @@ func startDNS(t *testing.T, res *resolver.Resolver) *resolver.Server {
 func getReady(t *testing.T, rd *readiness) (int, readyReport) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	rd.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	req.RemoteAddr = "127.0.0.1:40000" // the full report is for this host only
+	rd.ServeHTTP(rec, req)
 	var rep readyReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
@@ -109,6 +112,38 @@ func TestReadyz(t *testing.T) {
 	}
 	if rep.TCP.Error == "" {
 		t.Fatal("listener down: no TCP probe error reported")
+	}
+}
+
+// /readyz is unauthenticated: a caller other than this host gets the same status
+// code but only the verdict, never the errors (upstream servers, the control
+// plane's URL) or timestamps. X-Forwarded-For can't claim to be local.
+func TestReadyzDetailsOnlyForLoopback(t *testing.T) {
+	res := resolver.New(resolver.Options{})
+	srv := startDNS(t, res)
+	rd := &readiness{res: res, srv: srv, sync: &cluster.SyncHealth{}}
+
+	for _, remote := range []string{"192.0.2.10:5000", "[2001:db8::1]:5000"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		req.RemoteAddr = remote
+		req.Header.Set("X-Forwarded-For", "127.0.0.1")
+		rd.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code = %d, want 200", remote, rec.Code)
+		}
+		if strings.Contains(body, "control_plane") || strings.Contains(body, "resolver") || strings.Contains(body, "error") {
+			t.Errorf("%s: details leaked: %s", remote, body)
+		}
+		var pub publicReport
+		if err := json.Unmarshal(rec.Body.Bytes(), &pub); err != nil || !pub.Ready || !pub.UDP || !pub.TCP {
+			t.Errorf("%s: public report = %s (err %v)", remote, body, err)
+		}
+	}
+
+	if _, rep := getReady(t, rd); rep.ControlPlane == nil { // loopback
+		t.Errorf("loopback report lacks details: %+v", rep)
 	}
 }
 

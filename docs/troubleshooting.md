@@ -223,14 +223,19 @@ dig @<agent-host> probe.mazedns.internal +tcp
 dig @<agent-host> <a-local-rewrite>
 # 3. Can the agent's host reach the upstreams at all?
 dig @1.1.1.1 example.com
-# 4. What does the agent itself report?
-curl -s http://<agent-http-addr>/readyz
+# 4. What does the agent itself report? (run on the agent's host)
+curl -s http://127.0.0.1:<agent-http-port>/readyz
+# or, from any host, inside the container:
+docker exec <agent-container> /usr/local/bin/dns-agent -healthcheck
 ```
 
 `/readyz` returns 200 when the agent answers the probe over UDP **and** TCP and is
-not in maintenance, 503 otherwise. Its JSON body also reports when a query was last
-answered, when forwarding last succeeded and failed (with the error), and when the
-control plane was last reached. WAN and control-plane state are informational:
+not in maintenance, 503 otherwise. Asked from the agent's own host (or inside its
+container), its JSON body also reports when a query was last answered, when
+forwarding last succeeded and failed (with the error), and when the control plane
+was last reached. Any other caller gets the same status code with only the
+verdict, since the errors name your upstreams and control plane and the endpoint
+has no authentication. WAN and control-plane state are informational:
 they never make `/readyz` fail, because a node cut off from both still serves its
 local records. The same timestamps are exported on `/metrics` as
 `mazedns_last_query_timestamp_seconds`, `mazedns_last_forward_success_timestamp_seconds`,

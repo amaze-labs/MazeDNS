@@ -134,6 +134,19 @@ func (rd *readiness) check(ctx context.Context) readyReport {
 	return rep
 }
 
+// publicReport is the /readyz body for a caller other than this host: the
+// verdict only. The full report names upstream servers and the control plane's
+// URL in its errors, and /readyz is unauthenticated.
+type publicReport struct {
+	Ready       bool `json:"ready"`
+	UDP         bool `json:"udp"`
+	TCP         bool `json:"tcp"`
+	Maintenance bool `json:"maintenance"`
+}
+
+// ServeHTTP answers /readyz. The status code is the same for every caller; the
+// detailed report (timestamps, errors) only goes to requests from this host —
+// `dns-agent -healthcheck`, or curl on the agent's host / in its container.
 func (rd *readiness) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rep := rd.check(r.Context())
 	w.Header().Set("Content-Type", "application/json")
@@ -141,7 +154,22 @@ func (rd *readiness) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !rep.Ready {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	_ = json.NewEncoder(w).Encode(rep)
+	if fromLoopback(r) {
+		_ = json.NewEncoder(w).Encode(rep)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(publicReport{Ready: rep.Ready, UDP: rep.UDP.OK, TCP: rep.TCP.OK, Maintenance: rep.Maintenance})
+}
+
+// fromLoopback reports whether the request's TCP peer is this host. It looks at
+// the connection, never at X-Forwarded-For, which a client can set at will.
+func fromLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // runHealthcheck implements `dns-agent -healthcheck` for container health checks

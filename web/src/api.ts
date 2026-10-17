@@ -713,7 +713,7 @@ export const api = {
     ),
   domainClients: (domain: string) =>
     fetch(`/api/classifier/clients?domain=${encodeURIComponent(domain)}`).then(
-      j<{ domain: string; clients: DomainClient[] }>,
+      j<{ domain: string; clients: DomainClient[]; since: number }>,
     ),
 
   // Resolve client IPs to identities (NetBird peer / reverse-DNS), batched.

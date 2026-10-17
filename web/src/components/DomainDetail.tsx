@@ -102,7 +102,7 @@ export default function DomainDetail({
       .finally(() => alive && setLoading(false))
     api
       .domainClients(c.domain)
-      .then((r) => alive && setClients(r.clients))
+      .then((r) => alive && setClients(r.clients ?? []))
       .catch((e) => alive && setClientsErr(e.message))
     return () => {
       alive = false
@@ -283,13 +283,13 @@ export default function DomainDetail({
       )}
 
       <div>
-        <h3>Clients asking for it</h3>
+        <h3>Clients asking for it · last 7 days</h3>
         {clientsErr ? (
           <p className="muted nomargin">Clients unavailable: {clientsErr}</p>
         ) : clients === null ? (
           <Spinner label="Loading…" />
         ) : clients.length === 0 ? (
-          <p className="muted nomargin">No queries for this domain in the retained logs.</p>
+          <p className="muted nomargin">No queries for this domain in the last 7 days.</p>
         ) : (
           <div className="table-scroll">
             <table className="compact">

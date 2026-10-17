@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -236,18 +237,24 @@ func (s *Store) ListClassifications(status, search string, limit, offset int) ([
 }
 
 // ClientsForDomain returns the clients that queried a registered domain (or any
-// of its subdomains), most active first — so an operator can see who is reaching
-// a flagged domain. Names carry a trailing dot in the log, so match both forms.
-func (s *Store) ClientsForDomain(domain string, limit int) ([]DomainClient, error) {
+// of its subdomains) since sinceMs (unix millis), most active first — so an
+// operator can see who is reaching a flagged domain. Names carry a trailing dot
+// in the log, so match both forms. The subdomain match (LIKE '%.domain') can't
+// use an index, so the time bound is what keeps this from scanning the whole
+// (up to 90-day, cluster-wide) log. The MATERIALIZED CTE makes the planner seek
+// the ts index for the window first; without it SQLite walks the whole
+// (client, ts) index to skip the GROUP BY sort (3M rows: 80ms vs 3.2s).
+func (s *Store) ClientsForDomain(ctx context.Context, domain string, sinceMs int64, limit int) ([]DomainClient, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.read.Query(
-		`SELECT client, COUNT(*) c, SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END), MAX(ts)
-		 FROM query_log
-		 WHERE name = ? OR name = ? OR name LIKE ? OR name LIKE ?
-		 GROUP BY client ORDER BY c DESC LIMIT ?`,
-		domain, domain+".", "%."+domain, "%."+domain+".", limit)
+	rows, err := s.read.QueryContext(ctx,
+		`WITH hits AS MATERIALIZED (
+			SELECT client, action, ts FROM query_log
+			WHERE ts >= ? AND (name = ? OR name = ? OR name LIKE ? OR name LIKE ?))
+		 SELECT client, COUNT(*) c, SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END), MAX(ts)
+		 FROM hits GROUP BY client ORDER BY c DESC LIMIT ?`,
+		sinceMs, domain, domain+".", "%."+domain, "%."+domain+".", limit)
 	if err != nil {
 		return nil, err
 	}

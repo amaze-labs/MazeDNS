@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -231,7 +232,16 @@ func (s *Server) getDomainClients(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "valid domain is required")
 		return
 	}
-	clients, err := s.store.ClientsForDomain(domain, 100)
+	// Recent clients only, and bounded in time: the subdomain match can't use an
+	// index, so an unbounded lookup scanned the whole log and the panel never loaded.
+	since := time.Now().Add(-domainClientsWindow)
+	qctx, qcancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer qcancel()
+	clients, err := s.store.ClientsForDomain(qctx, domain, since.UnixMilli(), 100)
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(qctx.Err(), context.DeadlineExceeded) {
+		writeError(w, http.StatusGatewayTimeout, "the query log is too large to search in time")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -247,8 +257,11 @@ func (s *Server) getDomainClients(w http.ResponseWriter, r *http.Request) {
 	if clients == nil {
 		clients = []store.DomainClient{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"domain": domain, "clients": clients})
+	writeJSON(w, http.StatusOK, map[string]any{"domain": domain, "clients": clients, "since": since.UnixMilli()})
 }
+
+// domainClientsWindow is how far back the domain detail view looks for clients.
+const domainClientsWindow = 7 * 24 * time.Hour
 
 // validDecisionCategory checks the corrected category matches the decision:
 // blocking ("approve") wants a security category; allowing ("reject") wants a

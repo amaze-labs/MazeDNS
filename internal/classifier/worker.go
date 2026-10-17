@@ -226,6 +226,7 @@ func (w *Worker) Run(ctx context.Context) {
 	w.trusted.ensureSync(trustedSources(s))
 	w.threat.ensureSync(threatSources(s))
 	go w.refreshThreatLoop(ctx)
+	go w.rescoreLegacyTrusted(ctx) // feeds the queue below, so it can't run inline
 	for {
 		select {
 		case <-ctx.Done():

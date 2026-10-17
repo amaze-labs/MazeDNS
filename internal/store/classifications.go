@@ -126,6 +126,43 @@ func (s *Store) CleanDomains() ([]string, error) {
 	return out, rows.Err()
 }
 
+// TrustedVerdict is a trusted-clean verdict's domain and recorded reason.
+type TrustedVerdict struct {
+	Domain string
+	Reason string
+}
+
+// TrustedCleanVerdicts returns the verdicts recorded as trusted and clean (no
+// human decision), for re-checking when the trust rules tighten.
+func (s *Store) TrustedCleanVerdicts() ([]TrustedVerdict, error) {
+	rows, err := s.read.Query(`SELECT domain, reason FROM classifications WHERE status = ? AND trusted = 1`, ClassClean)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TrustedVerdict
+	for rows.Next() {
+		var v TrustedVerdict
+		if err := rows.Scan(&v.Domain, &v.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// DeleteTrustedCleanVerdict removes a verdict only while it is still trusted and
+// clean, so a human decision made meanwhile is never lost. Returns whether a row
+// was removed.
+func (s *Store) DeleteTrustedCleanVerdict(domain string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM classifications WHERE domain = ? AND status = ? AND trusted = 1`, domain, ClassClean)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // FlagThreat flips a clean verdict to a threat block because a refreshed feed now
 // lists the domain. It only touches rows still status='clean' (and untrusted), so
 // human decisions and existing blocks are preserved. Returns whether a row changed.

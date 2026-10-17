@@ -183,8 +183,8 @@ func (w *Worker) Enqueue(name string) {
 		return
 	}
 	domain := RegisteredDomain(name)
-	if domain == "" {
-		return
+	if domain == "" || IsReservedName(domain) {
+		return // reserved / private-use names never exist publicly
 	}
 	w.mu.Lock()
 	if t, ok := w.recent[domain]; ok && time.Since(t) < time.Hour {
@@ -366,7 +366,8 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// nameservers (NS can't be faked) is that entity's infrastructure, so it cannot
 	// be phishing *of* it — short-circuit before spending reputation/LLM budget.
 	var whois WhoisInfo
-	if s.WhoisEnabled {
+	platform := HostingPlatform(domain)
+	if s.WhoisEnabled && platform == "" { // a platform subdomain has no registration of its own
 		if info, werr := w.whois.Lookup(ctx, domain); werr == nil {
 			whois = info
 		} else {
@@ -375,7 +376,12 @@ func (w *Worker) process(ctx context.Context, domain string) {
 			slog.Warn("whois lookup failed — verdict scored without domain age", "domain", domain, "err", werr)
 		}
 	}
+	// Only RDAP (HTTPS) is authentic enough to grant trust: port-43 WHOIS is plain
+	// TCP, so an on-path attacker could claim a trusted brand's nameservers.
 	for _, ns := range whois.Nameservers {
+		if whois.Source != "rdap" {
+			break
+		}
 		if reg := RegisteredDomain(ns); reg != "" && (w.trusted.has(reg) || IsCDN(ns)) {
 			w.recordTrusted(ScoreInput{Domain: domain, NSTrustedOn: reg, Whois: whois})
 			return

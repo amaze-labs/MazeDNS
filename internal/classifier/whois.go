@@ -24,7 +24,17 @@ type WhoisInfo struct {
 	AgeDays     int      `json:"age_days"` // days since registration (0 if unknown)
 	Status      []string `json:"status"`
 	Nameservers []string `json:"nameservers"`
+	DNSSEC      bool     `json:"dnssec"` // the delegation is DNSSEC-signed
+	Source      string   `json:"source"` // "rdap" | "whois" (port-43 fallback)
 }
+
+// ErrHostingPlatform is returned for a customer subdomain on a shared hosting
+// platform (see HostingPlatform): there is no registration of its own to look up.
+var ErrHostingPlatform = errors.New("whois: subdomain of a shared hosting platform — no registration of its own")
+
+// errNoRDAP means the TLD has no RDAP service (e.g. .io, many ccTLDs): the
+// bootstrap answered 404 itself instead of redirecting to a registry.
+var errNoRDAP = errors.New("whois: no RDAP service for this TLD")
 
 // summary is a compact one-line form fed to the model as a signal. Domain age and
 // — crucially — ownership (registrant org and nameservers) help the model avoid
@@ -70,6 +80,9 @@ type rdapResp struct {
 	Nameservers []struct {
 		LDHName string `json:"ldhName"`
 	} `json:"nameservers"`
+	SecureDNS struct {
+		DelegationSigned bool `json:"delegationSigned"`
+	} `json:"secureDNS"`
 }
 
 // rdapPace spaces our RDAP calls out (the public rdap.org bootstrap rate-limits
@@ -81,12 +94,16 @@ var rdapPace = make(chan struct{}, 1)
 const rdapMinGap = 500 * time.Millisecond
 
 // LookupWhois queries RDAP for a domain via the public bootstrap (rdap.org),
-// which redirects to the authoritative RDAP server for the TLD. Calls are paced,
-// and a rate-limited or transiently-failed request is retried once, so bulk
-// classification doesn't silently lose the domain-age signal.
+// which redirects to the authoritative RDAP server for the TLD, falling back to
+// port-43 WHOIS for TLDs without RDAP. Calls are paced, and a rate-limited or
+// transiently-failed request is retried once, so bulk classification doesn't
+// silently lose the domain-age signal.
 func LookupWhois(ctx context.Context, domain string) (WhoisInfo, error) {
+	if HostingPlatform(domain) != "" {
+		return WhoisInfo{}, ErrHostingPlatform
+	}
 	domain = RegisteredDomain(domain)
-	if domain == "" {
+	if domain == "" || IsReservedName(domain) {
 		return WhoisInfo{}, fmt.Errorf("whois: invalid domain")
 	}
 	select {
@@ -99,6 +116,9 @@ func LookupWhois(ctx context.Context, domain string) (WhoisInfo, error) {
 	}()
 
 	body, err := rdapGet(ctx, domain)
+	if errors.Is(err, errNoRDAP) {
+		return lookupWhois43(ctx, domain)
+	}
 	if err != nil {
 		var re *rdapRetryableError
 		if !errors.As(err, &re) {
@@ -149,6 +169,9 @@ func rdapGet(ctx context.Context, domain string) ([]byte, error) {
 		}
 		return nil, &rdapRetryableError{err: fmt.Errorf("whois: rdap status %d", resp.StatusCode), after: after}
 	}
+	if resp.StatusCode == http.StatusNotFound && resp.Request.URL.Host == "rdap.org" {
+		return nil, errNoRDAP // not redirected: the bootstrap knows no registry for the TLD
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("whois: rdap status %d", resp.StatusCode)
 	}
@@ -156,7 +179,7 @@ func rdapGet(ctx context.Context, domain string) ([]byte, error) {
 }
 
 func parseRDAP(domain string, rd rdapResp) WhoisInfo {
-	info := WhoisInfo{Domain: domain, Status: rd.Status}
+	info := WhoisInfo{Domain: domain, Status: rd.Status, DNSSEC: rd.SecureDNS.DelegationSigned, Source: "rdap"}
 	for _, e := range rd.Events {
 		switch strings.ToLower(e.Action) {
 		case "registration":
@@ -188,18 +211,34 @@ func parseRDAP(domain string, rd rdapResp) WhoisInfo {
 			info.Nameservers = append(info.Nameservers, strings.ToLower(ns.LDHName))
 		}
 	}
-	if t, ok := parseRDAPDate(info.Created); ok {
+	info.AgeDays = ageDays(info.Created)
+	return info
+}
+
+// ageDays is the whole days since a registration date (0 if unknown/unparsable).
+func ageDays(created string) int {
+	if t, ok := parseRDAPDate(created); ok {
 		if d := int(time.Since(t).Hours() / 24); d > 0 {
-			info.AgeDays = d
+			return d
 		}
 	}
-	return info
+	return 0
 }
 
 // parseRDAPDate accepts the timestamp shapes registries actually emit (RFC3339
 // with or without fractional seconds, and bare dates).
 func parseRDAPDate(s string) (time.Time, bool) {
-	for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02"} {
+	s = strings.TrimSpace(s)
+	if i := strings.Index(s, " ("); i > 0 {
+		s = s[:i] // "2001-04-26 (YYYY-MM-DD)"-style annotations
+	}
+	for _, layout := range []string{
+		time.RFC3339, time.RFC3339Nano, "2006-01-02",
+		// port-43 WHOIS shapes
+		"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02 15:04:05 MST",
+		"2006-01-02T15:04:05-0700", "02-Jan-2006", "2-Jan-2006", "2006.01.02",
+		"2006/01/02", "02.01.2006", "Mon Jan 2 15:04:05 MST 2006",
+	} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t, true
 		}

@@ -8,6 +8,7 @@ import (
 	stdruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/miekg/dns"
 )
@@ -65,6 +66,10 @@ type Server struct {
 	addr string
 	udp  []*dns.Server
 	tcp  *dns.Server
+
+	mu      sync.Mutex
+	closed  bool          // Shutdown was called: start nothing more
+	running []*dns.Server // listeners handed a socket and started, for Shutdown
 }
 
 // NewServer wires res as the handler for both UDP and TCP on addr.
@@ -119,10 +124,11 @@ func (s *Server) ListenAndServe() error {
 		}
 		srv := s.udp[i]
 		srv.PacketConn = pc
+		if !s.start(srv, errc) {
+			return nil // shut down while starting
+		}
 		bound++
-		go func() { errc <- srv.ActivateAndServe() }()
 	}
-	s.udp = s.udp[:bound]
 	slog.Info("listener up", "net", "udp", "addr", s.addr, "sockets", bound)
 
 	go func() {
@@ -132,16 +138,48 @@ func (s *Server) ListenAndServe() error {
 			return
 		}
 		s.tcp.Listener = l
-		slog.Info("listener up", "net", "tcp", "addr", s.addr)
-		errc <- s.tcp.ActivateAndServe()
+		if s.start(s.tcp, errc) {
+			slog.Info("listener up", "net", "tcp", "addr", s.addr)
+		}
 	}()
 	return <-errc
 }
 
-// Shutdown gracefully stops every listener.
-func (s *Server) Shutdown(ctx context.Context) {
-	for _, u := range s.udp {
-		_ = u.ShutdownContext(ctx)
+// start serves srv (its socket already set) unless Shutdown has been called, in
+// which case it closes the socket instead. Registering under mu is what lets
+// Shutdown see every listener, however far startup got.
+func (s *Server) start(srv *dns.Server, errc chan<- error) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		closeSocket(srv)
+		return false
 	}
-	_ = s.tcp.ShutdownContext(ctx)
+	s.running = append(s.running, srv)
+	go func() { errc <- srv.ActivateAndServe() }()
+	return true
+}
+
+// Shutdown gracefully stops every listener, including any still starting up.
+func (s *Server) Shutdown(ctx context.Context) {
+	s.mu.Lock()
+	s.closed = true
+	running := append([]*dns.Server(nil), s.running...)
+	s.mu.Unlock()
+	for _, srv := range running {
+		if err := srv.ShutdownContext(ctx); err != nil {
+			// Not serving yet ("server not started"): closing the socket makes
+			// ActivateAndServe return instead of starting after we've moved on.
+			closeSocket(srv)
+		}
+	}
+}
+
+func closeSocket(srv *dns.Server) {
+	if srv.PacketConn != nil {
+		_ = srv.PacketConn.Close()
+	}
+	if srv.Listener != nil {
+		_ = srv.Listener.Close()
+	}
 }

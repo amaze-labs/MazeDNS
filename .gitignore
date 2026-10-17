@@ -26,3 +26,6 @@ web/dist/
 
 # SDD scratch (progress ledger, briefs, review packages)
 .superpowers/
+
+# Local UI renders / screenshots (web UI checks)
+.render/

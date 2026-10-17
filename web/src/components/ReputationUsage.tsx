@@ -4,16 +4,15 @@ import type { ClassifierStatus, ReputationUsageDay } from '../api'
 // itself doesn't report one (VirusTotal v3 returns no remaining-quota header;
 // AbuseIPDB does, and that takes precedence).
 const SERVICES: Record<string, { label: string; defaultLimit: number; note: string }> = {
-  virustotal: { label: 'VirusTotal', defaultLimit: 500, note: 'free tier ≈ 500 lookups/day' },
-  abuseipdb: { label: 'AbuseIPDB', defaultLimit: 1000, note: 'free tier = 1000 checks/day' },
-  opentip: { label: 'Kaspersky OpenTIP', defaultLimit: 200, note: 'free tier ≈ 200 lookups/day' },
+  virustotal: { label: 'VirusTotal', defaultLimit: 500, note: 'Free tier: about 500 lookups a day' },
+  abuseipdb: { label: 'AbuseIPDB', defaultLimit: 1000, note: 'Free tier: 1,000 checks a day' },
+  opentip: { label: 'Kaspersky OpenTIP', defaultLimit: 200, note: 'Free tier: about 200 lookups a day' },
 }
 
 const todayUTC = () => new Date().toISOString().slice(0, 10)
 
-// barTone colours the quota bar/badge by how close to the limit (or if throttled).
-const barTone = (pct: number, rateLimited: boolean) =>
-  rateLimited || pct >= 90 ? 'blocked' : pct >= 70 ? 'warn' : 'allow'
+// tone colours the quota meter by how close to the limit it is (or if throttled).
+const tone = (pct: number, rateLimited: boolean) => (rateLimited || pct >= 90 ? 'block' : pct >= 70 ? 'warn' : 'ok')
 
 function ServiceQuota({ serviceKey, rows }: { serviceKey: string; rows: ReputationUsageDay[] }) {
   const meta = SERVICES[serviceKey]
@@ -29,32 +28,29 @@ function ServiceQuota({ serviceKey, rows }: { serviceKey: string; rows: Reputati
   const used = reported ? Math.max(0, today!.limit - today!.remaining) : calls
   const remaining = Math.max(0, limit - used)
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0
-  const tone = barTone(pct, rateLimited > 0)
+  const k = tone(pct, rateLimited > 0)
 
   return (
     <div className="quota">
       <div className="quota-head">
-        <strong>{meta.label}</strong>
-        <span className="muted">{meta.note}</span>
-        <span className={`badge ${tone === 'warn' ? 'info' : tone}`} style={{ marginLeft: 'auto' }}>
-          {pct}% of daily limit
-        </span>
+        <b>{meta.label}</b>
+        <span className={`tag ${k === 'ok' ? '' : k}`}>{pct}% of today’s limit</span>
       </div>
-      <div className="quota-bar" title={`${used} of ${limit} used today`}>
-        <span className={`fill ${tone}`} style={{ width: `${pct}%` }} />
+      <div className="meter" title={`${used} of ${limit} used today`}>
+        <i style={{ width: `${pct}%`, ['--k' as string]: `var(--${k})` }} />
       </div>
-      <div className="quota-stats muted">
+      <div className="quota-stats">
         <span>
-          <strong>{used.toLocaleString()}</strong> / {limit.toLocaleString()} used
-          {reported ? '' : ' (est.)'}
+          <b>{used.toLocaleString()}</b> of {limit.toLocaleString()} used{reported ? '' : ' (estimated)'}
         </span>
         <span>
-          <strong>{remaining.toLocaleString()}</strong> remaining
+          <b>{remaining.toLocaleString()}</b> left
         </span>
         <span>{calls.toLocaleString()} calls today</span>
         {errors > 0 && <span className="warn-text">{errors.toLocaleString()} errors</span>}
-        {rateLimited > 0 && <span className="badge blocked">⚠ rate-limited ×{rateLimited}</span>}
+        {rateLimited > 0 && <span className="bad-text">Rate-limited {rateLimited.toLocaleString()}×</span>}
       </div>
+      <small className="faint">{meta.note}</small>
     </div>
   )
 }
@@ -70,17 +66,17 @@ export default function ReputationUsage({ info }: { info: ClassifierStatus }) {
   ].filter(Boolean) as string[]
   if (enabled.length === 0) return null
   return (
-    <div className="settings-card" style={{ marginBottom: 18 }}>
-      <h3>Reputation API usage</h3>
-      <p className="muted" style={{ textAlign: 'left' }}>
-        Calls made to each reputation service today and how close the key is to its daily quota. The trusted-list /
-        CDN fast-path means most domains never reach these lookups, conserving quota.
+    <section className="card">
+      <h2>Reputation lookups</h2>
+      <p className="sub">
+        Calls to each reputation service today and how close the key is to its daily quota. Trusted and CDN domains skip these
+        lookups, which saves quota.
       </p>
       <div className="quota-grid">
         {enabled.map((k) => (
           <ServiceQuota key={k} serviceKey={k} rows={rows} />
         ))}
       </div>
-    </div>
+    </section>
   )
 }

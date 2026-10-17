@@ -4,7 +4,7 @@ Symptom → fix. Diagnostics use `docker`, `kubectl`, and `dig`. Replace
 `mazedns-agent` / `mazedns-control-plane` with your container names (the fast-deploy
 compose names them `mazedns-agent` and `mazedns-control-plane`).
 
-- [An agent doesn't appear in the Cluster tab](#an-agent-doesnt-appear-in-the-cluster-tab)
+- [An agent doesn't appear on the Agents page](#an-agent-doesnt-appear-on-the-agents-page)
 - [The agent won't start / can't bind port 53](#the-agent-wont-start--cant-bind-port-53)
 - [DNS doesn't resolve through the agent](#dns-doesnt-resolve-through-the-agent)
 - [The dashboard shows only one client](#the-dashboard-shows-only-one-client)
@@ -16,7 +16,7 @@ compose names them `mazedns-agent` and `mazedns-control-plane`).
 
 ---
 
-## An agent doesn't appear in the Cluster tab
+## An agent doesn't appear on the Agents page
 
 Check the agent's logs:
 
@@ -27,7 +27,7 @@ docker logs mazedns-agent --tail 50          # or: kubectl logs -n mazedns ds/dn
 Common causes:
 
 - **Enrollment key mismatch or missing.** The agent's `MAZEDNS_JOIN_TOKEN` must be a
-  valid enrollment key created on the control plane (Cluster → Enrollment keys).
+  valid enrollment key created on the control plane (Agents → Enrollment keys).
   Clustering has no enable flag — the control plane always serves cluster
   endpoints, and the agent joins automatically once `MAZEDNS_CP_URL` and a
   credential (an enrollment key, or a per-node key via `MAZEDNS_NODE_KEY`) are set.
@@ -37,7 +37,7 @@ Common causes:
   the CP's FQDN — pin the IP with `MAZEDNS_CP_IP=<cp-ip>` (TLS still verifies the
   URL host). See [install.md](install.md#reaching-the-control-plane-from-an-agent).
 - **Pending approval.** With **require approval** on (Settings → Access → Cluster
-  policy), the node is created *pending* — approve it in the Cluster tab before it
+  policy), the node is created *pending* — approve it on the Agents page before it
   serves.
 
 ## The agent won't start / can't bind port 53
@@ -72,7 +72,7 @@ dig @<agent-host> doubleclick.net        # should be blocked
 - **No answer at all** → the port isn't reachable (firewall, wrong host port, or the
   agent isn't listening — see above).
 - **Resolves but nothing is blocked** → the agent has no rules yet. Confirm it's
-  enrolled (Cluster tab) and that blocklists/deny rules exist under the control plane.
+  enrolled (Agents page) and that blocklists/deny rules exist under the control plane.
   A brand-new deployment ships no default blocklist.
 - **`SERVFAIL`** → the node may be in maintenance/drain, or all upstreams are failing.
   Check **Settings → Upstream resolvers** and the agent logs for `forward failed`.

@@ -77,7 +77,7 @@ docker compose exec control-plane /control-plane reset-admin --username admin
 
 ## Enrollment in one paragraph
 
-You create **enrollment keys** in the UI (Cluster → Enrollment keys), each with an
+You create **enrollment keys** in the UI (Agents → Enrollment keys), each with an
 optional expiry and maximum number of uses. An agent starts with the control-plane
 URL + an enrollment key (passed as `MAZEDNS_JOIN_TOKEN`) + a node name,
 self-registers, and receives a per-node key it stores locally and the control plane
@@ -103,7 +103,7 @@ In the **Cluster** tab, deleting an agent offers two intents:
 **Residual limitation:** revocation is keyed on the node's stored identity (in its
 `/data`). An agent whose `/data` was **wiped** enrolls with *no* identity, so it
 can't be matched to a tombstone and would join as a new node. To keep such an agent
-out, **revoke the enrollment key it holds** (Cluster → Enrollment keys) and/or turn
+out, **revoke the enrollment key it holds** (Agents → Enrollment keys) and/or turn
 on **require approval** so new joins wait for an admin.
 
 ---
@@ -133,7 +133,7 @@ Then:
 - Open `http://localhost:8080` and complete the wizard (choose local or SSO auth,
   create your admin, DNS defaults, and your first enrollment key).
 - Add the enrollment key it gives you and start the agent. Create more keys anytime
-  under Cluster → Enrollment keys:
+  under Agents → Enrollment keys:
 
   ```bash
   echo "MAZEDNS_JOIN_TOKEN=<enrollment-key>" >> .env
@@ -228,7 +228,7 @@ docker run -d --name mazedns-agent \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
   -e MAZEDNS_API_PORT=9090 \
   ghcr.io/amaze-labs/mazedns-agent:latest
-  # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Cluster →
+  # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Agents →
   # Enrollment keys), not a shared password. It only lets an agent enroll; the
   # control plane then issues a per-node key it rotates automatically.
   # MAZEDNS_NODE_NAME is only the initial display label. The control plane assigns
@@ -274,7 +274,7 @@ kind: Secret
 metadata: { name: mazedns-secrets, namespace: mazedns }
 type: Opaque
 stringData:
-  # An enrollment key created in the UI (Cluster → Enrollment keys). Agents present
+  # An enrollment key created in the UI (Agents → Enrollment keys). Agents present
   # it to self-enroll; it is never used to serve DNS. (The first admin is created in
   # the setup wizard, not via an env var — there is no admin-password secret.)
   join-token: "<enrollment-key-from-the-wizard>"

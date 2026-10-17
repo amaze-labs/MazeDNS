@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"context"
+	"net"
 	stdruntime "runtime"
 	"strings"
 	"testing"
@@ -95,5 +96,45 @@ func TestServerServesUDP(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("no response from server over UDP")
+	}
+}
+
+// Shutdown during startup must stop the server: ListenAndServe returns and no
+// listener is left bound (before, a listener not yet serving ignored Shutdown
+// and started anyway).
+func TestServerShutdownDuringStartup(t *testing.T) {
+	r := New(Options{})
+	r.rt.Store(&runtime{blockMode: "nxdomain"})
+	const addr = "127.0.0.1:15354"
+	for i := 0; i < 20; i++ {
+		s := NewServer(addr, r)
+		done := make(chan error, 1)
+		go func() { done <- s.ListenAndServe() }()
+		if i%2 == 1 {
+			time.Sleep(time.Duration(i) * 100 * time.Microsecond) // land at different startup stages
+		}
+		s.Shutdown(context.Background())
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("round %d: ListenAndServe still running after Shutdown", i)
+		}
+		// Nothing may still hold the port. Retry briefly: the TCP listener's
+		// goroutine may only now be closing its socket.
+		var free bool
+		for j := 0; j < 50 && !free; j++ {
+			if pc, err := net.ListenPacket("udp", addr); err == nil {
+				pc.Close()
+				if l, err := net.Listen("tcp", addr); err == nil {
+					l.Close()
+					free = true
+					continue
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !free {
+			t.Fatalf("round %d: port still bound after Shutdown", i)
+		}
 	}
 }

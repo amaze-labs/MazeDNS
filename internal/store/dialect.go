@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"regexp"
 	"strconv"
@@ -114,6 +115,13 @@ func (d *dbh) execUntracked(q string, a ...any) (sql.Result, error) {
 // such callers bump again once they have read the result.
 func (d *dbh) Query(q string, a ...any) (*sql.Rows, error) {
 	rows, err := d.DB.Query(translate(q, d.pg), a...)
+	d.bumpIf(q)
+	return rows, err
+}
+
+// QueryContext is Query bounded by ctx, for reads that can scan a lot of rows.
+func (d *dbh) QueryContext(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
+	rows, err := d.DB.QueryContext(ctx, translate(q, d.pg), a...)
 	d.bumpIf(q)
 	return rows, err
 }

@@ -113,7 +113,7 @@ cluster:                       # control-plane <-> dns-agent config replication
   # serves cluster endpoints; an agent joins whenever cp_url + a credential
   # (join_token/node_key) are set, otherwise it runs standalone.
   # --- control-plane side ---
-  # Enrollment keys are UI-managed (Cluster → Enrollment keys), with optional
+  # Enrollment keys are UI-managed (Agents → Enrollment keys), with optional
   # expiry and max-uses. Agents present a key as MAZEDNS_JOIN_TOKEN.
   join_token: ""               # DEPRECATED: if set, auto-imported once as a never-expiring enrollment key (prefer the UI). (or MAZEDNS_JOIN_TOKEN)
   require_approval: false      # hold self-enrolled agents until an admin approves them (or MAZEDNS_REQUIRE_APPROVAL)
@@ -140,7 +140,7 @@ auth:
   # (trust-on-first-use: whoever reaches the fresh control plane first completes
   # setup, so keep the port private until you're done) and no admin username or
   # password here. session_ttl and oidc below are
-  # SEED-ONLY (first boot); afterwards edit them under Settings → Access & SSO.
+  # SEED-ONLY (first boot); afterwards edit them under Settings → Access & sign-in.
   # Reset a lost admin:  control-plane reset-admin --username admin
   enabled: true                # require login for the API + UI (enforced by default)
   session_ttl: "24h"           # seed only

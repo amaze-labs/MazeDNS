@@ -124,7 +124,7 @@ Steady state is kept cheap on both sides:
   expected-version column is served from the same cache.
 
 **Enrollment (key-based auto-join).** Agents self-register with an **enrollment key**
-— created in the UI (Cluster → Enrollment keys), each with an optional expiry and
+— created in the UI (Agents → Enrollment keys), each with an optional expiry and
 max-uses and stored hashed (a deprecated `cluster.join_token` in config is imported
 once as a never-expiring key). The env var `MAZEDNS_JOIN_TOKEN` carries the key. An
 agent boots with the control-plane URL, an enrollment key, and a node name, and
@@ -133,7 +133,7 @@ SHA-256 hash lookup (checking expiry / use count / revocation), assigns the node
 immutable **UUID identity**, issues a per-node API key, and returns both. The agent
 persists its node id + key locally (in its `app_meta`) for all later polls. If the
 control plane sets `require_approval`, the node is created **pending** and cannot
-pull config until an admin approves it in the Cluster tab. An agent that loses its
+pull config until an admin approves it on the Agents page. An agent that loses its
 key (or whose key is revoked/rotated) re-enrolls automatically by presenting its
 stored node id + current key, so it re-attaches to the SAME node. A fixed per-node
 key can also be issued manually from the UI and supplied via `MAZEDNS_NODE_KEY`.

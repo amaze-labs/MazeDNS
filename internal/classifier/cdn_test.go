@@ -26,3 +26,22 @@ func TestIsCDN(t *testing.T) {
 		}
 	}
 }
+
+// A customer subdomain on a CDN-run hosting platform gets its own verdict; the
+// provider's own infrastructure stays trusted.
+func TestCDNInfrastructure(t *testing.T) {
+	for domain, want := range map[string]bool{
+		"cloudfront.net":                true,
+		"akamaiedge.net":                true,
+		"googleapis.com":                true,
+		"evil.web.app":                  false,
+		"phish.firebaseapp.com":         false,
+		"x.azurewebsites.net":           false,
+		"d111111abcdef8.cloudfront.net": false,
+		"example.com":                   false,
+	} {
+		if got := cdnInfrastructure(domain); got != want {
+			t.Errorf("cdnInfrastructure(%q) = %v, want %v", domain, got, want)
+		}
+	}
+}

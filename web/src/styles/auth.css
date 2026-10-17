@@ -1,0 +1,457 @@
+/* Sign-in page and first-boot setup wizard (both render outside the app shell). */
+
+/* ---------------------------------------------------------------- Sign in */
+.auth-login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+}
+.auth-login .art-side {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 40px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.auth-login .maze {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.55;
+}
+.auth-login .art-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 18px;
+}
+.auth-login blockquote {
+  position: relative;
+  margin: 0;
+  max-width: 34ch;
+  font-size: 22px;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  font-weight: 500;
+}
+.auth-login blockquote small {
+  display: block;
+  margin-top: 12px;
+  font-size: 13.5px;
+  color: var(--muted);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.auth-login .form-side {
+  display: grid;
+  place-items: center;
+  padding: 40px 24px;
+}
+.auth-form {
+  width: 100%;
+  max-width: 360px;
+  display: grid;
+  gap: 16px;
+}
+.auth-form h1 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+}
+.auth-form .lede {
+  margin: 4px 0 6px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.auth-form .lede .mono {
+  font-size: 13px;
+  color: var(--text);
+}
+.auth-login .auth-form .error {
+  margin: 0;
+}
+.auth-form .or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.auth-form .or::before,
+.auth-form .or::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.auth-form .foot {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.auth-form .foot code {
+  font-size: 12px;
+}
+
+/* ----------------------------------------------------------------- Setup */
+.auth-setup {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+.auth-setup .setup-side {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 36px 28px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+.auth-setup .setup-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 17px;
+}
+.auth-setup ol.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.auth-setup ol.steps li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 22px;
+}
+.auth-setup ol.steps li::before {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 28px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+.auth-setup ol.steps li:last-child::before {
+  display: none;
+}
+.auth-setup ol.steps .n {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  border: 2px solid var(--line);
+  color: var(--muted);
+  background: var(--panel);
+}
+.auth-setup ol.steps li.done .n {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.auth-setup ol.steps li.done::before {
+  background: var(--accent);
+}
+.auth-setup ol.steps li.on .n {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.auth-setup ol.steps li > div {
+  min-width: 0;
+  padding-top: 3px;
+}
+.auth-setup ol.steps b {
+  display: block;
+  font-weight: 600;
+}
+.auth-setup ol.steps li:not(.on):not(.done) b {
+  color: var(--muted);
+  font-weight: 500;
+}
+.auth-setup ol.steps small {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.auth-setup .setup-side > .callout {
+  margin: auto 0 0;
+}
+.auth-setup .callout > svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--k);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex: none;
+  margin-top: 2px;
+}
+.auth-setup .callout .spin {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--k);
+  animation: spin 0.9s linear infinite;
+}
+
+.auth-setup .stage {
+  padding: 56px 48px 64px;
+  max-width: 760px;
+  min-width: 0;
+}
+.auth-setup .stage h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+.auth-setup .stage .lede {
+  color: var(--muted);
+  margin: 0 0 24px;
+  max-width: 62ch;
+}
+.auth-setup .stage .error {
+  margin: 0 0 18px;
+}
+.auth-setup .block {
+  display: grid;
+  gap: 14px;
+  margin-top: 22px;
+}
+.auth-setup .block h2 {
+  font-size: 15px;
+  margin: 0;
+}
+.auth-setup .block > p {
+  margin: -6px 0 0;
+}
+.auth-setup .block > .callout {
+  margin: 0;
+}
+.auth-setup .two,
+.auth-setup .cred {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.auth-setup .copy-row {
+  display: flex;
+  gap: 8px;
+}
+.auth-setup .copy-row input {
+  flex: 1;
+}
+
+/* Choice cards: title and subtitle both left-aligned. */
+.auth-setup .choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.auth-setup .choice label {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  justify-items: start;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.auth-setup .choice label:hover {
+  border-color: color-mix(in srgb, var(--text) 25%, var(--line));
+}
+.auth-setup .choice label.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.auth-setup .choice input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.auth-setup .choice label:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.auth-setup .choice b {
+  font-weight: 600;
+}
+.auth-setup .choice small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.auth-setup .check-row.boxed {
+  margin-top: 22px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.auth-setup .block > .check-row.boxed {
+  margin-top: 0;
+}
+.auth-setup .check-row.toggle .track {
+  margin-top: 2px;
+}
+
+/* The agent command: one line per flag, scrolls sideways instead of wrapping. */
+.auth-setup .keybox {
+  position: relative;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.auth-setup .keybox-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.auth-setup .keybox-head span {
+  flex: 1;
+}
+.auth-setup .keybox pre {
+  margin: 0;
+  padding: 14px 18px 16px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.75;
+  white-space: pre;
+  overflow-x: auto;
+}
+.auth-setup .keybox .hl {
+  color: var(--accent);
+}
+
+.auth-setup .stage-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------------------------------------------------------------- Mobile */
+@media (max-width: 900px) {
+  .auth-login {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+  .auth-login .art-side {
+    min-height: 200px;
+    padding: 24px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .auth-login blockquote {
+    font-size: 18px;
+  }
+  .auth-login .maze {
+    opacity: 0.3;
+  }
+  .auth-login .form-side {
+    place-items: start center;
+    padding: 28px 16px 40px;
+  }
+
+  .auth-setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .auth-setup .setup-side {
+    position: static;
+    height: auto;
+    padding: 18px 16px;
+    gap: 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .auth-setup ol.steps {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+  .auth-setup ol.steps li {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    text-align: center;
+    gap: 4px;
+    padding: 0;
+  }
+  .auth-setup ol.steps li::before {
+    left: calc(50% + 18px);
+    right: calc(-50% + 18px);
+    top: 13px;
+    bottom: auto;
+    width: auto;
+    height: 2px;
+  }
+  .auth-setup ol.steps li > div {
+    padding: 0;
+    max-width: 100%;
+  }
+  .auth-setup ol.steps b {
+    font-size: 12px;
+  }
+  .auth-setup ol.steps small {
+    display: none;
+  }
+  .auth-setup .setup-side > .callout {
+    margin: 0;
+  }
+  .auth-setup .stage {
+    padding: 24px 16px 40px;
+  }
+  .auth-setup .stage h1 {
+    font-size: 22px;
+  }
+  .auth-setup .two,
+  .auth-setup .cred,
+  .auth-setup .choice {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .auth-setup .cred > span:empty {
+    display: none;
+  }
+  .auth-setup .stage-actions .btn.primary {
+    flex: 1;
+  }
+}
+.auth-setup .field > small code {
+  white-space: nowrap;
+}
+.auth-setup .field > small.bad-text {
+  color: var(--block);
+}

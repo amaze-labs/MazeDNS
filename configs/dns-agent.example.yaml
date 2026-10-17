@@ -88,7 +88,7 @@ cluster:                       # agent side of config replication
   # No enable flag — the agent joins automatically once cp_url + a credential
   # (join_token/node_key) are set; without cp_url it runs standalone.
   cp_url: ""                   # control-plane base URL, e.g. https://dns.example.com (or MAZEDNS_CP_URL)
-  join_token: ""               # enrollment key to self-enroll (create one in the control-plane UI: Cluster → Enrollment keys).
+  join_token: ""               # enrollment key to self-enroll (create one in the control-plane UI: Agents → Enrollment keys).
                                # The control plane issues a per-node key it then rotates automatically. (or MAZEDNS_JOIN_TOKEN)
   master_ip: ""                # pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still verifies the URL host
   node_name: ""                # INITIAL display label (or MAZEDNS_NODE_NAME; defaults to the hostname).

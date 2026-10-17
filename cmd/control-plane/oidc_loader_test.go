@@ -88,6 +88,8 @@ func TestOIDCLoaderApplySupersedesRetry(t *testing.T) {
 		t.Fatal("new provider not installed")
 	}
 	// The boot retry is cancelled: no further attempts, and it can't overwrite.
+	// An attempt already in flight when Apply cancelled may still finish.
+	time.Sleep(10 * time.Millisecond)
 	n := calls.Load()
 	time.Sleep(20 * time.Millisecond)
 	if calls.Load() != n {

@@ -3,7 +3,7 @@ import Dashboard from './components/Dashboard'
 import Queries from './components/Queries'
 import Clients from './components/Clients'
 import Filtering from './components/Filtering'
-import Rewrites from './components/Rewrites'
+import LocalDNS from './components/LocalDNS'
 import Cluster from './components/Cluster'
 import Logs from './components/Logs'
 import Settings from './components/Settings'
@@ -17,8 +17,8 @@ import { useTheme } from './theme'
 import { useNavBadges } from './useNavBadges'
 import { api, UNAUTHORIZED, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'overview' | 'queries' | 'clients' | 'filtering' | 'rewrites' | 'agents' | 'logs' | 'settings' | 'account'
-const ALL_TABS: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'rewrites', 'agents', 'logs', 'settings', 'account']
+type Tab = 'overview' | 'queries' | 'clients' | 'filtering' | 'local-dns' | 'agents' | 'logs' | 'settings' | 'account'
+const ALL_TABS: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'local-dns', 'agents', 'logs', 'settings', 'account']
 
 // Sidebar presentation: icon + human label per tab. `extra` tabs drop out of the
 // mobile bottom bar, which only has room for the everyday ones.
@@ -27,15 +27,22 @@ const TAB_META: Record<Tab, { icon: IconName; label: string; extra?: boolean }> 
   queries: { icon: 'queries', label: 'Queries' },
   clients: { icon: 'clients', label: 'Clients' },
   filtering: { icon: 'filtering', label: 'Filtering' },
-  rewrites: { icon: 'rewrites', label: 'Rewrites', extra: true },
+  'local-dns': { icon: 'local-dns', label: 'Local DNS', extra: true },
   agents: { icon: 'cluster', label: 'Agents' },
   logs: { icon: 'logs', label: 'Logs', extra: true },
   settings: { icon: 'settings', label: 'Settings' },
   account: { icon: 'account', label: 'Account' },
 }
 
-// Paths from before the redesign keep working.
-const ALIASES: Record<string, Tab> = { '': 'overview', dashboard: 'overview', cluster: 'agents', requests: 'queries', ai: 'filtering' }
+// Paths from before the redesign and page renames keep working.
+const ALIASES: Record<string, Tab> = {
+  '': 'overview',
+  dashboard: 'overview',
+  cluster: 'agents',
+  requests: 'queries',
+  ai: 'filtering',
+  rewrites: 'local-dns',
+}
 
 // The current tab is reflected in the URL path (/overview, /queries, …) so
 // pages are linkable and the browser back/forward buttons work.
@@ -135,7 +142,7 @@ export default function App() {
 
   // 'account' is reached from the avatar, not the nav.
   const classifierOn = !!(info.classifier_available && info.classifier_enabled)
-  const tabs: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'rewrites']
+  const tabs: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'local-dns']
   if (clusterOn) tabs.push('agents')
   // Process logs are admin-only server-side (they can carry client IPs and
   // usernames), so don't offer the tab to readonly users at all.
@@ -207,7 +214,7 @@ export default function App() {
         {shown === 'queries' && <Queries />}
         {shown === 'clients' && <Clients />}
         {shown === 'filtering' && <Filtering classifier={classifierOn} />}
-        {shown === 'rewrites' && <Rewrites />}
+        {shown === 'local-dns' && <LocalDNS />}
         {shown === 'agents' && <Cluster />}
         {shown === 'logs' && <Logs />}
         {shown === 'settings' && <Settings onClassifierChange={() => refresh()} />}

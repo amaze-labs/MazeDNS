@@ -7,7 +7,7 @@ replicate it automatically. You never edit files on an agent.
 - [Dashboard](#dashboard)
 - [Upstreams, cache, and DNS behavior](#upstreams-cache-and-dns-behavior)
 - [Blocklists and allow/deny rules](#blocklists-and-allowdeny-rules)
-- [Rewrites and local records](#rewrites-and-local-records)
+- [Local DNS: local records](#local-dns-local-records)
 - [Client names](#client-names)
 - [Pause blocking](#pause-blocking)
 - [Clustering operations](#clustering-operations)
@@ -64,7 +64,7 @@ Agents older than the control plane ignore replicated settings until upgraded.
   [Upstream strategy](configuration.md#upstream-strategy).
 - **Conditional forwarders** — send a domain suffix to specific upstreams
   (split-horizon), e.g. `corp.internal` → your internal resolver. Cluster-wide
-  forwarders are managed on the **Rewrites** tab, can be scoped to specific
+  forwarders are managed on the **Local DNS** page, can be scoped to specific
   nodes or sites, and are pushed to the agents automatically; they override a
   node's own (YAML-seeded) forwarder for the same suffix.
 - **Cache** — enable/size it and clamp TTLs (`min_ttl`/`max_ttl`).
@@ -94,9 +94,11 @@ File-based blocklists mounted into an agent (`MAZEDNS_BLOCKLIST_FILES`) are load
 **locally** on that agent and are not replicated — mount them on every agent that
 should use them.
 
-## Rewrites and local records
+## Local DNS: local records
 
-Add local answers (LAN hosts, split-horizon overrides) under **Rewrites**:
+Add local answers (LAN hosts, split-horizon overrides) under **Local DNS →
+Local records**. The API calls these entries *rewrites* (`/api/rewrites`), as
+does the rest of this guide:
 
 - Exact records — `nas.lan → A 10.0.0.5`, plus `AAAA` and `CNAME`.
 - Wildcards — `*.lab.lan → A 10.0.0.9` answers every subdomain.

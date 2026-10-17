@@ -126,6 +126,8 @@ type Worker struct {
 	threat  *setHolder
 	whois   *WhoisCache
 	rep     *RepCache
+
+	servesZone func(ctx context.Context, domain, ns string) bool // overridden in tests
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -140,6 +142,8 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		threat:  newSetHolder("threat", true), // count how many feeds list each domain
 		whois:   NewWhoisCache(),
 		rep:     NewRepCache(),
+
+		servesZone: servesZone,
 	}
 	// Whenever the threat set (re)loads, re-check existing clean verdicts against it
 	// so domains that became malicious after we last saw them get flagged.
@@ -376,16 +380,9 @@ func (w *Worker) process(ctx context.Context, domain string) {
 			slog.Warn("whois lookup failed — verdict scored without domain age", "domain", domain, "err", werr)
 		}
 	}
-	// Only RDAP (HTTPS) is authentic enough to grant trust: port-43 WHOIS is plain
-	// TCP, so an on-path attacker could claim a trusted brand's nameservers.
-	for _, ns := range whois.Nameservers {
-		if whois.Source != "rdap" {
-			break
-		}
-		if reg := RegisteredDomain(ns); reg != "" && (w.trusted.has(reg) || IsCDN(ns)) {
-			w.recordTrusted(ScoreInput{Domain: domain, NSTrustedOn: reg, Whois: whois})
-			return
-		}
+	if reg := w.trustedNameservers(ctx, domain, whois); reg != "" {
+		w.recordTrusted(ScoreInput{Domain: domain, NSTrustedOn: reg, Whois: whois})
+		return
 	}
 
 	// Not trusted: spend the remaining signals. Threat-feed membership is a cheap
@@ -483,6 +480,31 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if inserted && status == store.ClassAuto && w.reload != nil {
 		_ = w.reload()
 	}
+}
+
+// trustedNameservers returns the trusted company whose own nameservers serve
+// domain (see nscheck.go), or "". Only RDAP (HTTPS) data counts: port-43 WHOIS
+// is plain TCP, so an on-path attacker could claim a brand's nameservers. A
+// shared DNS host never counts, and the nameserver must actually answer for the
+// zone — listing a brand's nameservers at a registrar is free.
+func (w *Worker) trustedNameservers(ctx context.Context, domain string, whois WhoisInfo) string {
+	if whois.Source != "rdap" {
+		return ""
+	}
+	checked := 0
+	for _, ns := range whois.Nameservers {
+		reg := RegisteredDomain(ns)
+		if reg == "" || sharedDNSHost(reg) || !w.trusted.has(reg) {
+			continue
+		}
+		if w.servesZone(ctx, domain, ns) {
+			return reg
+		}
+		if checked++; checked >= 2 { // bound the time spent on a lame delegation
+			return ""
+		}
+	}
+	return ""
 }
 
 // recordTrusted stores a clean verdict for a domain the fast paths proved

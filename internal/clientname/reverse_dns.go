@@ -1,4 +1,4 @@
-package netbird
+package clientname
 
 import (
 	"encoding/json"

@@ -6,7 +6,6 @@ import {
   type UpstreamStrategy,
   type ClassifierSettings,
   type ClassifierStatus,
-  type NetbirdSettings,
   type VMExportSettings,
   type VLExportSettings,
   type CPSettings,
@@ -143,7 +142,6 @@ const VIEW_LABEL: Record<View, string> = {
 type Saved = {
   s: S | null
   cls: ClassifierSettings | null
-  nb: NetbirdSettings | null
   vm: VMExportSettings | null
   vl: VLExportSettings | null
   cp: CPSettings | null
@@ -263,12 +261,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [testing, setTesting] = useState(false)
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  // NetBird client-identity integration (separate endpoint).
-  const [nb, setNb] = useState<NetbirdSettings | null>(null)
-  const [nbInfo, setNbInfo] = useState<{ has_token: boolean; peer_count: number } | null>(null)
-  const [nbTesting, setNbTesting] = useState(false)
-  const [nbMsg, setNbMsg] = useState<{ ok: boolean; text: string } | null>(null)
-
   // VictoriaMetrics metrics export.
   const [vm, setVm] = useState<VMExportSettings | null>(null)
   const [vmHasPassword, setVmHasPassword] = useState(false)
@@ -292,7 +284,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [auditErr, setAuditErr] = useState('')
   const [auditAll, setAuditAll] = useState(false)
 
-  const [saved, setSaved] = useState<Saved>({ s: null, cls: null, nb: null, vm: null, vl: null, cp: null })
+  const [saved, setSaved] = useState<Saved>({ s: null, cls: null, vm: null, vl: null, cp: null })
 
   const [view, setView] = useState<View>('resolver')
 
@@ -351,14 +343,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setSaved((p) => ({ ...p, cls: st.settings }))
       })
       .catch(() => setCls(null))
-    api
-      .netbird()
-      .then((r) => {
-        setNb(r.settings)
-        setNbInfo({ has_token: r.has_token, peer_count: r.peer_count })
-        setSaved((p) => ({ ...p, nb: r.settings }))
-      })
-      .catch(() => setNb(null))
     if (r === null || r === 'admin') loadCP()
     api
       .metricsExport()
@@ -406,20 +390,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     }
   }
 
-  const testNetbird = async () => {
-    if (!nb) return
-    setNbTesting(true)
-    setNbMsg(null)
-    try {
-      const r = await api.testNetbird(nb)
-      setNbMsg(r.ok ? { ok: true, text: `Connected: ${r.peer_count} peers found.` } : { ok: false, text: r.error || 'Test failed.' })
-    } catch (e: any) {
-      setNbMsg({ ok: false, text: e.message })
-    } finally {
-      setNbTesting(false)
-    }
-  }
-
   const genMetricsToken = async () => {
     setTokenMsg(null)
     try {
@@ -447,7 +417,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     resolver:
       !!s && !!saved.s && !same(resolverBody(s, upstreams, fwd), resolverBody(saved.s, (saved.s.upstreams || []).join('\n'), toFwdRows(saved.s.forwarders))),
     classification: !!cls && !same(cls, saved.cls),
-    netbird: !!nb && !same(nb, saved.nb),
     vm: !!vm && !same(vm, saved.vm),
     vl: !!vl && !same(vl, saved.vl),
     access: !!cp && !same(cp, saved.cp),
@@ -456,7 +425,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     resolver: dirty.resolver,
     access: dirty.access,
     classification: dirty.classification,
-    integrations: dirty.netbird || dirty.vm || dirty.vl,
+    integrations: dirty.vm || dirty.vl,
     backup: false,
   }
   const anyDirty = Object.values(dirtyViews).some(Boolean)
@@ -468,7 +437,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const discard = () => {
     if (saved.s) applySettings(saved.s)
     setCls(saved.cls)
-    setNb(saved.nb)
     setVm(saved.vm)
     setVl(saved.vl)
     setCp(saved.cp)
@@ -477,7 +445,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   }
 
   // saveAll persists every section with unsaved changes behind one button:
-  // operational settings, classifier, NetBird, metrics/log export and access.
+  // operational settings, classifier, metrics/log export and access.
   // Stops at the first failure; sections saved before it stay saved.
   const saveAll = async () => {
     if (readonly) return
@@ -494,11 +462,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setSaved((p) => ({ ...p, cls: v }))
         api.classifier().then(setClsInfo).catch(() => {})
         onClassifierChange?.()
-      }
-      if (dirty.netbird && nb) {
-        const v = await api.saveNetbird(nb)
-        setNb(v)
-        setSaved((p) => ({ ...p, nb: v }))
       }
       if (dirty.vm && vm) {
         const v = await api.saveMetricsExport(vm)
@@ -1440,47 +1403,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // -------------------------------------------------------------- Integrations
   const integrationsView = (
     <>
-      {!nb && !vm && !vl && !cp && <Spinner label="Loading integrations…" />}
-      {nb && (
-        <Group title="NetBird" desc="Name clients after their NetBird peer instead of a reverse-DNS lookup.">
-          <Toggle
-            label="Look up NetBird peers"
-            desc={
-              nbInfo
-                ? `Matches client addresses to peer names through the NetBird API. Mapping ${nbInfo.peer_count} peer${nbInfo.peer_count === 1 ? '' : 's'} now.`
-                : 'Matches client addresses to peer names through the NetBird API.'
-            }
-            checked={nb.enabled}
-            onChange={(v) => setNb({ ...nb, enabled: v })}
-          />
-          <div className="row2">
-            <Field label="API URL">
-              <input
-                className="mono"
-                value={nb.api_url}
-                onChange={(e) => setNb({ ...nb, api_url: e.target.value })}
-                placeholder="https://api.netbird.io"
-              />
-            </Field>
-            <Field label="Personal access token" hint={nbInfo?.has_token ? 'Saved. Leave empty to keep it.' : undefined}>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={nb.token}
-                onChange={(e) => setNb({ ...nb, token: e.target.value })}
-                placeholder={nbInfo?.has_token ? '••••••••' : 'nbp_…'}
-              />
-            </Field>
-          </div>
-          <div className="rw-only">
-            <button type="button" className="btn sm" onClick={testNetbird} disabled={nbTesting}>
-              {nbTesting ? <Spinner label="Testing…" /> : 'Test connection'}
-            </button>
-          </div>
-          <Msg m={nbMsg} />
-        </Group>
-      )}
-
+      {!vm && !vl && !cp && <Spinner label="Loading integrations…" />}
       {cp && !readonly && (
         <Group title="Metrics endpoint" desc={<>Protect the control plane’s <code>/metrics</code> with a bearer token.</>}>
           <div className="check-row">

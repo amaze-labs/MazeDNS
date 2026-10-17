@@ -23,11 +23,11 @@ import (
 
 	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/classifier"
+	"github.com/IPMaze/MazeDNS/internal/clientname"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
-	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/ruleimport"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -55,7 +55,7 @@ type Server struct {
 	classifierAvailable bool // master only — classifier endpoints/tab are offered
 	cls                 classifierStatus
 	enqueue             func(string) // feed classifier from ingested agent logs (may be nil)
-	enricher            *netbird.Enricher
+	enricher            *clientname.Enricher
 	requireApproval     bool          // hold self-enrolled agents until an admin approves
 	keyMaxAge           time.Duration // rotate a node's key once it exceeds this age (0 = disabled)
 	keyGrace            time.Duration // overlap window a rotated-out node key stays valid
@@ -123,8 +123,8 @@ func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
 // seen domains.
 func (s *Server) SetClassifierEnqueue(fn func(name string)) { s.enqueue = fn }
 
-// SetEnricher wires the running NetBird/reverse-DNS client enricher into the API.
-func (s *Server) SetEnricher(e *netbird.Enricher) { s.enricher = e }
+// SetEnricher wires the running client-name enricher into the API.
+func (s *Server) SetEnricher(e *clientname.Enricher) { s.enricher = e }
 
 // New constructs the HTTP server. In worker mode only /healthz and /metrics are
 // served; in master mode the control-plane API and web UI are mounted, plus the
@@ -209,9 +209,6 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/clients/detail", s.requireRole(roleReadonly, s.cached(s.getClientDetail)))
 		mux.HandleFunc("PUT /api/clients/name", s.requireRole(roleAdmin, s.putClientName))
 		mux.HandleFunc("GET /api/clients/resolve", s.requireRole(roleReadonly, s.resolveClients))
-		mux.HandleFunc("GET /api/netbird", s.requireRole(roleReadonly, s.getNetbird))
-		mux.HandleFunc("PUT /api/netbird", s.requireSession(roleAdmin, s.putNetbird))
-		mux.HandleFunc("POST /api/netbird/test", s.requireSession(roleAdmin, s.testNetbird))
 		mux.HandleFunc("GET /api/reverse-dns", s.requireRole(roleReadonly, s.getReverseDNS))
 		mux.HandleFunc("PUT /api/reverse-dns", s.requireRole(roleAdmin, s.putReverseDNS))
 

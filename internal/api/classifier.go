@@ -224,7 +224,7 @@ func (s *Server) getWhois(w http.ResponseWriter, r *http.Request) {
 }
 
 // getDomainClients lists the clients that queried a domain (and its subdomains),
-// enriched with a NetBird peer name / reverse-DNS hostname when available — so an
+// enriched with a static / rewrite / reverse-DNS name when available — so an
 // operator can see who is reaching a flagged domain.
 func (s *Server) getDomainClients(w http.ResponseWriter, r *http.Request) {
 	domain := classifier.RegisteredDomain(r.URL.Query().Get("domain"))

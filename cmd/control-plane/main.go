@@ -26,11 +26,11 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/boot"
 	"github.com/IPMaze/MazeDNS/internal/classifier"
+	"github.com/IPMaze/MazeDNS/internal/clientname"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
-	"github.com/IPMaze/MazeDNS/internal/netbird"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 	"github.com/IPMaze/MazeDNS/internal/version"
@@ -132,10 +132,14 @@ func main() {
 
 	warnRemovedBootstrapNodes(os.Getenv("MAZEDNS_CLUSTER_BOOTSTRAP_NODES"))
 
-	// NetBird/reverse-DNS client enricher (turns client IPs into peer/hostnames).
-	enricher := netbird.NewEnricher(
-		func() netbird.Settings { return netbird.LoadSettings(st, netbird.Settings{}) },
-		func() map[string]string { return netbird.LoadResolvers(st) },
+	// The NetBird integration was removed: drop its stored settings (and API token).
+	if err := st.DeleteMeta(clientname.LegacyNetbirdSettingsKey); err != nil {
+		slog.Warn("remove legacy NetBird settings", "err", err)
+	}
+
+	// Client-name enricher (turns client IPs into static/rewrite/PTR hostnames).
+	enricher := clientname.NewEnricher(
+		func() map[string]string { return clientname.LoadResolvers(st) },
 		st,
 	)
 	go enricher.Run(context.Background())

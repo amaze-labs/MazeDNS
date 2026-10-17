@@ -211,17 +211,11 @@ export interface Classification {
 
 export interface DomainClient {
   client: string
-  name: string // enriched display name (NetBird peer / reverse-DNS)
-  source: string // "netbird" | "rdns" | ""
+  name: string // enriched display name (static / rewrite / reverse-DNS)
+  source: string // "manual" | "rewrite" | "rdns" | ""
   count: number
   blocked: number
   last_seen: number
-}
-
-export interface NetbirdSettings {
-  enabled: boolean
-  api_url: string
-  token: string
 }
 
 export interface VMExportSettings {
@@ -243,8 +237,8 @@ export interface VLExportSettings {
 }
 
 export interface ClientIdentity {
-  name: string // static name / NetBird peer / rewrite name / reverse-DNS hostname ("" if unknown)
-  source: string // "manual" | "netbird" | "rewrite" | "rdns" | ""
+  name: string // static name / rewrite name / reverse-DNS hostname ("" if unknown)
+  source: string // "manual" | "rewrite" | "rdns" | ""
   aliases?: string[] // other names from the same source (several rewrites -> one IP)
 }
 
@@ -740,19 +734,9 @@ export const api = {
       j<{ domain: string; clients: DomainClient[]; since: number }>,
     ),
 
-  // Resolve client IPs to identities (NetBird peer / reverse-DNS), batched.
+  // Resolve client IPs to identities (static / rewrite / reverse-DNS), batched.
   resolveClients: (ips: string[]) =>
     fetch(`/api/clients/resolve?ips=${encodeURIComponent(ips.join(','))}`).then(j<Record<string, ClientIdentity>>),
-
-  // NetBird client-identity integration
-  netbird: () =>
-    fetch('/api/netbird').then(j<{ settings: NetbirdSettings; has_token: boolean; peer_count: number }>),
-  saveNetbird: (s: NetbirdSettings) =>
-    fetch('/api/netbird', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<NetbirdSettings>),
-  testNetbird: (s: NetbirdSettings) =>
-    fetch('/api/netbird/test', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(s) }).then(
-      j<{ ok: boolean; error?: string; peer_count?: number }>,
-    ),
 
   // VictoriaMetrics metrics export
   metricsExport: () =>

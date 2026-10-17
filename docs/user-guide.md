@@ -151,14 +151,13 @@ Wherever a client IP is shown (Dashboard, Requests, Clients, domain drill-downs)
 the UI labels it with a name, taking the first source that knows the IP:
 
 1. **static** — a hostname you assigned on the client's detail view (Clients tab).
-2. **netbird** — the NetBird peer name, when the NetBird integration is enabled.
-3. **rewrite** — the name of an enabled, non-wildcard `A`/`AAAA` rewrite pointing
+2. **rewrite** — the name of an enabled, non-wildcard `A`/`AAAA` rewrite pointing
    at the IP. When several rewrites point at it, the shortest name (then
    alphabetical) is shown and the others appear in the tooltip (the badge reads
    `rewrite +N`). With scoped rewrites, the ones served by the node that handles
    the client win; if that node serves none for the IP, any enabled rewrite
    naming it is used. Rewrite changes rename clients immediately.
-4. **reverse DNS** — a PTR lookup, for private addresses against the reverse-DNS
+3. **reverse DNS** — a PTR lookup, for private addresses against the reverse-DNS
    resolver configured for the client's node, otherwise against the system
    resolver (cached for an hour, ten minutes when there is no PTR). Pointing that
    resolver at an agent also picks up the PTRs agents synthesize from rewrites
@@ -252,7 +251,7 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   forwarders, rules, lists, clients, resolver settings and the read-only views.
 - **What it can never do, whatever its role:** manage users, API tokens, your
   own password, SSO / sessions / login settings, the metrics scrape token,
-  credentials for integrations (NetBird, classifier and its connection test,
+  credentials for integrations (classifier and its connection test,
   metrics/log export),
   config backup and restore, or cluster nodes, sites and enrollment keys. Those
   answer **403** to a token and need a console sign-in.

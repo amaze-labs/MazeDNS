@@ -1,4 +1,4 @@
-package netbird
+package clientname
 
 import (
 	"context"
@@ -20,12 +20,12 @@ func newTestStore(t *testing.T) *store.Store {
 	return st
 }
 
-// newTestEnricher builds an enricher with the NetBird integration disabled and
-// runs one refresh (client->node map, static names, rewrite index).
+// newTestEnricher builds an enricher and runs one refresh (client->node map,
+// static names, rewrite index).
 func newTestEnricher(t *testing.T, st *store.Store) *Enricher {
 	t.Helper()
-	e := NewEnricher(func() Settings { return Settings{} }, nil, st)
-	e.refresh(context.Background())
+	e := NewEnricher(nil, st)
+	e.refresh()
 	return e
 }
 
@@ -48,33 +48,26 @@ func addRewrite(t *testing.T, st *store.Store, domain, rrtype, value, scopeType 
 
 func TestLookupSourceOrder(t *testing.T) {
 	st := newTestStore(t)
-	for _, ip := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3"} {
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2"} {
 		addRewrite(t, st, "rw-"+ip[len(ip)-1:]+".example.lan", "A", ip, store.ScopeAll)
 	}
 	if err := SaveClientName(st, "192.0.2.1", "static-1"); err != nil {
 		t.Fatal(err)
 	}
 	e := newTestEnricher(t, st)
-	e.mu.Lock()
-	e.peers = map[string]Identity{
-		"192.0.2.1": {Name: "peer-1", Source: "netbird"},
-		"192.0.2.2": {Name: "peer-2", Source: "netbird"},
-	}
-	e.mu.Unlock()
-	for _, ip := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4"} {
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3"} {
 		seedRDNS(e, ip, "ptr-"+ip[len(ip)-1:]+".example.lan")
 	}
-	seedRDNS(e, "192.0.2.5", "")
+	seedRDNS(e, "192.0.2.4", "")
 
 	cases := []struct {
 		ip, name, source string
 	}{
-		{"192.0.2.1", "static-1", "manual"},          // manual > netbird > rewrite > rdns
-		{"192.0.2.2", "peer-2", "netbird"},           // netbird > rewrite > rdns
-		{"192.0.2.3", "rw-3.example.lan", "rewrite"}, // rewrite > rdns
-		{"192.0.2.4", "ptr-4.example.lan", "rdns"},   // rdns only
-		{"192.0.2.5", "", ""},                        // nothing known
-		{"192.0.2.3:5353", "rw-3.example.lan", "rewrite"},
+		{"192.0.2.1", "static-1", "manual"},          // manual > rewrite > rdns
+		{"192.0.2.2", "rw-2.example.lan", "rewrite"}, // rewrite > rdns
+		{"192.0.2.3", "ptr-3.example.lan", "rdns"},   // rdns only
+		{"192.0.2.4", "", ""},                        // nothing known
+		{"192.0.2.2:5353", "rw-2.example.lan", "rewrite"},
 	}
 	for _, c := range cases {
 		got := e.Lookup(context.Background(), c.ip)
@@ -172,7 +165,7 @@ func TestRewriteNamesScoping(t *testing.T) {
 
 	// Served by agent-01 (site-a): its in-scope name wins over the shorter one.
 	logFrom("agent-01", "192.0.2.40", "192.0.2.20")
-	e.refresh(context.Background())
+	e.refresh()
 	check("agent-01", "192.0.2.40", "database-a.example.lan", nil)
 	// agent-01 serves nas as 192.0.2.10, not .20: fall back to any enabled
 	// rewrite naming the IP rather than leaving it bare.
@@ -180,7 +173,7 @@ func TestRewriteNamesScoping(t *testing.T) {
 
 	// The client moves to agent-02 (most queries there): its in-scope name.
 	logFrom("agent-02", "192.0.2.40", "192.0.2.40")
-	e.refresh(context.Background())
+	e.refresh()
 	check("agent-02", "192.0.2.40", "db.example.lan", nil)
 }
 
@@ -225,7 +218,7 @@ func TestRewriteNamesRefresh(t *testing.T) {
 	}
 	// The periodic refresh rebuilds the index as well.
 	addRewrite(t, st, "tick.example.lan", "A", ip, store.ScopeAll)
-	e.refresh(context.Background())
+	e.refresh()
 	if got := lookup(); got.Name != "tick.example.lan" {
 		t.Fatalf("after refresh tick: %+v", got)
 	}

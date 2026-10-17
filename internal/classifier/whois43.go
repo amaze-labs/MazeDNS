@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/publicsuffix"
@@ -28,9 +29,20 @@ var whois43QueryFormat = map[string]string{
 	"whois.denic.de": "-T dn %s",
 }
 
+// The IANA referral arrives over plain TCP, so it is untrusted input: the named
+// server must look like a public hostname, every connection refuses non-public
+// addresses (no reaching internal services on port 43), and referrals expire so
+// a poisoned one doesn't stick for the life of the process.
+const whoisServerTTL = 24 * time.Hour
+
+type whoisServerEntry struct {
+	server string // "" = the TLD has no WHOIS service
+	exp    time.Time
+}
+
 var (
 	whoisServersMu sync.Mutex
-	whoisServers   = map[string]string{} // tld -> registry WHOIS server ("" = none)
+	whoisServers   = map[string]whoisServerEntry{} // tld -> registry WHOIS server
 )
 
 func lookupWhois43(ctx context.Context, domain string) (WhoisInfo, error) {
@@ -64,24 +76,28 @@ func lookupWhois43(ctx context.Context, domain string) (WhoisInfo, error) {
 
 func whoisServerFor(ctx context.Context, tld string) (string, error) {
 	whoisServersMu.Lock()
-	server, ok := whoisServers[tld]
+	e, ok := whoisServers[tld]
 	whoisServersMu.Unlock()
-	if ok {
-		return server, nil
+	if ok && time.Now().Before(e.exp) {
+		return e.server, nil
 	}
 	text, err := whois43Query(ctx, "whois.iana.org", tld)
 	if err != nil {
 		return "", err
 	}
+	server := ""
 	for _, line := range strings.Split(text, "\n") {
 		if k, v, ok := whoisField(line); ok && (k == "whois" || k == "refer") {
-			server = v
+			if !validWhoisHost(v) {
+				return "", fmt.Errorf("whois: IANA referral for .%s is not a hostname", tld)
+			}
+			server = strings.ToLower(v)
 			break
 		}
 	}
 	whoisServersMu.Lock()
 	if len(whoisServers) < 2048 { // ~1,500 TLDs exist; never grow past that
-		whoisServers[tld] = server
+		whoisServers[tld] = whoisServerEntry{server: server, exp: time.Now().Add(whoisServerTTL)}
 	}
 	whoisServersMu.Unlock()
 	return server, nil
@@ -91,7 +107,7 @@ func whoisServerFor(ctx context.Context, tld string) (string, error) {
 func whois43Query(ctx context.Context, server, query string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, whois43Timeout)
 	defer cancel()
-	var d net.Dialer
+	d := net.Dialer{Control: publicOnly}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(server, "43"))
 	if err != nil {
 		return "", fmt.Errorf("whois: %w", err)
@@ -108,6 +124,36 @@ func whois43Query(ctx context.Context, server, query string) (string, error) {
 		return "", fmt.Errorf("whois: %w", err)
 	}
 	return string(b), nil
+}
+
+// validWhoisHost reports whether a referral names a plain DNS hostname (not an
+// IP literal, no port or path).
+func validWhoisHost(h string) bool {
+	if len(h) > 253 || !strings.Contains(h, ".") || net.ParseIP(h) != nil {
+		return false
+	}
+	for _, r := range h {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// publicOnly is a net.Dialer Control hook refusing connections to loopback,
+// private, link-local, multicast and unspecified addresses, checked after DNS
+// resolution so a public-looking name can't point inside the network.
+func publicOnly(_, address string, _ syscall.RawConn) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return fmt.Errorf("whois: refusing non-public address %s", host)
+	}
+	return nil
 }
 
 // whoisField splits a "Key: value" line into a lower-cased key and its value.

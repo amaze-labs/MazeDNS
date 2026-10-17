@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -106,6 +107,41 @@ func TestHostingPlatform(t *testing.T) {
 	} {
 		if got := HostingPlatform(name); got != want {
 			t.Errorf("HostingPlatform(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestValidWhoisHost(t *testing.T) {
+	for h, want := range map[string]bool{
+		"whois.nic.io":           true,
+		"WHOIS.DENIC.DE":         true,
+		"127.0.0.1":              false,
+		"::1":                    false,
+		"localhost":              false,
+		"whois.nic.io:8080":      false,
+		"evil.example/x":         false,
+		"whois nic io":           false,
+		strings.Repeat("a", 254): false,
+	} {
+		if got := validWhoisHost(h); got != want {
+			t.Errorf("validWhoisHost(%q) = %v, want %v", h, got, want)
+		}
+	}
+}
+
+func TestPublicOnlyRefusesInternalAddresses(t *testing.T) {
+	for addr, ok := range map[string]bool{
+		"199.7.85.13:43":     true, // whois.iana.org
+		"127.0.0.1:43":       false,
+		"10.0.0.5:43":        false,
+		"192.168.1.1:43":     false,
+		"169.254.169.254:43": false, // cloud metadata
+		"[::1]:43":           false,
+		"[fd00::1]:43":       false,
+		"0.0.0.0:43":         false,
+	} {
+		if err := publicOnly("tcp", addr, nil); (err == nil) != ok {
+			t.Errorf("publicOnly(%s) err = %v, want allowed=%v", addr, err, ok)
 		}
 	}
 }

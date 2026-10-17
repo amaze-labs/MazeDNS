@@ -408,6 +408,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// call would only spend tokens. With AI off (or no model), classification runs
 	// purely on the deterministic signals above.
 	var v Verdict
+	asked := false // whether the model was actually consulted for this verdict
 	if aiConfigured(s) && !strong {
 		start := time.Now()
 		vv, usage, err := w.clientFor(s).Classify(ctx, domain, Hints{Threat: threat, Whois: whois.summary(), Reputation: rep.summary()})
@@ -420,6 +421,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 			return
 		}
 		v = vv
+		asked = true
 	}
 
 	// Score the domain: start at baseLegitimacy and let the evidence move it.
@@ -462,8 +464,11 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	factors, _ := json.Marshal(score.Factors)
 	reason := strings.TrimSpace(fmt.Sprintf("legitimacy %d%%. %s", score.Legitimacy, strings.TrimSpace(v.Reason)))
 	model := s.Model
-	if model == "" {
-		model = "static analysis" // no LLM in play — verdict from the deterministic signals
+	if !asked || model == "" {
+		// No LLM in play (off, or skipped because the evidence was already
+		// decisive): the verdict comes from the deterministic signals alone, and
+		// must not be shown as the model's opinion.
+		model = "static analysis"
 	}
 	inserted, err := w.store.InsertClassification(store.Classification{
 		Domain: domain, Category: category, Block: block, Status: status,

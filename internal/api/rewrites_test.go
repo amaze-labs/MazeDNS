@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IPMaze/MazeDNS/internal/netbird"
+	"github.com/IPMaze/MazeDNS/internal/clientname"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -125,12 +125,12 @@ func TestUpdateRewriteExactScopeConflict(t *testing.T) {
 // the enricher's refresh tick): afterChange rebuilds the rewrite name index.
 func TestRewriteMutationRenamesClients(t *testing.T) {
 	s, st := newRewriteServer(t)
-	s.enricher = netbird.NewEnricher(func() netbird.Settings { return netbird.Settings{} }, nil, st)
-	resolve := func() netbird.Identity {
+	s.enricher = clientname.NewEnricher(nil, st)
+	resolve := func() clientname.Identity {
 		t.Helper()
 		rr := httptest.NewRecorder()
 		s.resolveClients(rr, httptest.NewRequest(http.MethodGet, "/api/clients/resolve?ips=192.0.2.10", nil))
-		var out map[string]netbird.Identity
+		var out map[string]clientname.Identity
 		if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
 			t.Fatalf("resolve: %v (%s)", err, rr.Body.String())
 		}

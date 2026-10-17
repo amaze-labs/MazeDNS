@@ -30,8 +30,8 @@ type Classification struct {
 // often and when it was last seen — so an operator can see who's affected.
 type DomainClient struct {
 	Client   string `json:"client"`
-	Name     string `json:"name"`   // enriched display name (Netbird peer / reverse-DNS), filled by the API
-	Source   string `json:"source"` // where Name came from ("netbird" | "rdns" | "")
+	Name     string `json:"name"`   // enriched display name (static / rewrite / reverse-DNS), filled by the API
+	Source   string `json:"source"` // where Name came from ("manual" | "rewrite" | "rdns" | "")
 	Count    int64  `json:"count"`
 	Blocked  int64  `json:"blocked"`
 	LastSeen int64  `json:"last_seen"`
@@ -62,6 +62,12 @@ func (s *Store) SetMeta(key, value string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO app_meta(key, value) VALUES(?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+// DeleteMeta removes a text app-setting (a no-op when unset).
+func (s *Store) DeleteMeta(key string) error {
+	_, err := s.db.Exec(`DELETE FROM app_meta WHERE key = ?`, key)
 	return err
 }
 

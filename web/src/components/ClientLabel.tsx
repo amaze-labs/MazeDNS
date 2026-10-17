@@ -3,7 +3,6 @@ import { type ClientIdentity } from '../api'
 // Where a client's name came from, in the words the UI uses everywhere.
 export const SOURCE_LABEL: Record<string, string> = {
   manual: 'set by you',
-  netbird: 'NetBird',
   rewrite: 'from rewrite',
   rdns: 'reverse DNS',
 }
@@ -11,7 +10,7 @@ export const SOURCE_LABEL: Record<string, string> = {
 // clientName returns the resolved display name for an IP ('' when unknown).
 export const clientName = (ip: string, names: Map<string, ClientIdentity>) => names.get(ip)?.name || ''
 
-// ClientLabel renders a client: its resolved name (static name, NetBird peer,
+// ClientLabel renders a client: its resolved name (static name,
 // Local DNS rewrite, or reverse-DNS hostname) followed by the IP, or just the IP
 // when no name is known. Pass the map from useClientNames.
 //   ip={false}   hide the IP when a name is known (it stays in the tooltip)

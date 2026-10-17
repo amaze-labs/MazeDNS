@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ClientIdentity } from './api'
 
-// Shared client-IP -> identity (static name / NetBird peer / rewrite / reverse-DNS) resolver. Requests
+// Shared client-IP -> identity (static name / rewrite / reverse-DNS) resolver. Requests
 // from every table are coalesced into one debounced batch and cached for the
 // session, so the same IP is never looked up twice unless it is invalidated.
 const cache = new Map<string, ClientIdentity>()

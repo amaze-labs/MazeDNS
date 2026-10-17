@@ -41,7 +41,7 @@ func (s *Server) getClientDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // putClientName sets (or clears, with an empty name) the operator-assigned static
-// hostname for a client IP. The name overrides NetBird/reverse-DNS everywhere.
+// hostname for a client IP. The name overrides rewrites/reverse-DNS everywhere.
 func (s *Server) putClientName(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Client string `json:"client"`

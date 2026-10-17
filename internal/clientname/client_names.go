@@ -1,4 +1,4 @@
-package netbird
+package clientname
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 
 // ClientNamesKey is the app_meta key under which operator-assigned static client
 // hostnames are persisted, as a JSON map of client IP -> hostname. These take
-// priority over NetBird peer names and reverse-DNS, so a static host that isn't a
-// NetBird peer and has no PTR record can still be labelled everywhere.
+// priority over rewrite names and reverse-DNS, so a static host with no rewrite
+// and no PTR record can still be labelled everywhere.
 const ClientNamesKey = "client_names"
 
 // LoadClientNames reads the manual client-name map (empty map when unset).

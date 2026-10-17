@@ -29,7 +29,7 @@ const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 
 const fmtAbs = (ms: number) => (ms ? new Date(ms).toLocaleString() : '')
 
 // ClientDetail is the per-client drawer: the static-name editor (which overrides
-// NetBird/rewrite/reverse-DNS names everywhere), headline figures, how its
+// rewrite/reverse-DNS names everywhere), headline figures, how its
 // queries were answered, its top blocked and queried domains, and what was
 // blocked by category. onShowQueries opens the Queries page filtered to the
 // client; without it the drawer navigates there itself.
@@ -52,7 +52,7 @@ export default function ClientDetail({
   const [err, setErr] = useState('')
   const id = names.get(client)
   // Prefill with the existing static name; otherwise the field is empty and the
-  // detected NetBird/rewrite/reverse-DNS name (if any) shows as a hint.
+  // detected rewrite/reverse-DNS name (if any) shows as a hint.
   const [host, setHost] = useState(id?.source === 'manual' ? id.name : '')
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState('')
@@ -160,7 +160,7 @@ export default function ClientDetail({
           ) : (
             'No name detected for this address. '
           )}
-          A name you set here wins over NetBird, rewrites and reverse DNS.
+          A name you set here wins over rewrites and reverse DNS.
         </small>
       </div>
       {saveErr && <div className="error" style={{ margin: 0 }}>{saveErr}</div>}

@@ -150,7 +150,6 @@ func TestAPITokenSessionOnlyRoutes(t *testing.T) {
 		{http.MethodPut, "/api/classifier/settings", `{}`},
 		// Would send the stored LLM API key to an endpoint named in the request.
 		{http.MethodPost, "/api/classifier/test", `{"provider":"openai","endpoint":"http://127.0.0.1:1","model":"m"}`},
-		{http.MethodPut, "/api/netbird", `{}`},
 		{http.MethodGet, "/api/cluster/enroll-keys", ""},
 		{http.MethodPost, "/api/cluster/enroll-keys", `{"name":"k"}`},
 		{http.MethodPost, "/api/cluster/nodes", `{"name":"n"}`},

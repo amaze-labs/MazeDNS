@@ -140,17 +140,35 @@ func validWhoisHost(h string) bool {
 	return true
 }
 
-// publicOnly is a net.Dialer Control hook refusing connections to loopback,
-// private, link-local, multicast and unspecified addresses, checked after DNS
-// resolution so a public-looking name can't point inside the network.
+// nonPublicNets are special-purpose ranges the net.IP predicates don't cover:
+// "this network" (0.0.0.0/8 reaches the local host on Linux), shared address
+// space (100.64.0.0/10: carrier NAT, and the NetBird / Tailscale meshes),
+// benchmarking, reserved and broadcast, and NAT64 (which can map to anything).
+var nonPublicNets = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4", "64:ff9b::/96", "64:ff9b:1::/48", "2002::/16"} {
+		_, n, _ := net.ParseCIDR(c)
+		out = append(out, n)
+	}
+	return out
+}()
+
+// publicOnly is a net.Dialer Control hook refusing connections to any
+// non-public address (loopback, private, link-local, multicast, unspecified and
+// the ranges above), checked after DNS resolution so a public-looking name
+// can't point inside the network.
 func publicOnly(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return err
 	}
 	ip := net.ParseIP(host)
-	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+	refuse := ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified()
+	for _, n := range nonPublicNets {
+		refuse = refuse || n.Contains(ip)
+	}
+	if refuse {
 		return fmt.Errorf("whois: refusing non-public address %s", host)
 	}
 	return nil

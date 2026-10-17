@@ -131,14 +131,19 @@ func TestValidWhoisHost(t *testing.T) {
 
 func TestPublicOnlyRefusesInternalAddresses(t *testing.T) {
 	for addr, ok := range map[string]bool{
-		"199.7.85.13:43":     true, // whois.iana.org
-		"127.0.0.1:43":       false,
-		"10.0.0.5:43":        false,
-		"192.168.1.1:43":     false,
-		"169.254.169.254:43": false, // cloud metadata
-		"[::1]:43":           false,
-		"[fd00::1]:43":       false,
-		"0.0.0.0:43":         false,
+		"199.7.85.13:43":        true, // whois.iana.org
+		"127.0.0.1:43":          false,
+		"10.0.0.5:43":           false,
+		"192.168.1.1:43":        false,
+		"169.254.169.254:43":    false, // cloud metadata
+		"[::1]:43":              false,
+		"[fd00::1]:43":          false,
+		"0.0.0.0:43":            false,
+		"0.1.2.3:43":            false, // "this network" reaches the local host
+		"100.64.0.1:43":         false, // NetBird / Tailscale / carrier NAT
+		"[::ffff:127.0.0.1]:43": false,
+		"[64:ff9b::a00:1]:43":   false, // NAT64 of 10.0.0.1
+		"[2001:500:88::2]:43":   true,
 	} {
 		if err := publicOnly("tcp", addr, nil); (err == nil) != ok {
 			t.Errorf("publicOnly(%s) err = %v, want allowed=%v", addr, err, ok)

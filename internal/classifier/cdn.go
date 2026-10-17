@@ -53,6 +53,16 @@ var cdnSuffixes = func() map[string]struct{} {
 	return m
 }()
 
+// cdnInfrastructure reports whether a registered domain is CDN / cloud-edge
+// infrastructure that must never get a verdict of its own. A customer subdomain
+// on a hosting platform (evil.web.app, x.azurewebsites.net, d1.cloudfront.net)
+// is not: its registered domain is the full host (Public Suffix List, private
+// section), so a verdict reaches that one customer only, never the provider.
+// Those are scored like any other domain.
+func cdnInfrastructure(domain string) bool {
+	return IsCDN(domain) && HostingPlatform(domain) == ""
+}
+
 // IsCDN reports whether name is (a subdomain of) a known CDN / cloud-edge
 // provider. It walks the name's parent suffixes rather than using the registered
 // domain, because many CDN bases (e.g. cloudfront.net, azureedge.net) are on the

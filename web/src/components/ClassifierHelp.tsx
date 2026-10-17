@@ -4,12 +4,12 @@ import Modal from './Modal'
 function Step({ tone = '', children }: { tone?: string; children: React.ReactNode }) {
   return <div className={`flow-box ${tone}`}>{children}</div>
 }
-// A deduction hanging off the main path.
-function Deduct({ pts, children }: { pts: string; children: React.ReactNode }) {
+// A factor hanging off the main path: a deduction, or (up) trust evidence.
+function Deduct({ pts, up = false, children }: { pts: string; up?: boolean; children: React.ReactNode }) {
   return (
     <li>
       <span>{children}</span>
-      <span className="pts down">{pts}</span>
+      <span className={`pts ${up ? 'up' : 'down'}`}>{pts}</span>
     </li>
   )
 }
@@ -25,8 +25,8 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="How scoring works" eyebrow="Domain classification" onClose={onClose} size="wide">
       <p className="muted nomargin">
-        Every <em>newly seen registered domain</em> is scored the way a security analyst would: it <b>starts at 100</b> (presumed
-        legitimate) and each risk factor deducts from that. Most of the work is <b>static analysis</b> — threat feeds, reputation
+        Every <em>newly seen registered domain</em> is scored the way a security analyst would: it <b>starts at 85</b> (probably fine,
+        but nothing vouches for it yet), risk factors deduct and trust evidence adds. Most of the work is <b>static analysis</b> — threat feeds, reputation
         services, WHOIS age, risky TLDs and look-alike names — with no AI involved. A language model (local, or a hosted provider
         such as Anthropic) is an <b>optional</b> extra signal that mainly cuts false positives. It is one bounded factor, so a
         confidently wrong model can never block a legitimate site on its own. Scoring runs in the background, never on the DNS
@@ -37,7 +37,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         <h3>How the score is built</h3>
         <div className="flow">
           <Step tone="info">
-            Start at <b>100</b> — every domain is presumed legitimate.
+            Start at <b>85</b> — an unknown domain is probably fine, but nothing vouches for it yet.
           </Step>
           <Arrow />
           <Step>Gather signals: trusted and threat lists, WHOIS (age, owner, nameservers), TLD and the shape of the name.</Step>
@@ -49,10 +49,10 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           </Step>
           <Arrow />
           <Step>
-            Otherwise, deduct for each risk factor:
+            Otherwise, weigh the evidence both ways. Deduct for each risk factor:
             <ul className="factors flow-factors">
-              <Deduct pts="−70">
-                On a <b>threat feed</b> — strong, but weighed with the rest, not an automatic block
+              <Deduct pts="−45 to −90">
+                On a <b>threat feed</b> — one feed may be a misreport; two or more is corroborated
               </Deduct>
               <Deduct pts="−6 to −45">
                 <b>Young domain</b> — newer means a bigger hit; phishing and malware are overwhelmingly young
@@ -63,18 +63,40 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
               <Deduct pts="−8 to −28">
                 <b>Look-alike name</b> — brand impersonation, punycode homographs, random (DGA) or digit/hyphen-heavy names
               </Deduct>
+              <Deduct pts="−10">
+                <b>Hosting platform</b> — a customer site on workers.dev, github.io, netlify.app… anyone can publish there
+              </Deduct>
+              <Deduct pts="−20">
+                <b>Suspended</b> — the registration is on hold or being deleted, typical after a takedown
+              </Deduct>
               <Deduct pts="0 to −60">
-                <b>Reputation</b> — VirusTotal / AbuseIPDB flags (a clean report <em>raises</em> the floor instead)
+                <b>Reputation</b> — VirusTotal / AbuseIPDB / Kaspersky flags
               </Deduct>
               <Deduct pts="0 to −50">
                 <b>Language model</b> (optional) — scaled by its confidence, capped so it can’t sink a domain alone
               </Deduct>
             </ul>
+            Add for trust evidence (at most <b>+40</b> in total, <b>+10</b> against a corroborated threat):
+            <ul className="factors flow-factors">
+              <Deduct up pts="+8 to +20">
+                <b>Old registration</b> — 2, 5 or 10+ years
+              </Deduct>
+              <Deduct up pts="+4 to +8">
+                <b>How it’s held</b> — registry locks, a named owner, paid years ahead, DNSSEC
+              </Deduct>
+              <Deduct up pts="+3 to +10">
+                <b>Clean reputation</b> — VirusTotal clean, Kaspersky green, no abuse on its IP
+              </Deduct>
+              <Deduct up pts="up to +5">
+                <b>Language model</b> — a confident, non-threat category
+              </Deduct>
+            </ul>
+            WHOIS data from plain-text (port-43) servers can lower the score but never raise it, since it could be forged in transit.
           </Step>
           <Arrow />
           <Step tone="ok">
-            <b>Established floor</b> — a domain older than two years that isn’t on a threat feed can’t be pushed into block range by soft
-            signals alone.
+            <b>Safety floors</b> — a domain older than two years, or reported clean by VirusTotal, can’t be pushed into block range by
+            soft signals alone (a single feed, the model, the shape of the name).
           </Step>
           <Arrow />
           <Step tone="warn">
@@ -97,7 +119,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         <dl className="kv help-kv">
           <dt>Legitimacy</dt>
           <dd>
-            The 0–100 score. Each domain’s drawer shows exactly which factors lowered it. Below 50, with a threat signal, it is a block
+            The 0–100 score. Each domain’s drawer shows exactly which factors lowered and raised it. Below 50, with a threat signal, it is a block
             candidate.
           </dd>
           <dt>

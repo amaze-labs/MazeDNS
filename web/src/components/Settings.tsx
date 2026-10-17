@@ -12,6 +12,7 @@ import {
   type CPSettings,
   type AuditEntry,
 } from '../api'
+import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
 import { invalidateAllClientNames } from '../useClientNames'
 import { PASSWORD_RULE } from '../passwordPolicy'
@@ -1207,6 +1208,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           />
         </Field>
       </Group>
+
+      <ApiTokens />
     </>
   )
 

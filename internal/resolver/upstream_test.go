@@ -2,6 +2,8 @@ package resolver
 
 import (
 	"net"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ func TestParseUpstream(t *testing.T) {
 		"tcp://8.8.8.8":                        "tcp://8.8.8.8:53",
 		"tls://1.1.1.1:853#cloudflare-dns.com": "tls://1.1.1.1:853",
 		"https://dns.quad9.net/dns-query":      "https://dns.quad9.net/dns-query",
+		// credentials and query tokens never reach logs
+		"https://user:secret@doh.example/dns-query?token=abc": "https://doh.example/dns-query",
 	}
 	for spec, want := range cases {
 		u, err := ParseUpstream(spec, time.Second)
@@ -113,5 +117,85 @@ func TestPlainTCPPoolReusesFreshConn(t *testing.T) {
 
 	if got := getPooledConn(u.pool); got != conn {
 		t.Fatalf("getPooledConn did not return the warm pooled connection")
+	}
+}
+
+// dropFirstTCP is a DNS-over-TCP server that closes its first `drop` connections
+// without answering (as Quad9 does to some new connections under a burst) and
+// answers on later ones. It returns the address and a connection counter.
+func dropFirstTCP(t *testing.T, drop int) (string, *atomic.Int32) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var n atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if int(n.Add(1)) <= drop {
+				c.Close()
+				continue
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				dc := &dns.Conn{Conn: c}
+				for {
+					req, err := dc.ReadMsg()
+					if err != nil {
+						return
+					}
+					m := new(dns.Msg)
+					m.SetReply(req)
+					_ = dc.WriteMsg(m)
+				}
+			}(c)
+		}
+	}()
+	return ln.Addr().String(), &n
+}
+
+// A fresh connection the server drops before answering is retried once on a new
+// connection instead of surfacing "EOF" (a SERVFAIL to the client).
+func TestTCPRetriesDroppedFreshConn(t *testing.T) {
+	addr, conns := dropFirstTCP(t, 1)
+	u := newPlain(addr, "tcp", time.Second)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA)
+	if _, _, err := u.Exchange(m); err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if got := conns.Load(); got != 2 {
+		t.Fatalf("connections = %d, want 2 (one dropped, one retry)", got)
+	}
+}
+
+// Only one retry: a server that keeps dropping connections still fails, fast.
+func TestTCPRetriesDroppedConnOnlyOnce(t *testing.T) {
+	addr, conns := dropFirstTCP(t, 100)
+	u := newPlain(addr, "tcp", time.Second)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA)
+	if _, _, err := u.Exchange(m); !connDropped(err) {
+		t.Fatalf("err = %v, want a dropped-connection error", err)
+	}
+	if got := conns.Load(); got != 2 {
+		t.Fatalf("connections = %d, want 2", got)
+	}
+}
+
+// Forward errors name the upstream, so the log says which server failed.
+func TestExchangeErrorNamesUpstream(t *testing.T) {
+	addr, _ := dropFirstTCP(t, 100)
+	u := newPlain(addr, "tcp", time.Second)
+	m := new(dns.Msg)
+	m.SetQuestion("example.com.", dns.TypeA)
+	_, _, err := exchange(u, m)
+	if err == nil || !strings.HasPrefix(err.Error(), "tcp://"+addr+": ") {
+		t.Fatalf("err = %v, want it prefixed with the upstream", err)
 	}
 }

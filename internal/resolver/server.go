@@ -8,6 +8,7 @@ import (
 	stdruntime "runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/miekg/dns"
@@ -69,6 +70,10 @@ type Server struct {
 	// udpUp/tcpUp report whether the listeners are bound (see Listening).
 	udpUp atomic.Bool
 	tcpUp atomic.Bool
+
+	mu      sync.Mutex
+	closed  bool          // Shutdown was called: start nothing more
+	running []*dns.Server // listeners handed a socket and started, for Shutdown
 }
 
 // Addr returns the address the server listens on.
@@ -129,11 +134,11 @@ func (s *Server) ListenAndServe() error {
 		}
 		srv := s.udp[i]
 		srv.PacketConn = pc
+		if !s.start(srv, errc, &s.udpUp) {
+			return nil // shut down while starting
+		}
 		bound++
-		go func() { errc <- srv.ActivateAndServe() }()
 	}
-	s.udp = s.udp[:bound]
-	s.udpUp.Store(true)
 	slog.Info("listener up", "net", "udp", "addr", s.addr, "sockets", bound)
 
 	go func() {
@@ -143,19 +148,52 @@ func (s *Server) ListenAndServe() error {
 			return
 		}
 		s.tcp.Listener = l
-		s.tcpUp.Store(true)
-		slog.Info("listener up", "net", "tcp", "addr", s.addr)
-		errc <- s.tcp.ActivateAndServe()
+		if s.start(s.tcp, errc, &s.tcpUp) {
+			slog.Info("listener up", "net", "tcp", "addr", s.addr)
+		}
 	}()
 	return <-errc
 }
 
-// Shutdown gracefully stops every listener.
+// start serves srv (its socket already set) and marks it up, unless Shutdown has
+// been called, in which case it closes the socket instead. Registering under mu
+// is what lets Shutdown see every listener, however far startup got, and keeps
+// a late start from marking a shut-down server as listening.
+func (s *Server) start(srv *dns.Server, errc chan<- error, up *atomic.Bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		closeSocket(srv)
+		return false
+	}
+	s.running = append(s.running, srv)
+	up.Store(true)
+	go func() { errc <- srv.ActivateAndServe() }()
+	return true
+}
+
+// Shutdown gracefully stops every listener, including any still starting up.
 func (s *Server) Shutdown(ctx context.Context) {
+	s.mu.Lock()
+	s.closed = true
 	s.udpUp.Store(false)
 	s.tcpUp.Store(false)
-	for _, u := range s.udp {
-		_ = u.ShutdownContext(ctx)
+	running := append([]*dns.Server(nil), s.running...)
+	s.mu.Unlock()
+	for _, srv := range running {
+		if err := srv.ShutdownContext(ctx); err != nil {
+			// Not serving yet ("server not started"): closing the socket makes
+			// ActivateAndServe return instead of starting after we've moved on.
+			closeSocket(srv)
+		}
 	}
-	_ = s.tcp.ShutdownContext(ctx)
+}
+
+func closeSocket(srv *dns.Server) {
+	if srv.PacketConn != nil {
+		_ = srv.PacketConn.Close()
+	}
+	if srv.Listener != nil {
+		_ = srv.Listener.Close()
+	}
 }

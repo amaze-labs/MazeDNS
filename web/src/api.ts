@@ -89,6 +89,19 @@ export interface EnrollKey {
   status: 'active' | 'expired' | 'exhausted' | 'revoked'
 }
 
+// APIToken is a bearer credential for integrations. The token value is only ever
+// returned once, at creation.
+export interface APIToken {
+  id: string
+  name: string
+  token_prefix: string
+  role: 'admin' | 'readonly'
+  created_by: string
+  created_at: number
+  last_used_at: number // 0 = never
+  expires_at: number // 0 = never
+}
+
 export interface Site {
   name: string
   description: string
@@ -456,20 +469,26 @@ export interface LogEntry {
   msg: string
 }
 
+// UNAUTHORIZED is dispatched on window whenever an API call answers 401, so the
+// app can drop back to the login screen when the session expires mid-use.
+export const UNAUTHORIZED = 'mazedns:unauthorized'
+
+// failure turns a non-2xx response into an Error carrying the API's message.
+// statusText is empty over HTTP/2, so fall back to the status code.
+async function failure(r: Response): Promise<Error> {
+  if (r.status === 401 && !r.url.includes('/api/auth/')) window.dispatchEvent(new Event(UNAUTHORIZED))
+  const body = await r.json().catch(() => ({}))
+  return new Error(body.error || r.statusText || `HTTP ${r.status}`)
+}
+
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}))
-    throw new Error(body.error || r.statusText)
-  }
+  if (!r.ok) throw await failure(r)
   return r.json() as Promise<T>
 }
 
 // ok handles empty-body (204) responses, throwing the API error message on failure.
 async function ok(r: Response): Promise<void> {
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}))
-    throw new Error(body.error || r.statusText)
-  }
+  if (!r.ok) throw await failure(r)
 }
 
 const jsonHeaders = { 'Content-Type': 'application/json' }
@@ -504,6 +523,14 @@ export const api = {
       if (!r.ok) throw new Error('failed to clear token')
     }),
   settingsAudit: () => fetch('/api/settings/audit').then(j<AuditEntry[]>),
+  apiTokens: () => fetch('/api/tokens').then(j<APIToken[]>),
+  createAPIToken: (name: string, role: string, expires_at: number) =>
+    fetch('/api/tokens', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name, role, expires_at }),
+    }).then(j<APIToken & { token: string }>),
+  deleteAPIToken: (id: string) => fetch(`/api/tokens/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(ok),
   // auth
   authInfo: () => fetch('/api/auth/info').then(j<AuthInfo>),
   me: async (): Promise<SessionUser | null> => {
@@ -590,7 +617,7 @@ export const api = {
     fetch('/api/rules', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ action, domain, category }) }).then(j),
   importRules: (text: string, category: string) =>
     fetch('/api/rules/import', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ text, category }) }).then(j<{ imported: number }>),
-  deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }),
+  deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }).then(ok),
 
   settings: () => fetch('/api/settings').then(j<Settings>),
   saveSettings: (s: Settings) =>
@@ -650,7 +677,7 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ value, enabled, scope_type: scopeType, scope_values: scopeValues }),
     }).then(j),
-  deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }),
+  deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }).then(ok),
 
   // Centrally-managed conditional forwarders (pushed to agents via the snapshot).
   forwarders: () => fetch('/api/forwarders').then(j<Forwarder[]>),
@@ -666,7 +693,7 @@ export const api = {
       headers: jsonHeaders,
       body: JSON.stringify({ upstreams, enabled, scope_type: scopeType, scope_values: scopeValues }),
     }).then(j),
-  deleteForwarder: (id: number) => fetch(`/api/forwarders/${id}`, { method: 'DELETE' }),
+  deleteForwarder: (id: number) => fetch(`/api/forwarders/${id}`, { method: 'DELETE' }).then(ok),
 
   // LLM classifier
   classifier: () => fetch('/api/classifier').then(j<ClassifierStatus>),
@@ -707,7 +734,7 @@ export const api = {
     ),
   domainClients: (domain: string) =>
     fetch(`/api/classifier/clients?domain=${encodeURIComponent(domain)}`).then(
-      j<{ domain: string; clients: DomainClient[] }>,
+      j<{ domain: string; clients: DomainClient[]; since: number }>,
     ),
 
   // Resolve client IPs to identities (NetBird peer / reverse-DNS), batched.
@@ -756,7 +783,7 @@ export const api = {
   renewNodeKey: (id: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/key`, { method: 'POST' }).then(j<{ id: string; key: string }>),
   deleteNode: (id: string, revoke = true) =>
-    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }),
+    fetch(`/api/cluster/nodes/${encodeURIComponent(id)}?revoke=${revoke}`, { method: 'DELETE' }).then(ok),
   listRevoked: () => fetch('/api/cluster/revoked').then(j<RevokedNode[]>),
   unrevokeNode: (id: string) => fetch(`/api/cluster/revoked/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(ok),
   // Permanently delete a revoked agent's record (audited as a purge, not an

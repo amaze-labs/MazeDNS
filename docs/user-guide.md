@@ -12,6 +12,7 @@ replicate it automatically. You never edit files on an agent.
 - [Pause blocking](#pause-blocking)
 - [Clustering operations](#clustering-operations)
 - [Authentication and SSO](#authentication-and-sso)
+- [API tokens](#api-tokens)
 - [Backup and restore](#backup-and-restore)
 - [Seeing real client IPs](#seeing-real-client-ips)
 
@@ -27,7 +28,7 @@ cards; the choice is remembered in your browser.
 Use the **Requests** tab to inspect individual queries — filter by node, client, or
 action, and sort by processing time (`ms`) to find slow lookups.
 
-Switch the Requests tab to **Live** to watch queries as the agents answer them
+Switch the Queries page to **Live** to watch queries as the agents answer them
 (within about a second), newest first — e.g. while debugging a client or checking
 that a new block rule takes effect. Filter by node or site, client (IP or resolved
 name), domain, type, action, classification, and rcode; blocked and rewritten
@@ -179,16 +180,16 @@ authenticated snapshot and applies them live. The control plane never answers DN
 so its dashboard/classifier load can't affect resolver latency.
 
 - **Enrollment** — agents self-register with an **enrollment key** (created under
-  Cluster → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
+  Agents → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
   **Cluster** tab automatically, no key to copy. Toggle **require approval**
   (setup wizard, or Settings → Access → Cluster policy) to hold new agents until you
   approve them there — `MAZEDNS_REQUIRE_APPROVAL` only seeds this on first boot.
 - **Per-node keys** — issued automatically when an agent enrolls with a key, and
-  rotated by the control plane. You can also issue one manually in the Cluster tab
+  rotated by the control plane. You can also issue one manually on the Agents page
   (used via `MAZEDNS_NODE_KEY`). An agent whose key was *rotated* re-attaches to the
   same node by itself; a *revoked* node is refused at re-enrollment until you
   un-revoke it (see [install.md](install.md#removing-an-agent-revoke-vs-remove-only)).
-- **Node health** — the Cluster tab shows each node's address, status, and counters.
+- **Node health** — the Agents page shows each node's address, status, and counters.
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
 - **Removing agents** — *Remove & revoke* tombstones the node so the still-running
@@ -219,13 +220,60 @@ setup wizard where you create the first admin (or configure SSO) — there are n
 server-side and revocable. Roles: **admin** (full) and **readonly** (GET only).
 
 Configure single sign-on in the setup wizard or later under **Settings → Access &
-SSO**: paste the issuer URL, client ID/secret, and the admin email or group. You can
+sign-in**: paste the issuer URL, client ID/secret, and the admin email or group. You can
 map a provider group to admin, force SSO-only login, or auto-redirect to the
 provider. The redirect URI must match your provider's registration exactly — the UI
 shows the exact value to register, and it's logged at startup so you can compare.
 (The `MAZEDNS_OIDC_*` variables still exist, but they only **seed** the database on
 first boot and are ignored afterwards — see
 [configuration.md](configuration.md#control-plane).)
+
+## API tokens
+
+Integrations, such as an IPAM that pushes its hosts as rewrites, call the API with
+an **API token** instead of a user's password. Create one under **Settings →
+Access & sign-in → API tokens**: give it a name that says what it is for, a role
+(**readonly** or **admin**) and an optional expiry. The token (`mzd_…`) is shown
+**once**; only a hash is stored. Send it as a bearer header:
+
+```bash
+TOKEN=mzd_…   # paste the token shown at creation
+
+# list rewrites (readonly or admin)
+curl -H "Authorization: Bearer $TOKEN" https://dns.example.internal/api/rewrites
+
+# add or update a rewrite (admin)
+curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"domain":"nas.lan","rrtype":"A","value":"10.0.0.5"}' \
+  https://dns.example.internal/api/rewrites
+```
+
+- **What a token can do:** whatever its role allows on DNS data: rewrites,
+  forwarders, rules, lists, clients, resolver settings and the read-only views.
+- **What it can never do, whatever its role:** manage users, API tokens, your
+  own password, SSO / sessions / login settings, the metrics scrape token,
+  credentials for integrations (NetBird, classifier and its connection test,
+  metrics/log export),
+  config backup and restore, or cluster nodes, sites and enrollment keys. Those
+  answer **403** to a token and need a console sign-in.
+- **SSO-only mode** has no effect on tokens: it only disables password login.
+- **A token never outranks the admin who created it.** If that admin is
+  demoted to readonly, their admin tokens act as readonly; if their account is
+  deleted, their tokens stop working for good (re-creating an account with the
+  same name doesn't revive them). Removing someone's access therefore also
+  removes it from any token they kept a copy of. For a long-lived integration,
+  create its token from an account that will stay.
+- **Revoke** a token from the same list. It stops working on the next request.
+  The list shows each token's role, last use (updated at most once a minute) and
+  expiry, never its value.
+- A request with an `Authorization: Bearer` header is judged on that header
+  only: an invalid or revoked token gets **401**, even if the same client also
+  sends a session cookie. Other schemes (e.g. `Basic`, added by a proxy in front of
+  the console) are ignored.
+- Creating and revoking tokens is recorded in the settings audit log, under the
+  admin who did it. Changes to DNS data (rewrites, rules, …) have no change log
+  yet, whoever makes them; where a token's action is recorded, it appears as
+  `token:<name>`.
 
 ## Backup and restore
 

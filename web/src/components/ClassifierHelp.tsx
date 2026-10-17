@@ -4,132 +4,168 @@ import Modal from './Modal'
 function Step({ tone = '', children }: { tone?: string; children: React.ReactNode }) {
   return <div className={`flow-box ${tone}`}>{children}</div>
 }
-// A branch annotation hanging off the main path (the "yes/no leads here" outcome).
-function Branch({ tone = '', label, children }: { tone?: string; label: string; children: React.ReactNode }) {
+// A factor hanging off the main path: a deduction, or (up) trust evidence.
+function Deduct({ pts, up = false, children }: { pts: string; up?: boolean; children: React.ReactNode }) {
   return (
-    <div className={`flow-branch ${tone}`}>
-      <span className="flow-branch-label">{label}</span>
+    <li>
       <span>{children}</span>
-    </div>
+      <span className={`pts ${up ? 'up' : 'down'}`}>{pts}</span>
+    </li>
   )
 }
-const Arrow = () => <div className="flow-arrow">↓</div>
+const Arrow = () => (
+  <div className="flow-arrow" aria-hidden="true">
+    ↓
+  </div>
+)
 
+// ClassifierHelp explains how a domain's legitimacy score is built and what the
+// review actions do. Opened from "How scoring works" on the Review tab.
 export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
   return (
-    <Modal title="How domain classification &amp; scoring works" onClose={onClose}>
-      <p className="muted" style={{ textAlign: 'left' }}>
-        Every <em>new registered domain</em> your network queries is scored like a SOC analyst would: it{' '}
-        <strong>starts at 100% legitimate</strong>, and each risk factor deducts from that score. The bulk of the work is{' '}
-        <strong>static analysis</strong> — threat feeds, reputation services, WHOIS age, risky TLDs and look-alike name
-        shapes — which runs with <em>no AI at all</em>. An AI model (local or a hosted provider like Anthropic) is an <strong>optional</strong> extra signal
-        (configured in Settings) that mainly cuts false positives; it's just <em>one</em> bounded factor, so a
-        confidently-wrong model can never single-handedly block a legitimate site. Nothing runs on the DNS hot path —
-        scoring is asynchronous, so resolution stays fast.
+    <Modal title="How scoring works" eyebrow="Domain classification" onClose={onClose} size="wide">
+      <p className="muted nomargin">
+        Every <em>newly seen registered domain</em> is scored the way a security analyst would: it <b>starts at 85</b> (probably fine,
+        but nothing vouches for it yet), risk factors deduct and trust evidence adds. Most of the work is <b>static analysis</b> — threat feeds, reputation
+        services, WHOIS age, risky TLDs and look-alike names — with no AI involved. A language model (local, or a hosted provider
+        such as Anthropic) is an <b>optional</b> extra signal that mainly cuts false positives. It is one bounded factor, so a
+        confidently wrong model can never block a legitimate site on its own. Scoring runs in the background, never on the DNS
+        path, so resolution stays fast.
       </p>
 
-      <h4>How the score is built</h4>
-      <div className="flow">
-        <Step tone="info">
-          Start at <strong>100% legitimate</strong> — every domain is presumed innocent
-        </Step>
-        <Arrow />
-        <Step>Gather signals: trusted &amp; threat lists, WHOIS (age, ownership, nameservers), TLD &amp; name shape</Step>
-        <Arrow />
-        <Step tone="allow">
-          <strong>Trusted shortcut</strong> — on the popular-domains list, <em>or</em> served by a trusted entity's own
-          nameservers (e.g. <code>apple.com</code>) → score stays <strong>100</strong>. Nameservers can't be faked, so
-          this is the strongest false-positive guard, and it overrides everything below.
-        </Step>
-        <Arrow />
-        <Step>Otherwise, deduct for each risk factor:</Step>
-        <Branch tone="block" label="−70">
-          on a <strong>threat-intel</strong> feed (strong, but weighed with the rest — not an automatic block)
-        </Branch>
-        <Branch tone="block" label="−45…−6">
-          <strong>young domain</strong> (newer = bigger hit — phishing/malware is overwhelmingly young)
-        </Branch>
-        <Branch tone="block" label="−15">
-          <strong>risky TLD</strong> (TLDs with disproportionate abuse)
-        </Branch>
-        <Branch tone="block" label="−8…−28">
-          <strong>look-alike name shape</strong> (brand impersonation, punycode/homograph, random/DGA, digit- or
-          hyphen-heavy)
-        </Branch>
-        <Branch tone="block" label="−0…−60">
-          <strong>reputation</strong> — VirusTotal / AbuseIPDB flags (a clean report instead <em>raises</em> the floor)
-        </Branch>
-        <Branch tone="block" label="−0…−50">
-          <strong>AI model</strong> (optional) — scaled by its confidence, but capped so it can't sink a domain alone
-        </Branch>
-        <Arrow />
-        <Step tone="allow">
-          <strong>Established floor</strong> — a &gt;2-year-old domain that isn't on a threat feed can't be pushed into
-          block range by soft signals alone
-        </Step>
-        <Arrow />
-        <Step tone="mode">
-          Block candidate when legitimacy <strong>&lt; 50%</strong> AND there's a real threat indicator (a threat-feed
-          hit, a reputation flag, or the AI model's security category) — so a merely <em>young</em> legit site is never
-          blocked on structure alone
-        </Step>
-        <div className="flow-outcomes">
-          <div className="flow-box block">
-            <strong>&lt; 35%</strong> + auto-block mode → blocked immediately
-          </div>
-          <div className="flow-box suggest">
-            <strong>&lt; 50%</strong> → waits in “suggested” for your approval
+      <div>
+        <h3>How the score is built</h3>
+        <div className="flow">
+          <Step tone="info">
+            Start at <b>85</b> — an unknown domain is probably fine, but nothing vouches for it yet.
+          </Step>
+          <Arrow />
+          <Step>Gather signals: trusted and threat lists, WHOIS (age, owner, nameservers), TLD and the shape of the name.</Step>
+          <Arrow />
+          <Step tone="ok">
+            <b>Trusted shortcut</b> — on the popular-domains list, or CDN infrastructure itself: the score stays at <b>100</b>. This is the
+            strongest guard against false positives and it overrides everything below. A customer site on a hosting platform
+            (<code>something.web.app</code>) is scored like any other domain.
+          </Step>
+          <Arrow />
+          <Step>
+            Otherwise, weigh the evidence both ways. Deduct for each risk factor:
+            <ul className="factors flow-factors">
+              <Deduct pts="−45 to −90">
+                On a <b>threat feed</b> — one feed may be a misreport; two or more is corroborated
+              </Deduct>
+              <Deduct pts="−6 to −45">
+                <b>Young domain</b> — newer means a bigger hit; phishing and malware are overwhelmingly young
+              </Deduct>
+              <Deduct pts="−15">
+                <b>Risky TLD</b> — top-level domains with disproportionate abuse
+              </Deduct>
+              <Deduct pts="−8 to −28">
+                <b>Look-alike name</b> — brand impersonation, punycode homographs, random (DGA) or digit/hyphen-heavy names
+              </Deduct>
+              <Deduct pts="−10">
+                <b>Hosting platform</b> — a customer site on workers.dev, github.io, netlify.app… anyone can publish there
+              </Deduct>
+              <Deduct pts="−20">
+                <b>Suspended</b> — the registration is on hold or being deleted, typical after a takedown
+              </Deduct>
+              <Deduct pts="0 to −60">
+                <b>Reputation</b> — VirusTotal / AbuseIPDB / Kaspersky flags
+              </Deduct>
+              <Deduct pts="0 to −50">
+                <b>Language model</b> (optional) — scaled by its confidence, capped so it can’t sink a domain alone
+              </Deduct>
+            </ul>
+            Add for trust evidence (at most <b>+40</b> in total, <b>+10</b> against a corroborated threat):
+            <ul className="factors flow-factors">
+              <Deduct up pts="+8 to +20">
+                <b>Old registration</b> — 2, 5 or 10+ years
+              </Deduct>
+              <Deduct up pts="+15">
+                <b>Own nameservers</b> — served only by a trusted company’s nameservers (e.g. <code>aaplimg.com</code> on Apple’s),
+                checked over encrypted DNS; shared DNS hosts such as Cloudflare or GoDaddy serve anyone’s domain, so they don’t count
+              </Deduct>
+              <Deduct up pts="+4 to +8">
+                <b>How it’s held</b> — registry locks, a named owner, paid years ahead, DNSSEC
+              </Deduct>
+              <Deduct up pts="+3 to +10">
+                <b>Clean reputation</b> — VirusTotal clean, Kaspersky green, no abuse on its IP
+              </Deduct>
+            </ul>
+            The language model can lower the score but never raise it: it reads the domain name, which an attacker chooses. WHOIS data
+            from plain-text (port-43) servers can likewise only lower it, since it could be forged in transit.
+          </Step>
+          <Arrow />
+          <Step tone="ok">
+            <b>Safety floors</b> — a domain older than two years, or reported clean by VirusTotal, can’t be pushed into block range by
+            soft signals alone (a single feed, the model, the shape of the name).
+          </Step>
+          <Arrow />
+          <Step tone="warn">
+            A <b>block candidate</b> needs a score <b>below 50</b> <em>and</em> a real threat signal (threat feed, reputation flag or the
+            model’s security category), so a merely young, legitimate site is never blocked on its shape alone.
+          </Step>
+          <div className="flow-outcomes">
+            <div className="flow-box block">
+              <b>Below 35</b> in auto-block mode: blocked right away.
+            </div>
+            <div className="flow-box warn">
+              <b>Below 50</b>: waits in “To check” for your decision.
+            </div>
           </div>
         </div>
       </div>
 
-      <h4>What the numbers &amp; signals mean</h4>
-      <ul className="help-list">
-        <li>
-          <strong>Legitimacy</strong> — the 0–100% score. 100 = presumed-innocent; the breakdown in each domain's detail
-          view shows exactly which factors dropped it. Below 50% (with a threat indicator) it's a block candidate.
-        </li>
-        <li>
-          <strong>🛡 threat</strong> — on a known-malware/phishing feed. A heavy deduction that also catches domains the
-          model alone would have missed — but it's weighed against age and trust, not taken as an absolute rule. Feeds
-          refresh in the background, and a domain already marked clean is automatically re-flagged if it later lands on a
-          feed.
-        </li>
-        <li>
-          <strong>✓ trusted</strong> — a well-known legitimate site (or on trusted infrastructure). Scores 100 and is
-          never blocked — this is the main false-positive guard, and it wins over a threat-list hit.
-        </li>
-        <li>
-          <strong>Category</strong> — security categories (red) can drive a block; content categories (blue, e.g. social
-          / streaming — these need the AI model) are labels only; <code>other</code> is legitimate-but-unclassified.
-        </li>
-      </ul>
+      <div>
+        <h3>What the numbers and tags mean</h3>
+        <dl className="kv help-kv">
+          <dt>Legitimacy</dt>
+          <dd>
+            The 0–100 score. Each domain’s drawer shows exactly which factors lowered and raised it. Below 50, with a threat signal, it is a block
+            candidate.
+          </dd>
+          <dt>
+            <span className="tag block">Threat feed</span>
+          </dt>
+          <dd>
+            On a known malware or phishing feed. A heavy deduction that also catches domains a model would miss, weighed against age and
+            trust. Feeds refresh in the background; a domain already marked clean is flagged again if it later lands on a feed.
+          </dd>
+          <dt>
+            <span className="tag ok">Trusted</span>
+          </dt>
+          <dd>A well-known legitimate site or trusted infrastructure. Scores 100 and is never blocked, even if a threat list names it.</dd>
+          <dt>Category</dt>
+          <dd>
+            Security categories (ads, trackers, malware, phishing) can drive a block. Content categories such as social or streaming need
+            the language model and are labels only; <code>other</code> means legitimate but unclassified.
+          </dd>
+        </dl>
+      </div>
 
-      <h4>Enforcement modes</h4>
-      <ul className="help-list">
-        <li>
-          <strong>Off</strong> — stop classifying.
-        </li>
-        <li>
-          <strong>Suggest &amp; approve</strong> — record verdicts; nothing blocks until you approve it.
-        </li>
-        <li>
-          <strong>Auto-block</strong> — security verdicts block immediately (trusted domains are still spared).
-        </li>
-      </ul>
+      <div>
+        <h3>Enforcement modes</h3>
+        <dl className="kv help-kv">
+          <dt>Off</dt>
+          <dd>Stop scoring new domains.</dd>
+          <dt>Suggest</dt>
+          <dd>Record verdicts; nothing is blocked until you approve it.</dd>
+          <dt>Auto-block</dt>
+          <dd>Security verdicts block right away (trusted domains are still spared).</dd>
+        </dl>
+      </div>
 
-      <h4>Reviewing a suggestion</h4>
-      <ul className="help-list">
-        <li>
-          <strong>Block</strong> — enforce it (also propagates to worker nodes).
-        </li>
-        <li>
-          <strong>Allow</strong> — never block this domain (hide it from suggestions for good).
-        </li>
-        <li>
-          <strong>Dismiss</strong> — hide it just once; it may be re-evaluated and resurface later.
-        </li>
-      </ul>
+      <div>
+        <h3>Deciding on a domain</h3>
+        <dl className="kv help-kv">
+          <dt>Block</dt>
+          <dd>Enforce it. The block reaches every agent.</dd>
+          <dt>Allow</dt>
+          <dd>Never block this domain and stop suggesting it.</dd>
+          <dt>Dismiss</dt>
+          <dd>Hide it this once; it may be scored again and come back.</dd>
+        </dl>
+      </div>
     </Modal>
   )
 }

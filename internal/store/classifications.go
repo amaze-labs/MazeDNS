@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -125,6 +126,43 @@ func (s *Store) CleanDomains() ([]string, error) {
 	return out, rows.Err()
 }
 
+// TrustedVerdict is a trusted-clean verdict's domain and recorded reason.
+type TrustedVerdict struct {
+	Domain string
+	Reason string
+}
+
+// TrustedCleanVerdicts returns the verdicts recorded as trusted and clean (no
+// human decision), for re-checking when the trust rules tighten.
+func (s *Store) TrustedCleanVerdicts() ([]TrustedVerdict, error) {
+	rows, err := s.read.Query(`SELECT domain, reason FROM classifications WHERE status = ? AND trusted = 1`, ClassClean)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TrustedVerdict
+	for rows.Next() {
+		var v TrustedVerdict
+		if err := rows.Scan(&v.Domain, &v.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// DeleteTrustedCleanVerdict removes a verdict only while it is still trusted and
+// clean, so a human decision made meanwhile is never lost. Returns whether a row
+// was removed.
+func (s *Store) DeleteTrustedCleanVerdict(domain string) (bool, error) {
+	res, err := s.db.Exec(`DELETE FROM classifications WHERE domain = ? AND status = ? AND trusted = 1`, domain, ClassClean)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // FlagThreat flips a clean verdict to a threat block because a refreshed feed now
 // lists the domain. It only touches rows still status='clean' (and untrusted), so
 // human decisions and existing blocks are preserved. Returns whether a row changed.
@@ -236,18 +274,24 @@ func (s *Store) ListClassifications(status, search string, limit, offset int) ([
 }
 
 // ClientsForDomain returns the clients that queried a registered domain (or any
-// of its subdomains), most active first — so an operator can see who is reaching
-// a flagged domain. Names carry a trailing dot in the log, so match both forms.
-func (s *Store) ClientsForDomain(domain string, limit int) ([]DomainClient, error) {
+// of its subdomains) since sinceMs (unix millis), most active first — so an
+// operator can see who is reaching a flagged domain. Names carry a trailing dot
+// in the log, so match both forms. The subdomain match (LIKE '%.domain') can't
+// use an index, so the time bound is what keeps this from scanning the whole
+// (up to 90-day, cluster-wide) log. The MATERIALIZED CTE makes the planner seek
+// the ts index for the window first; without it SQLite walks the whole
+// (client, ts) index to skip the GROUP BY sort (3M rows: 80ms vs 3.2s).
+func (s *Store) ClientsForDomain(ctx context.Context, domain string, sinceMs int64, limit int) ([]DomainClient, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := s.read.Query(
-		`SELECT client, COUNT(*) c, SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END), MAX(ts)
-		 FROM query_log
-		 WHERE name = ? OR name = ? OR name LIKE ? OR name LIKE ?
-		 GROUP BY client ORDER BY c DESC LIMIT ?`,
-		domain, domain+".", "%."+domain, "%."+domain+".", limit)
+	rows, err := s.read.QueryContext(ctx,
+		`WITH hits AS MATERIALIZED (
+			SELECT client, action, ts FROM query_log
+			WHERE ts >= ? AND (name = ? OR name = ? OR name LIKE ? OR name LIKE ?))
+		 SELECT client, COUNT(*) c, SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END), MAX(ts)
+		 FROM hits GROUP BY client ORDER BY c DESC LIMIT ?`,
+		sinceMs, domain, domain+".", "%."+domain, "%."+domain+".", limit)
 	if err != nil {
 		return nil, err
 	}

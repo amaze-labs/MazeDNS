@@ -3,6 +3,7 @@ package classifier
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func block(cat string, conf float64) Verdict { return Verdict{Category: cat, Confidence: conf} }
@@ -21,9 +22,15 @@ func TestComputeScore(t *testing.T) {
 			minLegit: 100, maxLegit: 100,
 		},
 		{
-			name:     "nameservers on trusted infra override phishing (aaplimg.com)",
-			in:       ScoreInput{Domain: "aaplimg.com", NSTrustedOn: "apple.com", Whois: WhoisInfo{AgeDays: 4800}, Verdict: block("phishing", 1.0)},
-			minLegit: 100, maxLegit: 100,
+			name: "a brand's own nameservers outweigh a confident phishing verdict (aaplimg.com)",
+			in:   ScoreInput{Domain: "aaplimg.com", NSTrustedOn: "apple.com", Whois: WhoisInfo{AgeDays: 4800}, Verdict: block("phishing", 1.0)},
+			// 85 + 20 (age) + 15 (own nameservers) − 50 (model) = 70
+			minLegit: 70,
+		},
+		{
+			name:      "own nameservers can't outvote a corroborated threat",
+			in:        ScoreInput{Domain: "evil.com", NSTrustedOn: "apple.com", Threat: true, ThreatHits: 2, Whois: WhoisInfo{AgeDays: 4800}},
+			wantBlock: true, maxLegit: blockThreshold - 1,
 		},
 		{
 			name:      "young domain the model calls phishing is blocked",
@@ -167,5 +174,166 @@ func TestBrandImpersonation(t *testing.T) {
 		if f, ok := brandImpersonationFactor(label); ok {
 			t.Errorf("%q should NOT be flagged, got %+v", label, f)
 		}
+	}
+}
+
+// fullTrust is every positive signal at once: an old, locked, owned, signed,
+// clean domain.
+func fullTrust() (WhoisInfo, Reputation) {
+	return WhoisInfo{
+			AgeDays:    6000,
+			Registrant: "Example Corp",
+			Expires:    time.Now().AddDate(5, 0, 0).Format(time.RFC3339),
+			Status:     []string{"server transfer prohibited", "server delete prohibited"},
+			DNSSEC:     true,
+		}, Reputation{
+			VTChecked: true, VTHarmless: 70,
+			KasperskyChecked: true, KasperskyZone: "Green",
+			AbuseChecked: true, AbuseIP: "192.0.2.1",
+		}
+}
+
+func factorDelta(s Score, label string) (int, bool) {
+	for _, f := range s.Factors {
+		if f.Label == label {
+			return f.Delta, true
+		}
+	}
+	return 0, false
+}
+
+func TestScoreTrustEvidenceRaisesScore(t *testing.T) {
+	w, rep := fullTrust()
+	s := computeScore(ScoreInput{Domain: "examplecorp.com", Whois: w, Rep: rep})
+	if s.Legitimacy != 100 {
+		t.Errorf("legitimacy = %d, want 100 (factors %+v)", s.Legitimacy, s.Factors)
+	}
+	for _, label := range []string{"Domain age", "Registry lock", "Registrant", "Registration term", "DNSSEC", "VirusTotal", "Kaspersky OpenTIP", "AbuseIPDB"} {
+		if d, ok := factorDelta(s, label); !ok || d <= 0 {
+			t.Errorf("%s: delta %d (present %v), want a positive factor", label, d, ok)
+		}
+	}
+}
+
+// Worked example: an old, clean domain on a single feed is a likely misreport.
+// The positive evidence alone keeps it out of block range, before any floor.
+func TestScoreOldCleanDomainOnOneFeed(t *testing.T) {
+	in := ScoreInput{Domain: "oldcorp.com", Threat: true, ThreatHits: 1,
+		Whois: WhoisInfo{AgeDays: 4000},
+		Rep:   Reputation{VTChecked: true, VTHarmless: 60, KasperskyChecked: true, KasperskyZone: "Green"}}
+	s := computeScore(in)
+	if s.Legitimacy != 80 { // 85 + 20 + 10 + 10 − 45
+		t.Errorf("legitimacy = %d, want 80 (factors %+v)", s.Legitimacy, s.Factors)
+	}
+	if _, floored := factorDelta(s, "Established floor"); floored {
+		t.Error("the floor should not be needed any more")
+	}
+}
+
+// Worked example: a fresh brand look-alike on a feed scores 0 and auto-blocks.
+func TestScoreYoungLookAlike(t *testing.T) {
+	s := computeScore(ScoreInput{Domain: "secure-paypal-login.xyz", Threat: true, ThreatHits: 1, Whois: WhoisInfo{AgeDays: 5}})
+	if s.Legitimacy != 0 {
+		t.Errorf("legitimacy = %d, want 0 (factors %+v)", s.Legitimacy, s.Factors)
+	}
+}
+
+// Worked example: an unknown domain on one feed is suggested for review, not
+// auto-blocked — the same outcome as before the rebalance.
+func TestScoreUnknownDomainOnOneFeed(t *testing.T) {
+	s := computeScore(ScoreInput{Domain: "unknown.com", Threat: true, ThreatHits: 1})
+	if s.Legitimacy >= blockThreshold || s.Legitimacy < autoThreshold {
+		t.Errorf("legitimacy = %d, want in [%d, %d) — suggested, not auto", s.Legitimacy, autoThreshold, blockThreshold)
+	}
+}
+
+// The model alone, on a domain we know nothing about, must not auto-block.
+func TestScoreModelAloneDoesNotAutoBlock(t *testing.T) {
+	s := computeScore(ScoreInput{Domain: "unknown.com", Verdict: block("phishing", 1.0)})
+	if s.Legitimacy < autoThreshold {
+		t.Errorf("legitimacy = %d, want >= %d", s.Legitimacy, autoThreshold)
+	}
+}
+
+// A pile of trust evidence can't outvote a corroborated threat.
+func TestScoreTrustCapAgainstStrongThreat(t *testing.T) {
+	w, rep := fullTrust()
+	s := computeScore(ScoreInput{Domain: "examplecorp.com", Threat: true, ThreatHits: 2, Whois: w, Rep: rep})
+	if s.Legitimacy >= blockThreshold {
+		t.Errorf("legitimacy = %d, want a block (factors %+v)", s.Legitimacy, s.Factors)
+	}
+	if d, ok := factorDelta(s, "Trust cap"); !ok || d >= 0 {
+		t.Errorf("trust cap delta = %d (present %v), want negative", d, ok)
+	}
+	sum := 0
+	for _, f := range s.Factors {
+		sum += f.Delta
+	}
+	if baseLegitimacy+sum != s.Legitimacy {
+		t.Errorf("factors sum to %d, score is %d — breakdown must add up", baseLegitimacy+sum, s.Legitimacy)
+	}
+}
+
+func TestScoreHostingPlatformAndUnknownAge(t *testing.T) {
+	s := computeScore(ScoreInput{Domain: "evecurls.workers.dev", Platform: "workers.dev"})
+	if d, _ := factorDelta(s, "Hosting platform"); d != -10 {
+		t.Errorf("hosting platform delta = %d, want -10", d)
+	}
+	if _, ok := factorDelta(s, "Domain age"); ok {
+		t.Error("a platform subdomain should not get a domain-age factor")
+	}
+	// An unknown registration date is neutral now — many registries publish none.
+	s = computeScore(ScoreInput{Domain: "heise.de"})
+	if d, ok := factorDelta(s, "Domain age"); !ok || d != 0 {
+		t.Errorf("unknown age delta = %d (present %v), want a 0 note", d, ok)
+	}
+	if s.Legitimacy != baseLegitimacy {
+		t.Errorf("legitimacy = %d, want %d", s.Legitimacy, baseLegitimacy)
+	}
+}
+
+func TestRegistrationFactors(t *testing.T) {
+	now := time.Now()
+	held := registrationFactors(WhoisInfo{Status: []string{"clientHold"}}, now)
+	if len(held) != 1 || held[0].Delta != -20 {
+		t.Errorf("clientHold factors = %+v, want one -20", held)
+	}
+	// Client-side locks are a registrar default — not a registry lock.
+	if fs := registrationFactors(WhoisInfo{Status: []string{"clientTransferProhibited", "clientDeleteProhibited"}}, now); len(fs) != 0 {
+		t.Errorf("client locks factors = %+v, want none", fs)
+	}
+	for _, org := range []string{"REDACTED FOR PRIVACY", "Domains By Proxy, LLC", "Data Protected", "Contact Privacy Inc."} {
+		if fs := registrationFactors(WhoisInfo{Registrant: org}, now); len(fs) != 0 {
+			t.Errorf("registrant %q factors = %+v, want none", org, fs)
+		}
+	}
+	// A yearly renewal is normal for everyone — no bonus.
+	if fs := registrationFactors(WhoisInfo{Expires: now.AddDate(0, 11, 0).Format(time.RFC3339)}, now); len(fs) != 0 {
+		t.Errorf("1-year term factors = %+v, want none", fs)
+	}
+}
+
+// The model reads an attacker-chosen name, so it can lower a score but never
+// vouch for a domain, however confident.
+func TestScoreModelNeverRaises(t *testing.T) {
+	s := computeScore(ScoreInput{Domain: "news.com", Verdict: Verdict{Category: "news", Confidence: 1.0}})
+	if d, ok := factorDelta(s, "Model assessment"); !ok || d != 0 {
+		t.Errorf("content verdict delta = %d (present %v), want a 0 note", d, ok)
+	}
+}
+
+// Port-43 WHOIS is plain TCP and forgeable: it may lower a score, never raise it.
+func TestScorePlainWhoisNeverRaises(t *testing.T) {
+	w, _ := fullTrust()
+	w.Source = "whois"
+	s := computeScore(ScoreInput{Domain: "examplecorp.io", Whois: w, Verdict: block("phishing", 0.9)})
+	for _, f := range s.Factors {
+		if f.Delta > 0 {
+			t.Errorf("plain WHOIS raised the score: %+v", f)
+		}
+	}
+	young := computeScore(ScoreInput{Domain: "new.io", Whois: WhoisInfo{AgeDays: 5, Source: "whois"}})
+	if d, _ := factorDelta(young, "Domain age"); d != -45 {
+		t.Errorf("young plain-WHOIS age delta = %d, want -45", d)
 	}
 }

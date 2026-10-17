@@ -375,6 +375,48 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// reservedTLDs can never be registered (RFC 2606 / 6761 / 6762 / 9476, ICANN's
+// .internal) or are common private-network suffixes. Names under them never exist
+// on the public internet — browsers send "this-url-does-not-exist-<uuid>.invalid"
+// probes — so classifying them only wastes lookups.
+var reservedTLDs = map[string]bool{
+	"invalid": true, "test": true, "example": true, "localhost": true, "local": true,
+	"onion": true, "alt": true, "internal": true, "arpa": true,
+	"lan": true, "home": true, "corp": true, "localdomain": true,
+}
+
+// IsReservedName reports whether name is under a reserved / private-use TLD (or
+// is one of the RFC 2606 example domains) and so is never worth classifying.
+func IsReservedName(name string) bool {
+	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+	tld := name
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		tld = name[i+1:]
+	}
+	if reservedTLDs[tld] {
+		return true
+	}
+	switch RegisteredDomain(name) {
+	case "example.com", "example.net", "example.org":
+		return true
+	}
+	return false
+}
+
+// HostingPlatform returns the platform suffix when name is a customer subdomain
+// on a shared hosting / tunnel platform listed in the private section of the
+// Public Suffix List (workers.dev, github.io, netlify.app, ngrok-free.app, …),
+// else "". Anyone can publish there for free in minutes, and the platform's own
+// registration (age, registrar) says nothing about the customer's site.
+func HostingPlatform(name string) string {
+	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+	suffix, icann := publicsuffix.PublicSuffix(name)
+	if icann || !strings.Contains(suffix, ".") || suffix == name {
+		return ""
+	}
+	return suffix
+}
+
 // RegisteredDomain returns the eTLD+1 (the registered domain) for a name, so a
 // verdict applies to the whole domain and all its subdomains — and never to a
 // bare public suffix like "co.uk". Returns "" if it can't be determined.

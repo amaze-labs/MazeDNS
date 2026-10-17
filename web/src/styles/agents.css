@@ -1,0 +1,419 @@
+/* Agents page (Cluster.tsx): sites with their agents, enrollment keys, the
+   agent drawer and the "add an agent" guide. */
+
+.pg-agents .strip b small {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+.pg-agents .strip b.ag-ver {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* "x wants to join" */
+.pg-agents .ag-pending {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+}
+.pg-agents .ag-pending-text {
+  flex: 1;
+  min-width: 220px;
+}
+.pg-agents .ag-pending-actions {
+  display: flex;
+  gap: 10px;
+}
+.pg-agents .ag-name-link {
+  color: inherit;
+  font-weight: 600;
+  text-decoration-color: color-mix(in srgb, var(--text) 35%, transparent);
+}
+.pg-agents .ag-inline-err {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+/* Site cards */
+.pg-agents .ag-sites {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.pg-agents .ag-site {
+  padding-bottom: 8px;
+}
+.pg-agents .ag-site-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pg-agents .ag-site-head h2 {
+  font-size: 15px;
+}
+.pg-agents .ag-site-head small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-agents .ag-site-del {
+  align-self: center;
+  margin: -4px -8px -4px 0;
+}
+.pg-agents .ag-site-del:hover:not(:disabled) {
+  color: var(--block);
+}
+.pg-agents .ag-site-desc {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 4px 0 0;
+}
+.pg-agents .ag-list {
+  margin: 8px -20px 0;
+}
+.pg-agents .ag-list-empty {
+  margin: 0;
+  padding: 10px 20px 12px;
+}
+
+/* One agent in a site card */
+.pg-agents .ag-agent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  align-items: center;
+  padding: 12px 20px;
+  border-top: 1px solid var(--soft);
+  cursor: pointer;
+}
+.pg-agents .ag-agent:first-child {
+  border-top: 0;
+}
+.pg-agents .ag-agent:hover,
+.pg-agents .ag-agent.sel {
+  background: var(--raise);
+}
+.pg-agents .ag-agent.sel {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.pg-agents .ag-agent:focus-visible {
+  outline-offset: -2px;
+}
+.pg-agents .ag-agent-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.pg-agents .ag-agent-role {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-agents .ag-agent-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  align-self: start;
+}
+.pg-agents .ag-agent-num small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pg-agents .ag-agent-meta {
+  grid-column: 2 / 4;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  gap: 4px 14px;
+  flex-wrap: wrap;
+}
+
+.pg-agents .ag-empty h2 {
+  margin-bottom: 4px;
+}
+.pg-agents .ag-empty p {
+  margin: 0;
+}
+
+/* Enrollment keys */
+.pg-agents .ag-keyform {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.ag-keyform-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.ag-keyform-row .btn {
+  min-height: 38px;
+}
+.pg-agents .ag-keyform.compact {
+  padding: 0;
+  border: 0;
+}
+.pg-agents .ag-newkey {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.pg-agents .ag-newkey .ok-msg {
+  align-items: center;
+}
+.pg-agents .ag-card-err {
+  margin: 14px 20px 0;
+}
+.pg-agents .ag-keys-table tr.inactive td:not(.actions) {
+  opacity: 0.6;
+}
+.pg-agents .ag-keys-table td.lead b {
+  font-weight: 600;
+}
+
+/* Code block with copy button (deploy guide, new keys) */
+.ag-code {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunk);
+  overflow: hidden;
+  min-width: 0;
+}
+.ag-code + .ag-code {
+  margin-top: 12px;
+}
+.ag-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.ag-code pre {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* Drawers and dialogs rendered by this page */
+.ag-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.strip.ag-drawer-strip {
+  margin: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.ag-drawer-strip b {
+  font-size: 20px;
+}
+.ag-drawer-strip span {
+  white-space: nowrap;
+}
+.ag-mini {
+  margin-top: 14px;
+}
+.ag-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.ag-breakdown > span::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--k);
+  margin-right: 6px;
+}
+.ag-breakdown b {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.ag-tag-gap {
+  margin-left: 8px;
+}
+.ag-id {
+  font-size: 12px;
+}
+.ag-assign {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+/* Actions: fixed two columns, button | what it does */
+.ag-actions {
+  display: grid;
+}
+.ag-action {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--soft);
+}
+.ag-action:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+.ag-action > .btn {
+  width: 100%;
+}
+.ag-action-text p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.ag-rename {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.ag-rename-field {
+  display: flex;
+  gap: 8px;
+}
+.ag-rename-field input {
+  flex: 1;
+}
+
+.ag-form {
+  display: grid;
+  gap: 16px;
+}
+.ag-form p {
+  margin: 0;
+}
+.ag-form .error {
+  margin: 0;
+}
+
+/* Add-an-agent guide. The drawer body is a grid: let wide code blocks scroll
+   inside their box instead of widening the column. */
+.pg-agents .panel-body > * {
+  min-width: 0;
+}
+.ag-step h3 {
+  margin-bottom: 6px;
+}
+.ag-step > p {
+  margin: 0 0 12px;
+}
+.ag-manual {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.ag-manual summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.ag-manual[open] summary {
+  margin-bottom: 12px;
+}
+.ag-inline-form {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.ag-inline-form .field {
+  flex: 1;
+}
+.ag-inline-form .btn {
+  min-height: 38px;
+}
+
+/* .actions (flex) from base.css would turn the cell into a flex box and break
+   the row's borders; keep it a table cell on desktop. */
+.pg-agents td.actions {
+  display: table-cell;
+}
+.pg-agents td.actions .btn + .btn {
+  margin-left: 6px;
+}
+
+@media (max-width: 900px) {
+  .pg-agents .ag-sites {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-agents .ag-site {
+    padding: 16px 16px 6px;
+  }
+  .pg-agents .ag-list {
+    margin: 8px -16px 0;
+  }
+  .pg-agents .ag-agent {
+    padding: 12px 16px;
+  }
+  .pg-agents .ag-pending-actions {
+    width: 100%;
+  }
+  .pg-agents .ag-pending-actions .btn {
+    flex: 1;
+  }
+  .pg-agents .ag-keyform {
+    padding: 14px 16px;
+  }
+  .ag-keyform-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ag-keyform-row > :first-child,
+  .ag-keyform-row > .btn {
+    grid-column: 1 / -1;
+  }
+  .pg-agents .ag-newkey {
+    padding: 14px 16px;
+  }
+  .pg-agents .ag-card-err {
+    margin: 14px 16px 0;
+  }
+  .pg-agents table.stackable td.actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-start;
+    margin-top: 6px;
+  }
+  .ag-action {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .ag-assign {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .strip.ag-drawer-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .strip.ag-drawer-strip > div {
+    padding: 12px;
+    box-shadow: -1px 0 0 var(--line);
+  }
+  .strip.ag-drawer-strip b {
+    font-size: 18px;
+  }
+  .pg-agents .ag-list-empty {
+    padding: 10px 16px 12px;
+  }
+  .ag-drawer-strip span {
+    white-space: normal;
+  }
+}

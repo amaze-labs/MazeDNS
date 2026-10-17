@@ -1,0 +1,738 @@
+/* Filtering page (/filtering): protection card, Blocklists, Your rules, Review.
+   Everything is scoped under .pg-filtering; drawers and dialogs render inside it. */
+
+.pg-filtering .grow {
+  flex: 1;
+  min-width: 0;
+}
+.pg-filtering .nomargin {
+  margin: 0;
+}
+.pg-filtering .block-text {
+  color: var(--block);
+}
+.pg-filtering .error .btn.quiet,
+.pg-filtering .ok-msg .btn.quiet {
+  margin: -3px -6px -3px 0;
+}
+.pg-filtering .error.inset {
+  margin: 0 20px 16px;
+}
+.pg-filtering .review > .card + .card,
+.pg-filtering .review > .cols + .card,
+.pg-filtering .review > .card + .cols {
+  margin-top: 20px;
+}
+
+/* ---- Protection card ---- */
+.pg-filtering .protect {
+  display: flex;
+  align-items: center;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  margin-bottom: 8px;
+}
+.pg-filtering .protect .state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 280px;
+}
+.pg-filtering .protect .state b {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+}
+.pg-filtering .protect .state small {
+  display: block;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-filtering .protect .spacer {
+  display: none;
+}
+.pg-filtering .protect.paused {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+  background: color-mix(in srgb, var(--warn) 6%, var(--panel));
+}
+.pg-filtering .protect .prot-err {
+  flex-basis: 100%;
+}
+.pg-filtering .tabs {
+  margin-top: 18px;
+}
+
+/* ---- Blocklists ---- */
+.pg-filtering .cols {
+  align-items: start;
+}
+.pg-filtering .cols.lists-cols {
+  grid-template-columns: minmax(0, 1.75fr) minmax(310px, 1fr);
+}
+.pg-filtering .card-head .sort-by {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pg-filtering .card-head .sort-by select {
+  width: auto;
+  padding-block: 5px;
+  font-size: 13px;
+}
+.pg-filtering .lists {
+  margin-top: 6px;
+}
+.pg-filtering .lists .rowitem {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  padding: 13px 20px;
+}
+.pg-filtering .lists .rowitem.off .body {
+  opacity: 0.65;
+}
+.pg-filtering .lists .rowitem.open {
+  background: color-mix(in srgb, var(--raise) 45%, transparent);
+}
+.pg-filtering button.switch {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.pg-filtering button.switch:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+.pg-filtering .switch.ro {
+  opacity: 0.6;
+}
+.pg-filtering .lists .body {
+  min-width: 0;
+}
+.pg-filtering .lists .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pg-filtering .lists .title .name {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.pg-filtering .lists .title .name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.pg-filtering .lists .src {
+  display: block;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.pg-filtering .lists .src.mono {
+  font-size: 12px;
+}
+.pg-filtering .lists .err {
+  display: block;
+  color: var(--block);
+  font-size: 12.5px;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.pg-filtering .lists .count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pg-filtering .lists .count small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.pg-filtering .lists .count small.bad-text {
+  color: var(--block);
+}
+.pg-filtering .row-actions {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 34px;
+}
+.pg-filtering .row-actions .more {
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 9px 8px;
+}
+.pg-filtering .menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+.pg-filtering .menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 21;
+  min-width: 170px;
+  display: grid;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.pg-filtering .menu button {
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.pg-filtering .menu button:hover {
+  background: var(--raise);
+}
+.pg-filtering .menu button.danger {
+  color: var(--block);
+}
+.pg-filtering .lists .expand {
+  grid-column: 2 / -1;
+  min-width: 0;
+  padding-top: 8px;
+}
+.pg-filtering .viewer {
+  display: grid;
+  gap: 10px;
+}
+.pg-filtering .viewer .error {
+  margin: 0;
+}
+.pg-filtering .viewer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+}
+.pg-filtering .viewer-meta .mono {
+  flex: 1 1 260px;
+  min-width: 0;
+  font-size: 12px;
+}
+.pg-filtering .viewer-meta .interval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pg-filtering .viewer-meta select {
+  width: auto;
+  padding-block: 5px;
+  font-size: 13px;
+}
+.pg-filtering .viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+.pg-filtering .viewer-bar .search {
+  flex: 1 1 220px;
+  padding-block: 6px;
+}
+.pg-filtering .rule-grid,
+.pg-filtering .domain-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 2px;
+}
+.pg-filtering .rule-grid .domain,
+.pg-filtering .domain-grid .domain {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  max-width: 100%;
+}
+.pg-filtering .rule-grid .rule.allow {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+}
+.pg-filtering .config-note {
+  margin: 0;
+  padding: 12px 20px 14px;
+  border-top: 1px solid var(--soft);
+}
+.pg-filtering .config-note code {
+  font-size: 11.5px;
+}
+.pg-filtering .list-load-err {
+  margin: 14px 20px;
+}
+.pg-filtering .rowlist .empty {
+  text-align: left;
+  padding: 18px 20px;
+}
+
+/* Add a list */
+.pg-filtering .add-list > .seg {
+  margin-bottom: 16px;
+}
+.pg-filtering .addform {
+  display: grid;
+  gap: 14px;
+}
+.pg-filtering .addform .pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.pg-filtering .drop {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  color: var(--muted);
+}
+.pg-filtering .drop.over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.pg-filtering .drop b {
+  color: var(--text);
+  font-weight: 500;
+}
+.pg-filtering .drop .btn {
+  margin-top: 6px;
+}
+
+/* ---- Your rules ---- */
+.pg-filtering .quickadd {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 16px 20px 12px;
+}
+.pg-filtering .quickadd .qa-cat {
+  width: auto;
+  min-width: 140px;
+}
+.pg-filtering .quickadd span.qa-cat {
+  min-width: 0;
+}
+.pg-filtering .qa-hint {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 0;
+  padding: 0 20px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.pg-filtering .rules-toolbar {
+  padding: 14px 20px 4px;
+  margin: 0;
+}
+.pg-filtering .rules-toolbar .search {
+  max-width: 340px;
+  min-width: 180px;
+}
+.pg-filtering .rules-toolbar .chips {
+  gap: 8px;
+}
+.pg-filtering .rules-table .tag {
+  min-width: 46px;
+  justify-content: center;
+}
+
+/* ---- Review ---- */
+.pg-filtering .review .intro .linklike {
+  white-space: nowrap;
+}
+.pg-filtering .status-seg .cnt {
+  margin-left: 6px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.pg-filtering .status-seg button.on .cnt {
+  color: var(--muted);
+}
+.pg-filtering .review-search {
+  max-width: 300px;
+  min-width: 200px;
+}
+.pg-filtering .review-table .cat-cell {
+  white-space: nowrap;
+}
+.pg-filtering .review-table .cat-cell .tag + .tag {
+  margin-left: 6px;
+}
+.pg-filtering .score {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.pg-filtering .score b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 24px;
+}
+.pg-filtering .score .meter {
+  width: 80px;
+}
+.pg-filtering .review-table .reason {
+  display: block;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-filtering .review-table td.actions .btn + .btn {
+  margin-left: 6px;
+}
+.pg-filtering .score-legend {
+  margin: 12px 0 0;
+}
+.pg-filtering .start-over {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--soft);
+}
+.pg-filtering .start-over > div {
+  flex: 1;
+  min-width: 0;
+}
+.pg-filtering .start-over b {
+  display: block;
+  font-weight: 500;
+}
+.pg-filtering .start-over small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-filtering .signals .rowitem {
+  padding: 11px 20px;
+}
+.pg-filtering .signals .title {
+  font-weight: 500;
+}
+.pg-filtering .list-viewer .search {
+  margin: 4px 0 12px;
+}
+.pg-filtering .list-viewer .domain-grid {
+  max-height: 260px;
+}
+.pg-filtering .llm-usage .inset-strip {
+  margin: 4px 20px 16px;
+}
+.pg-filtering .llm-usage table {
+  border-top: 1px solid var(--line);
+}
+.pg-filtering .quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.pg-filtering .quota {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--sunk);
+  min-width: 0;
+}
+.pg-filtering .quota-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.pg-filtering .quota-stats {
+  display: flex;
+  gap: 4px 14px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-filtering .quota-stats b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ---- Review drawer (DomainDetail) and decision form ---- */
+.pg-filtering .big-score {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.pg-filtering .big-score .ring {
+  width: 64px;
+  height: 64px;
+  flex: none;
+}
+.pg-filtering .ring-num {
+  font: 600 10px var(--sans);
+  fill: var(--text);
+}
+.pg-filtering .big-score b {
+  font-size: 15px;
+}
+.pg-filtering .big-score .tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.pg-filtering .factors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.pg-filtering .factors li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+}
+.pg-filtering .factors li small {
+  grid-column: 1 / 3;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-filtering .factors .pts {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pg-filtering .factors .pts.down {
+  color: var(--block);
+}
+.pg-filtering .factors .pts.up {
+  color: var(--ok);
+}
+.pg-filtering .factors .pts.none {
+  color: var(--faint);
+}
+.pg-filtering .panel-body h3.sub-h {
+  margin-top: 18px;
+}
+.pg-filtering .verdict {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+}
+.pg-filtering .verdict small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+.pg-filtering .panel-body .kv .tag.age {
+  margin-left: 8px;
+}
+.pg-filtering table.compact th,
+.pg-filtering table.compact td {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.pg-filtering table.compact th:first-child,
+.pg-filtering table.compact td:first-child {
+  padding-left: 0;
+}
+.pg-filtering table.compact th:last-child,
+.pg-filtering table.compact td:last-child {
+  padding-right: 0;
+}
+.pg-filtering table.compact .mono {
+  font-size: 11.5px;
+}
+.pg-filtering .decision-pane {
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--focus) 35%, var(--line));
+  background: color-mix(in srgb, var(--focus) 5%, var(--panel));
+}
+.pg-filtering .decision {
+  display: grid;
+  gap: 14px;
+}
+.pg-filtering .decision .error {
+  margin: 0;
+}
+.pg-filtering .decision-lead {
+  margin: 0;
+}
+.pg-filtering .panel-head h2 .mono {
+  font-size: 17px;
+}
+
+/* ---- How scoring works ---- */
+.pg-filtering .flow {
+  display: grid;
+  gap: 4px;
+}
+.pg-filtering .flow-box {
+  --k: var(--line);
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--k) 45%, var(--line));
+  background: color-mix(in srgb, var(--k) 7%, var(--sunk));
+}
+.pg-filtering .flow-box.info {
+  --k: var(--fwd);
+}
+.pg-filtering .flow-box.ok {
+  --k: var(--ok);
+}
+.pg-filtering .flow-box.warn {
+  --k: var(--warn);
+}
+.pg-filtering .flow-box.block {
+  --k: var(--block);
+}
+.pg-filtering .flow-arrow {
+  color: var(--faint);
+  padding-left: 18px;
+  line-height: 1.2;
+}
+.pg-filtering .flow-factors {
+  margin-top: 10px;
+}
+.pg-filtering .flow-outcomes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.pg-filtering .help-kv {
+  gap: 10px 18px;
+}
+.pg-filtering .help-kv dt {
+  font-weight: 500;
+  color: var(--text);
+}
+.pg-filtering .help-kv dd {
+  color: var(--muted);
+}
+
+/* ---- Mobile ---- */
+@media (max-width: 900px) {
+  .pg-filtering .cols.lists-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-filtering .protect .seg {
+    width: 100%;
+  }
+  .pg-filtering .protect .seg button {
+    flex: 1;
+  }
+  .pg-filtering .lists .rowitem {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 12px 16px;
+  }
+  .pg-filtering .lists .count {
+    display: none;
+  }
+  .pg-filtering .lists .expand {
+    grid-column: 1 / -1;
+  }
+  .pg-filtering .card.flush > .card-head {
+    padding: 14px 16px 0;
+  }
+  .pg-filtering .config-note {
+    padding: 12px 16px;
+  }
+  .pg-filtering .addform .pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-filtering .quickadd {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    padding: 14px 16px 10px;
+  }
+  .pg-filtering .quickadd .qa-domain {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .pg-filtering .quickadd .seg {
+    justify-self: start;
+  }
+  .pg-filtering .quickadd .qa-cat {
+    min-width: 0;
+    width: 100%;
+  }
+  .pg-filtering .quickadd span.qa-cat {
+    display: none;
+  }
+  .pg-filtering .quickadd .btn.primary {
+    grid-column: 1 / -1;
+  }
+  .pg-filtering .qa-hint {
+    padding: 0 16px 12px;
+  }
+  .pg-filtering .rules-toolbar {
+    padding: 12px 16px 4px;
+  }
+  .pg-filtering .rules-toolbar .search,
+  .pg-filtering .review-search {
+    max-width: none;
+    min-width: 0;
+    flex-basis: 100%;
+  }
+  .pg-filtering table.stackable td.cat {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: center;
+  }
+  .pg-filtering .rules-table td.actions {
+    grid-column: 2;
+    grid-row: 2;
+    text-align: right;
+  }
+  .pg-filtering table.stackable td.added {
+    display: none;
+  }
+  .pg-filtering .review-table .cat-cell {
+    white-space: normal;
+  }
+  .pg-filtering .status-seg {
+    width: 100%;
+  }
+  .pg-filtering .error.inset {
+    margin: 0 16px 14px;
+  }
+  .pg-filtering .llm-usage .inset-strip {
+    margin: 4px 16px 14px;
+  }
+  .pg-filtering .flow-outcomes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-filtering .help-kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .pg-filtering .help-kv dd {
+    margin-bottom: 10px;
+  }
+}

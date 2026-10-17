@@ -84,7 +84,8 @@ func TestHealthTracksForwardOutcome(t *testing.T) {
 		t.Fatalf("rcode = %s, want SERVFAIL", dns.RcodeToString[w.msg.Rcode])
 	}
 	h = r.Health()
-	if h.LastForwardError.Before(before) || h.ForwardError != "i/o timeout" {
+	// Forward errors name the upstream that failed.
+	if h.LastForwardError.Before(before) || h.ForwardError != "up: i/o timeout" {
 		t.Fatalf("after a failed forward: %+v", h)
 	}
 }

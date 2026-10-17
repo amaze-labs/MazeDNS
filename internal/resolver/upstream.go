@@ -3,12 +3,15 @@ package resolver
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	stdruntime "runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
@@ -164,29 +167,62 @@ func (u *plainUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) 
 	return resp, rtt, err
 }
 
-// exchangeTCP mirrors dotUpstream.Exchange: try a warm pooled connection first
-// (short read budget so a stale one fails over fast), otherwise dial fresh and
-// pool the connection for the next query.
+// exchangeTCP mirrors dotUpstream.Exchange (see exchangePooled).
 func (u *plainUpstream) exchangeTCP(req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	return exchangePooled(u.pool, u.probe, u.primary, u.addr, req)
+}
+
+// exchangePooled runs one query over a pooled stream connection (DoT or plain
+// TCP). It tries a warm pooled connection first, with a short read budget so a
+// stale one fails over fast, otherwise dials fresh and pools the connection for
+// the next query. A fresh connection the server closes before answering (EOF /
+// reset) gets one more fresh attempt: some resolvers (Quad9) drop a share of new
+// connections when several open at once, and an immediate retry almost always
+// succeeds — without it, each drop is a SERVFAIL to the client.
+func exchangePooled(pool chan pooledConn, probe, client *dns.Client, addr string, req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	// Measure the whole operation (including any time wasted on a stale pooled
+	// connection before failing over) so the reported rtt reflects real latency.
 	start := time.Now()
-	if conn := getPooledConn(u.pool); conn != nil {
-		if resp, _, err := u.probe.ExchangeWithConn(req, conn); err == nil {
-			putPooledConn(u.pool, conn)
+	if conn := getPooledConn(pool); conn != nil {
+		if resp, _, err := probe.ExchangeWithConn(req, conn); err == nil {
+			putPooledConn(pool, conn)
 			return resp, time.Since(start), nil
 		}
 		conn.Close()
 	}
-	conn, err := u.primary.Dial(u.addr)
-	if err != nil {
-		return nil, time.Since(start), err
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		var resp *dns.Msg
+		if resp, err = exchangeFresh(pool, client, addr, req); err == nil {
+			return resp, time.Since(start), nil
+		}
+		if !connDropped(err) {
+			break
+		}
 	}
-	resp, _, err := u.primary.ExchangeWithConn(req, conn)
+	return nil, time.Since(start), err
+}
+
+// exchangeFresh dials a new connection, runs the query on it and pools it.
+func exchangeFresh(pool chan pooledConn, client *dns.Client, addr string, req *dns.Msg) (*dns.Msg, error) {
+	conn, err := client.Dial(addr)
+	if err != nil {
+		return nil, err
+	}
+	resp, _, err := client.ExchangeWithConn(req, conn)
 	if err != nil {
 		conn.Close()
-		return nil, time.Since(start), err
+		return nil, err
 	}
-	putPooledConn(u.pool, conn)
-	return resp, time.Since(start), nil
+	putPooledConn(pool, conn)
+	return resp, nil
+}
+
+// connDropped reports whether err means the server closed the connection under
+// us (EOF, reset, broken pipe) rather than a timeout or a dial failure.
+func connDropped(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
 
 // keepWarm keeps one pooled TCP connection alive (see dotUpstream.keepWarm). A
@@ -234,31 +270,11 @@ type pooledConn struct {
 	lastUsed time.Time
 }
 
+// Exchange tries a warm pooled connection first, but with a short read deadline:
+// if it has gone stale we fail over to a fresh dial in ~dotProbeTimeout instead of
+// blocking for the full per-query timeout (see exchangePooled).
 func (u *dotUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
-	// Measure the whole operation (including any time wasted on a stale pooled
-	// connection before failing over) so the reported rtt reflects real latency.
-	start := time.Now()
-	// Try a warm pooled connection first, but with a short read deadline: if it has
-	// gone stale we fail over to a fresh dial in ~dotProbeTimeout instead of blocking
-	// for the full per-query timeout.
-	if conn := u.getConn(); conn != nil {
-		if resp, _, err := u.probe.ExchangeWithConn(req, conn); err == nil {
-			u.putConn(conn)
-			return resp, time.Since(start), nil
-		}
-		conn.Close()
-	}
-	conn, err := u.client.Dial(u.addr)
-	if err != nil {
-		return nil, time.Since(start), err
-	}
-	resp, _, err := u.client.ExchangeWithConn(req, conn)
-	if err != nil {
-		conn.Close()
-		return nil, time.Since(start), err
-	}
-	u.putConn(conn)
-	return resp, time.Since(start), nil
+	return exchangePooled(u.pool, u.probe, u.client, u.addr, req)
 }
 
 // getConn returns a warm pooled connection, discarding any that have been idle
@@ -361,7 +377,15 @@ func (u *dohUpstream) Exchange(req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	return out, time.Since(start), nil
 }
 
-func (u *dohUpstream) String() string { return u.url }
+// String names the upstream in errors and logs. A DoH URL can carry credentials
+// (user:pass@) or a token in the query, so only scheme, host and path are shown.
+func (u *dohUpstream) String() string {
+	p, err := url.Parse(u.url)
+	if err != nil {
+		return "https://(invalid url)"
+	}
+	return p.Scheme + "://" + p.Host + p.Path
+}
 
 func ensurePort(addr, defPort string) string {
 	if _, _, err := net.SplitHostPort(addr); err == nil {

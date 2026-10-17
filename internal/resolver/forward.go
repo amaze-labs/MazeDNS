@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -82,6 +83,16 @@ func betterSoft(cur, next *dns.Msg) *dns.Msg {
 	return cur
 }
 
+// exchange queries one upstream, naming it in any error so a "forward failed"
+// log line says which server failed.
+func exchange(u Upstream, req *dns.Msg) (*dns.Msg, time.Duration, error) {
+	m, rtt, err := u.Exchange(req)
+	if err != nil {
+		err = fmt.Errorf("%s: %w", u, err)
+	}
+	return m, rtt, err
+}
+
 // forward sends req to ups using the runtime's upstream strategy.
 func (r *Resolver) forward(rt *runtime, req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
 	if rt.hedged {
@@ -101,7 +112,7 @@ func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duratio
 		return nil, 0, errNoUpstreams
 	}
 	if len(ups) == 1 {
-		return ups[0].Exchange(req)
+		return exchange(ups[0], req)
 	}
 	if per <= 0 {
 		per = time.Duration(DefaultUpstreamTimeoutMs) * time.Millisecond
@@ -138,7 +149,7 @@ func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duratio
 		// later one on packing the shared message.
 		q := req.Copy()
 		go func() {
-			msg, rtt, err := ups[i].Exchange(q)
+			msg, rtt, err := exchange(ups[i], q)
 			results <- result{i, msg, rtt, err}
 		}()
 		timer.Reset(wait)
@@ -210,7 +221,7 @@ func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.D
 		return nil, 0, errNoUpstreams
 	}
 	if len(ups) == 1 {
-		return ups[0].Exchange(req)
+		return exchange(ups[0], req)
 	}
 
 	type result struct {
@@ -223,7 +234,7 @@ func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.D
 	// packing can never race on the shared message.
 	launch := func(u Upstream) {
 		go func() {
-			msg, rtt, err := u.Exchange(req.Copy())
+			msg, rtt, err := exchange(u, req.Copy())
 			results <- result{msg, rtt, err}
 		}()
 	}

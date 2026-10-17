@@ -307,14 +307,12 @@ func TestRegistrationFactors(t *testing.T) {
 	}
 }
 
-func TestScoreModelBonusOnlyWhenConfident(t *testing.T) {
-	s := computeScore(ScoreInput{Domain: "news.com", Verdict: Verdict{Category: "news", Confidence: 0.9}})
-	if d, _ := factorDelta(s, "Model assessment"); d != 4 {
-		t.Errorf("confident content verdict delta = %d, want 4", d)
-	}
-	s = computeScore(ScoreInput{Domain: "news.com", Verdict: Verdict{Category: "news", Confidence: 0.5}})
-	if d, _ := factorDelta(s, "Model assessment"); d != 0 {
-		t.Errorf("unsure verdict delta = %d, want 0", d)
+// The model reads an attacker-chosen name, so it can lower a score but never
+// vouch for a domain, however confident.
+func TestScoreModelNeverRaises(t *testing.T) {
+	s := computeScore(ScoreInput{Domain: "news.com", Verdict: Verdict{Category: "news", Confidence: 1.0}})
+	if d, ok := factorDelta(s, "Model assessment"); !ok || d != 0 {
+		t.Errorf("content verdict delta = %d (present %v), want a 0 note", d, ok)
 	}
 }
 

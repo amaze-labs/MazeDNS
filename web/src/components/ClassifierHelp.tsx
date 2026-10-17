@@ -44,8 +44,9 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           <Arrow />
           <Step tone="ok">
             <b>Trusted shortcut</b> — on the popular-domains list, <em>or</em> served by a trusted company’s own nameservers (e.g.{' '}
-            <code>apple.com</code>): the score stays at <b>100</b>. Nameservers can’t be faked, so this is the strongest guard against
-            false positives and it overrides everything below.
+            <code>apple.com</code>), verified by asking them: the score stays at <b>100</b>. Shared DNS hosts such as Cloudflare or GoDaddy
+            serve anyone’s domain, so they don’t count. This is the strongest guard against false positives and it overrides everything
+            below.
           </Step>
           <Arrow />
           <Step>
@@ -87,11 +88,9 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
               <Deduct up pts="+3 to +10">
                 <b>Clean reputation</b> — VirusTotal clean, Kaspersky green, no abuse on its IP
               </Deduct>
-              <Deduct up pts="up to +5">
-                <b>Language model</b> — a confident, non-threat category
-              </Deduct>
             </ul>
-            WHOIS data from plain-text (port-43) servers can lower the score but never raise it, since it could be forged in transit.
+            The language model can lower the score but never raise it: it reads the domain name, which an attacker chooses. WHOIS data
+            from plain-text (port-43) servers can likewise only lower it, since it could be forged in transit.
           </Step>
           <Arrow />
           <Step tone="ok">

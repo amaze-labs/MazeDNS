@@ -245,7 +245,8 @@ func computeScore(in ScoreInput) Score {
 	// Model assessment — the LLM's own read, made WITH all the signals above in
 	// hand. It contributes (up to -50) but, by being one bounded factor, it can no
 	// longer by itself sink an otherwise-legitimate domain (the false-positive fix).
-	// A confident non-threat read adds a little; the model is the weakest witness.
+	// A non-threat read adds nothing: the model reads the domain name, which the
+	// attacker chooses, so a crafted name could talk it into vouching.
 	if in.Verdict.ShouldBlock() {
 		conf := in.Verdict.Confidence
 		if conf <= 0 {
@@ -257,11 +258,7 @@ func computeScore(in ScoreInput) Score {
 		if cat == "" {
 			cat = "other"
 		}
-		if conf := in.Verdict.Confidence; cat != "other" && conf >= 0.7 {
-			vouch("Model assessment", fmt.Sprintf("%s (%.0f%% confident) — not a threat category", cat, conf*100), int(math.Round((conf-0.5)*10)))
-		} else {
-			note("Model assessment", cat+" — not a threat category")
-		}
+		note("Model assessment", cat+" — not a threat category")
 	}
 
 	// Trust cap — positive evidence offsets soft risk signals, but a pile of it

@@ -78,6 +78,7 @@ type Agent struct {
 	// settingsVer is the SettingsVersion of the central settings persisted on
 	// this node (loaded at start, updated on every change).
 	settingsVer string
+	syncHealth  *SyncHealth // records each snapshot poll's outcome (nil = disabled)
 }
 
 // key returns the current node key.
@@ -351,6 +352,15 @@ func (a *Agent) localVersion() string {
 
 func (a *Agent) syncOnce(ctx context.Context) {
 	snap, err := a.fetch(ctx)
+	if a.syncHealth != nil {
+		// A fetch that returns (304 or a snapshot) means the control plane was
+		// reached; applying the snapshot is local work, logged on its own.
+		if err != nil {
+			a.syncHealth.failed(err)
+		} else {
+			a.syncHealth.ok()
+		}
+	}
 	if err != nil {
 		slog.Warn("cluster sync failed", "err", err)
 		return

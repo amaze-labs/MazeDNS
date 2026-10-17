@@ -66,4 +66,9 @@ COPY configs /etc/mazedns
 WORKDIR /data
 EXPOSE 53/udp 53/tcp 853/tcp 8443/tcp 8080/tcp
 USER nonroot:nonroot
+# DNS readiness: the binary queries its own /readyz, which probes the DNS
+# listener over UDP and TCP with a built-in local record (no shell/curl in
+# distroless). Docker only marks the container unhealthy; it does not restart it.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/usr/local/bin/dns-agent", "--config", "/etc/mazedns/mazedns.yaml", "-healthcheck"]
 ENTRYPOINT ["/usr/local/bin/dns-agent", "--config", "/etc/mazedns/mazedns.yaml"]

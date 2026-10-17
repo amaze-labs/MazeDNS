@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/miekg/dns"
 )
@@ -66,11 +67,20 @@ type Server struct {
 	addr string
 	udp  []*dns.Server
 	tcp  *dns.Server
+	// udpUp/tcpUp report whether the listeners are bound (see Listening).
+	udpUp atomic.Bool
+	tcpUp atomic.Bool
 
 	mu      sync.Mutex
 	closed  bool          // Shutdown was called: start nothing more
 	running []*dns.Server // listeners handed a socket and started, for Shutdown
 }
+
+// Addr returns the address the server listens on.
+func (s *Server) Addr() string { return s.addr }
+
+// Listening reports whether the UDP and TCP listeners are bound and serving.
+func (s *Server) Listening() (udp, tcp bool) { return s.udpUp.Load(), s.tcpUp.Load() }
 
 // NewServer wires res as the handler for both UDP and TCP on addr.
 func NewServer(addr string, res *Resolver) *Server {
@@ -124,7 +134,7 @@ func (s *Server) ListenAndServe() error {
 		}
 		srv := s.udp[i]
 		srv.PacketConn = pc
-		if !s.start(srv, errc) {
+		if !s.start(srv, errc, &s.udpUp) {
 			return nil // shut down while starting
 		}
 		bound++
@@ -138,17 +148,18 @@ func (s *Server) ListenAndServe() error {
 			return
 		}
 		s.tcp.Listener = l
-		if s.start(s.tcp, errc) {
+		if s.start(s.tcp, errc, &s.tcpUp) {
 			slog.Info("listener up", "net", "tcp", "addr", s.addr)
 		}
 	}()
 	return <-errc
 }
 
-// start serves srv (its socket already set) unless Shutdown has been called, in
-// which case it closes the socket instead. Registering under mu is what lets
-// Shutdown see every listener, however far startup got.
-func (s *Server) start(srv *dns.Server, errc chan<- error) bool {
+// start serves srv (its socket already set) and marks it up, unless Shutdown has
+// been called, in which case it closes the socket instead. Registering under mu
+// is what lets Shutdown see every listener, however far startup got, and keeps
+// a late start from marking a shut-down server as listening.
+func (s *Server) start(srv *dns.Server, errc chan<- error, up *atomic.Bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -156,6 +167,7 @@ func (s *Server) start(srv *dns.Server, errc chan<- error) bool {
 		return false
 	}
 	s.running = append(s.running, srv)
+	up.Store(true)
 	go func() { errc <- srv.ActivateAndServe() }()
 	return true
 }
@@ -164,6 +176,8 @@ func (s *Server) start(srv *dns.Server, errc chan<- error) bool {
 func (s *Server) Shutdown(ctx context.Context) {
 	s.mu.Lock()
 	s.closed = true
+	s.udpUp.Store(false)
+	s.tcpUp.Store(false)
 	running := append([]*dns.Server(nil), s.running...)
 	s.mu.Unlock()
 	for _, srv := range running {

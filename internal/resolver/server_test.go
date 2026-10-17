@@ -105,7 +105,7 @@ func TestServerServesUDP(t *testing.T) {
 func TestServerShutdownDuringStartup(t *testing.T) {
 	r := New(Options{})
 	r.rt.Store(&runtime{blockMode: "nxdomain"})
-	const addr = "127.0.0.1:15354"
+	const addr = "127.0.0.1:15355" // 15353/15354 are used by other server tests
 	for i := 0; i < 20; i++ {
 		s := NewServer(addr, r)
 		done := make(chan error, 1)

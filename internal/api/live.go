@@ -16,9 +16,12 @@ import (
 
 const (
 	liveWait     = 10 * time.Second // agent long-poll hold, below the agent's 15s client timeout
-	livePing     = 15 * time.Second // SSE keep-alive, below common proxy idle timeouts
 	liveSubQueue = 512              // entries buffered per viewer before dropping
 )
+
+// livePing is the SSE keep-alive, below common proxy idle timeouts; each ping
+// also re-checks the viewer's credentials. A var so tests can shorten it.
+var livePing = 15 * time.Second
 
 // liveHub fans the queries agents stream in out to the browsers watching the
 // Live view. Nothing here is stored: persistence stays with the batched
@@ -136,6 +139,11 @@ func (s *Server) streamQueryLog(w http.ResponseWriter, r *http.Request) {
 		case <-s.live.closing:
 			return
 		case <-ping.C:
+			// Auth was checked when the stream opened; re-check it so a revoked or
+			// expired API token (or a signed-out session) stops receiving the log.
+			if !s.stillAuthenticated(r) {
+				return
+			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}
@@ -156,6 +164,16 @@ func (s *Server) streamQueryLog(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// stillAuthenticated re-resolves the credentials of a long-lived request,
+// bypassing the principal guard cached in its context.
+func (s *Server) stillAuthenticated(r *http.Request) bool {
+	if !s.authEnabled || s.auth == nil {
+		return true
+	}
+	_, ok := s.auth.UserFromRequest(r)
+	return ok
 }
 
 // liveNode authenticates an agent's live-stream request by its node key.

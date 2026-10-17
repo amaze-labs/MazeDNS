@@ -328,8 +328,26 @@ func (s *Server) guard(minRole string, tokensAllowed bool, h http.HandlerFunc) h
 			writeError(w, http.StatusForbidden, "admin role required")
 			return
 		}
-		h(w, r)
+		h(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, u)))
 	}
+}
+
+// principalKey is the request-context key under which guard stores the
+// authenticated principal, so handlers don't resolve it (and, for an API token,
+// its creator) a second time.
+type principalKey struct{}
+
+// principal returns the authenticated principal for r: the one guard already
+// resolved, or a fresh lookup on routes it doesn't wrap. ok is false when auth
+// is disabled or nobody is signed in.
+func (s *Server) principal(r *http.Request) (*auth.SessionUser, bool) {
+	if !s.authEnabled || s.auth == nil {
+		return nil, false
+	}
+	if u, ok := r.Context().Value(principalKey{}).(*auth.SessionUser); ok {
+		return u, true
+	}
+	return s.auth.UserFromRequest(r)
 }
 
 // ---- cluster control plane ----
@@ -683,10 +701,7 @@ func (s *Server) revokeEnrollKey(w http.ResponseWriter, r *http.Request) {
 
 // currentUser returns the authenticated username, if auth is enabled.
 func (s *Server) currentUser(r *http.Request) (string, bool) {
-	if !s.authEnabled || s.auth == nil {
-		return "", false
-	}
-	u, ok := s.auth.UserFromRequest(r)
+	u, ok := s.principal(r)
 	if !ok {
 		return "", false
 	}
@@ -1317,7 +1332,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"username": "anonymous", "role": roleAdmin})
 		return
 	}
-	u, ok := s.auth.UserFromRequest(r)
+	u, ok := s.principal(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return

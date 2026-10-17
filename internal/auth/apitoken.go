@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"strings"
 	"time"
@@ -34,12 +32,6 @@ func NewAPIToken() (string, error) {
 	return APITokenPrefix + t, nil
 }
 
-// HashAPIToken is the at-rest form of an API token.
-func HashAPIToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
 // APITokenDisplayPrefix is the part of a token shown in the console to tell
 // tokens apart (the prefix plus 4 characters).
 func APITokenDisplayPrefix(token string) string {
@@ -49,31 +41,34 @@ func APITokenDisplayPrefix(token string) string {
 	return token
 }
 
-// bearerToken returns the credential of an "Authorization: Bearer ..." header.
-// Other schemes (e.g. Basic, added by a reverse proxy in front of the console)
-// are not ours and are ignored, so they never lock a cookie session out.
+// bearerToken returns the API token of an "Authorization: Bearer mzd_..."
+// header. Any other credential (Basic, or a Bearer JWT forwarded by an
+// authenticating proxy such as oauth2-proxy in front of the console) is not ours
+// and is ignored, so it never locks a cookie session out.
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")
 	if len(h) < 7 || !strings.EqualFold(h[:7], "bearer ") {
 		return "", false
 	}
-	return strings.TrimSpace(h[7:]), true
+	tok := strings.TrimSpace(h[7:])
+	if !strings.HasPrefix(tok, APITokenPrefix) {
+		return "", false
+	}
+	return tok, true
 }
 
 // userFromAPIToken resolves a bearer token to its principal. Revocation and
 // expiry take effect on the next request: every request looks the token up.
 //
-// A token never outranks the admin who created it, checked on every request: it
-// stops working once its creator's account is deleted, and an admin token acts
-// as readonly once its creator is no longer an admin (including an SSO user
-// whose role changed at the provider). So removing someone's access also removes
-// the access of any token they may have kept a copy of.
+// A token never outranks the account that created it, checked on every request
+// against that account's current role in MazeDNS: it stops working once the
+// account is deleted, and an admin token acts as readonly once the account is no
+// longer an admin. An SSO account's role is only refreshed when its owner signs
+// in, so a change at the provider reaches their tokens at that point; to cut an
+// SSO user off at once, delete their account here (which revokes their tokens).
 func (m *Manager) userFromAPIToken(token string) (*SessionUser, bool) {
-	if !strings.HasPrefix(token, APITokenPrefix) {
-		return nil, false
-	}
 	now := time.Now()
-	t, err := m.store.GetAPITokenByHash(HashAPIToken(token), now.Unix())
+	t, err := m.store.GetAPIToken(token, now.Unix())
 	if err != nil || t == nil {
 		return nil, false
 	}

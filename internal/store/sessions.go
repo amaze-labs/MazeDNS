@@ -17,10 +17,10 @@ type Session struct {
 	ExpiresAt int64
 }
 
-// hashSessionToken is the at-rest form of a bearer session token. Tokens are
-// stored hashed (like node/enrollment keys) so a database read can't be used to
-// impersonate a live session; the raw token lives only in the user's cookie.
-func hashSessionToken(token string) string {
+// hashSecret is the at-rest form of a bearer secret (session or API token).
+// Secrets are stored hashed (like node/enrollment keys) so a database read can't
+// be used to impersonate their holder; the raw value lives only with the client.
+func hashSecret(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
@@ -29,7 +29,7 @@ func hashSessionToken(token string) string {
 func (s *Store) CreateSession(token string, userID int64, username, role string, expiresAt int64) error {
 	_, err := s.db.Exec(
 		`INSERT INTO sessions(token, user_id, username, role, expires_at) VALUES(?,?,?,?,?)`,
-		hashSessionToken(token), userID, username, role, expiresAt)
+		hashSecret(token), userID, username, role, expiresAt)
 	return err
 }
 
@@ -38,7 +38,7 @@ func (s *Store) CreateSession(token string, userID int64, username, role string,
 // hashing upgrade (raw tokens in the DB) no longer match and are effectively
 // invalidated — those users simply re-login.
 func (s *Store) GetSession(token string) (*Session, error) {
-	h := hashSessionToken(token)
+	h := hashSecret(token)
 	se := &Session{}
 	err := s.read.QueryRow(
 		`SELECT token, user_id, username, role, expires_at FROM sessions WHERE token=?`, h).
@@ -58,7 +58,7 @@ func (s *Store) GetSession(token string) (*Session, error) {
 
 // DeleteSession removes the session for the raw token.
 func (s *Store) DeleteSession(token string) error {
-	return s.deleteSessionHash(hashSessionToken(token))
+	return s.deleteSessionHash(hashSecret(token))
 }
 
 // deleteSessionHash removes a session by its stored hash.

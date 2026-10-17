@@ -19,7 +19,8 @@ function dateStr(unixSec: number): string {
 export default function ApiTokens() {
   const [tokens, setTokens] = useState<APIToken[]>([])
   const [loading, setLoading] = useState(true)
-  const [err, setErr] = useState('')
+  const [loadErr, setLoadErr] = useState('')
+  const [err, setErr] = useState('') // create / revoke failures
   const [name, setName] = useState('')
   const [role, setRole] = useState<'readonly' | 'admin'>('readonly')
   const [days, setDays] = useState(0)
@@ -32,9 +33,9 @@ export default function ApiTokens() {
       .apiTokens()
       .then((t) => {
         setTokens(t)
-        setErr('')
+        setLoadErr('')
       })
-      .catch((e) => setErr(e.message))
+      .catch((e) => setLoadErr(e.message))
       .finally(() => setLoading(false))
 
   useEffect(() => {
@@ -45,6 +46,7 @@ export default function ApiTokens() {
     e.preventDefault()
     const expires = days ? Math.floor(Date.now() / 1000) + days * 86400 : 0
     setBusy(true)
+    setErr('')
     try {
       const t = await api.createAPIToken(name.trim(), role, expires)
       setCreated({ name: t.name, token: t.token })
@@ -60,6 +62,7 @@ export default function ApiTokens() {
 
   const revoke = async (t: APIToken) => {
     if (!window.confirm(`Revoke API token “${t.name}”? Integrations using it stop working immediately.`)) return
+    setErr('')
     try {
       await api.deleteAPIToken(t.id)
       load()
@@ -93,8 +96,9 @@ export default function ApiTokens() {
         <p className="hint" style={{ margin: 0 }}>
           A token can do what its role allows on DNS data — rewrites, forwarders, rules, lists, clients and read-only views — but
           never manages people, tokens, sign-in, credentials, backups or agents. It keeps working when password sign-in is off
-          for SSO, but never outranks its creator: it stops if their account is removed, and acts as a viewer if they are no
-          longer an administrator. Each token is shown once, then stored hashed; revoking it applies on the next request.
+          for SSO, but never outranks its creator: it is revoked if their account is removed, and acts as a viewer if they are no
+          longer an administrator (for an SSO account, from their next sign-in). Each token is shown once, then stored hashed;
+          revoking it applies on the next request.
         </p>
 
         <form onSubmit={submit}>
@@ -130,6 +134,8 @@ export default function ApiTokens() {
             </span>
           </div>
         </form>
+
+        {err && <div className="callout bad">{err}</div>}
 
         {created && (
           <div className="callout ok">
@@ -170,6 +176,17 @@ export default function ApiTokens() {
                 </td>
                 <td className="lead-r">
                   <span className={`tag${t.role === 'admin' ? ' warn' : ''}`}>{t.role === 'admin' ? 'Administrator' : 'Viewer'}</span>
+                  {t.effective_role === '' ? (
+                    <small className="muted" style={{ display: 'block' }} title="The account that made it no longer exists">
+                      Inactive
+                    </small>
+                  ) : (
+                    t.effective_role !== t.role && (
+                      <small className="muted" style={{ display: 'block' }} title="The account that made it is no longer an administrator">
+                        Acts as a viewer
+                      </small>
+                    )
+                  )}
                 </td>
                 <td className="hide-sm">{t.last_used_at ? dateStr(t.last_used_at) : <span className="muted">Never</span>}</td>
                 <td className="hide-sm">
@@ -188,7 +205,7 @@ export default function ApiTokens() {
                 </td>
               </tr>
             ))}
-            <TableStatusRow loading={loading} error={err} empty={tokens.length === 0} colSpan={5}>
+            <TableStatusRow loading={loading} error={loadErr} empty={tokens.length === 0} colSpan={5}>
               No API tokens yet
             </TableStatusRow>
           </tbody>

@@ -43,10 +43,9 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           <Step>Gather signals: trusted and threat lists, WHOIS (age, owner, nameservers), TLD and the shape of the name.</Step>
           <Arrow />
           <Step tone="ok">
-            <b>Trusted shortcut</b> — on the popular-domains list, <em>or</em> served by a trusted company’s own nameservers (e.g.{' '}
-            <code>apple.com</code>), verified by asking them: the score stays at <b>100</b>. Shared DNS hosts such as Cloudflare or GoDaddy
-            serve anyone’s domain, so they don’t count. This is the strongest guard against false positives and it overrides everything
-            below.
+            <b>Trusted shortcut</b> — on the popular-domains list, or CDN infrastructure itself: the score stays at <b>100</b>. This is the
+            strongest guard against false positives and it overrides everything below. A customer site on a hosting platform
+            (<code>something.web.app</code>) is scored like any other domain.
           </Step>
           <Arrow />
           <Step>
@@ -81,6 +80,10 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
             <ul className="factors flow-factors">
               <Deduct up pts="+8 to +20">
                 <b>Old registration</b> — 2, 5 or 10+ years
+              </Deduct>
+              <Deduct up pts="+15">
+                <b>Own nameservers</b> — served only by a trusted company’s nameservers (e.g. <code>aaplimg.com</code> on Apple’s),
+                checked over encrypted DNS; shared DNS hosts such as Cloudflare or GoDaddy serve anyone’s domain, so they don’t count
               </Deduct>
               <Deduct up pts="+4 to +8">
                 <b>How it’s held</b> — registry locks, a named owner, paid years ahead, DNSSEC

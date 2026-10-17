@@ -127,7 +127,7 @@ type Worker struct {
 	whois   *WhoisCache
 	rep     *RepCache
 
-	servesZone func(ctx context.Context, domain, ns string) bool // overridden in tests
+	zoneResolves func(ctx context.Context, domain string) bool // overridden in tests
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -143,7 +143,7 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		whois:   NewWhoisCache(),
 		rep:     NewRepCache(),
 
-		servesZone: servesZone,
+		zoneResolves: zoneResolves,
 	}
 	// Whenever the threat set (re)loads, re-check existing clean verdicts against it
 	// so domains that became malicious after we last saw them get flagged.
@@ -359,16 +359,15 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// lookups, which also conserves third-party API budget (e.g. VirusTotal's daily
 	// quota) and keeps the queue moving on the common case.
 	listTrusted := w.trusted.has(domain)
-	cdn := IsCDN(domain) // a verdict here would apply to the whole provider — never blockable
+	cdn := cdnInfrastructure(domain) // a verdict here would apply to the whole provider — never blockable
 	if listTrusted || cdn {
 		w.recordTrusted(ScoreInput{Domain: domain, ListTrusted: listTrusted, CDN: cdn})
 		return
 	}
 
-	// WHOIS (optional) is looked up next because it yields a second fast path:
-	// nameserver trust. A domain served by a trusted entity's own authoritative
-	// nameservers (NS can't be faked) is that entity's infrastructure, so it cannot
-	// be phishing *of* it — short-circuit before spending reputation/LLM budget.
+	// WHOIS (optional): registration data, and nameserver ownership — a domain
+	// served only by a trusted company's own nameservers is weighed as trust
+	// evidence (not a shortcut: see trustedNameservers).
 	var whois WhoisInfo
 	platform := HostingPlatform(domain)
 	if s.WhoisEnabled && platform == "" { // a platform subdomain has no registration of its own
@@ -380,10 +379,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 			slog.Warn("whois lookup failed — verdict scored without domain age", "domain", domain, "err", werr)
 		}
 	}
-	if reg := w.trustedNameservers(ctx, domain, whois); reg != "" {
-		w.recordTrusted(ScoreInput{Domain: domain, NSTrustedOn: reg, Whois: whois})
-		return
-	}
+	nsOwner := w.trustedNameservers(ctx, domain, whois)
 
 	// Not trusted: spend the remaining signals. Threat-feed membership is a cheap
 	// in-memory lookup that also tells us how many feeds list the domain. A hit on
@@ -424,7 +420,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// Score the domain: start at baseLegitimacy and let the evidence move it.
 	// A lone threat-feed hit is weighed as a possible misreport (see computeScore);
 	// corroboration across feeds, or a reputation flag, blocks decisively.
-	in := ScoreInput{Domain: domain, Platform: platform, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v}
+	in := ScoreInput{Domain: domain, Platform: platform, NSTrustedOn: nsOwner, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v}
 	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security
@@ -484,27 +480,25 @@ func (w *Worker) process(ctx context.Context, domain string) {
 
 // trustedNameservers returns the trusted company whose own nameservers serve
 // domain (see nscheck.go), or "". Only RDAP (HTTPS) data counts: port-43 WHOIS
-// is plain TCP, so an on-path attacker could claim a brand's nameservers. A
-// shared DNS host never counts, and the nameserver must actually answer for the
-// zone — listing a brand's nameservers at a registrar is free.
+// is plain TCP, so an on-path attacker could claim a brand's nameservers. Every
+// listed nameserver must belong to that one company and none to a shared DNS
+// host, and the zone must actually resolve.
 func (w *Worker) trustedNameservers(ctx context.Context, domain string, whois WhoisInfo) string {
-	if whois.Source != "rdap" {
+	if whois.Source != "rdap" || len(whois.Nameservers) == 0 {
 		return ""
 	}
-	checked := 0
+	owner := ""
 	for _, ns := range whois.Nameservers {
 		reg := RegisteredDomain(ns)
-		if reg == "" || sharedDNSHost(reg) || !w.trusted.has(reg) {
-			continue
-		}
-		if w.servesZone(ctx, domain, ns) {
-			return reg
-		}
-		if checked++; checked >= 2 { // bound the time spent on a lame delegation
+		if reg == "" || sharedDNSHost(reg) || (owner != "" && reg != owner) {
 			return ""
 		}
+		owner = reg
 	}
-	return ""
+	if !w.trusted.has(owner) || !w.zoneResolves(ctx, domain) {
+		return ""
+	}
+	return owner
 }
 
 // recordTrusted stores a clean verdict for a domain the fast paths proved

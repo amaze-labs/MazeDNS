@@ -1,24 +1,31 @@
 package classifier
 
 import (
+	"bytes"
 	"context"
-	"net"
+	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/miekg/dns"
 )
 
-// Nameserver trust: a domain served by a trusted company's OWN nameservers
-// (aaplimg.com on a.ns.apple.com) is that company's infrastructure. Two things
-// can fake that, so both are checked before the trusted shortcut is granted:
+// Nameserver ownership: a domain served only by a trusted company's OWN
+// nameservers (aaplimg.com on a.ns.apple.com) is that company's infrastructure.
+// It is weighed as a trust factor (see computeScore), and three things that
+// could fake it are ruled out first:
 //
 //   - a shared DNS host serves anyone's zone: a domain on *.ns.cloudflare.com or
 //     ns1.domaincontrol.com says nothing about its owner, even though the host's
 //     own domain is popular (sharedDNSHost);
-//   - anyone can LIST a brand's nameservers at their registrar; the registry
-//     then reports them, but the brand's servers won't answer for that zone
-//     (servesZone asks one directly).
+//   - anyone can LIST a brand's nameservers at their registrar, alone or next to
+//     their own: so EVERY listed nameserver must be the brand's, and the zone
+//     must actually resolve — with only the brand's servers to ask, a resolver
+//     can only get an answer from them (a lame delegation fails);
+//   - that answer is fetched over DNS-over-HTTPS from a public resolver, so it
+//     can't be forged between the control plane and the nameserver.
 
 // sharedDNSHosts are registered domains of DNS hosting providers, registrars'
 // default nameservers and parking services: their nameservers serve customers'
@@ -47,30 +54,63 @@ func sharedDNSHost(nsReg string) bool {
 	return sharedDNSHosts[nsReg] || strings.HasPrefix(nsReg, "awsdns-")
 }
 
-const nsCheckTimeout = 3 * time.Second
+const nsCheckTimeout = 5 * time.Second
 
-// nsCheckPort is the DNS port servesZone queries (overridden in tests).
-var nsCheckPort = "53"
+// dohResolvers answer zoneResolves over HTTPS; the second is tried only if the
+// first can't be reached (overridden in tests).
+var dohResolvers = []string{"https://cloudflare-dns.com/dns-query", "https://dns.quad9.net/dns-query"}
 
-// servesZone reports whether nameserver ns answers authoritatively for domain:
-// an SOA query without recursion must come back NOERROR with the AA bit and the
-// domain's SOA. A nameserver merely listed at the registry (lame delegation)
-// answers REFUSED or a referral instead.
-func servesZone(ctx context.Context, domain, ns string) bool {
-	ctx, cancel := context.WithTimeout(ctx, nsCheckTimeout)
-	defer cancel()
+// zoneResolves reports whether domain's zone answers: a recursive SOA query over
+// DoH must come back NOERROR with the domain's SOA.
+func zoneResolves(ctx context.Context, domain string) bool {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), dns.TypeSOA)
-	m.RecursionDesired = false
-	c := &dns.Client{Timeout: nsCheckTimeout}
-	resp, _, err := c.ExchangeContext(ctx, m, net.JoinHostPort(ns, nsCheckPort))
-	if err != nil || resp == nil || !resp.Authoritative || resp.Rcode != dns.RcodeSuccess {
+	packed, err := m.Pack()
+	if err != nil {
 		return false
 	}
-	for _, rr := range resp.Answer {
-		if soa, ok := rr.(*dns.SOA); ok && strings.EqualFold(soa.Hdr.Name, dns.Fqdn(domain)) {
-			return true
+	for _, u := range dohResolvers {
+		resp, err := dohQuery(ctx, u, packed)
+		if err != nil {
+			continue // resolver unreachable: try the next one
 		}
+		if resp.Rcode != dns.RcodeSuccess {
+			return false
+		}
+		for _, rr := range resp.Answer {
+			if soa, ok := rr.(*dns.SOA); ok && strings.EqualFold(soa.Hdr.Name, dns.Fqdn(domain)) {
+				return true
+			}
+		}
+		return false
 	}
 	return false
+}
+
+func dohQuery(ctx context.Context, url string, packed []byte) (*dns.Msg, error) {
+	ctx, cancel := context.WithTimeout(ctx, nsCheckTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(packed))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("doh: status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return nil, err
+	}
+	out := new(dns.Msg)
+	if err := out.Unpack(body); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

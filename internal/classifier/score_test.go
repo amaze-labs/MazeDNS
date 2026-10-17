@@ -22,9 +22,15 @@ func TestComputeScore(t *testing.T) {
 			minLegit: 100, maxLegit: 100,
 		},
 		{
-			name:     "nameservers on trusted infra override phishing (aaplimg.com)",
-			in:       ScoreInput{Domain: "aaplimg.com", NSTrustedOn: "apple.com", Whois: WhoisInfo{AgeDays: 4800}, Verdict: block("phishing", 1.0)},
-			minLegit: 100, maxLegit: 100,
+			name: "a brand's own nameservers outweigh a confident phishing verdict (aaplimg.com)",
+			in:   ScoreInput{Domain: "aaplimg.com", NSTrustedOn: "apple.com", Whois: WhoisInfo{AgeDays: 4800}, Verdict: block("phishing", 1.0)},
+			// 85 + 20 (age) + 15 (own nameservers) − 50 (model) = 70
+			minLegit: 70,
+		},
+		{
+			name:      "own nameservers can't outvote a corroborated threat",
+			in:        ScoreInput{Domain: "evil.com", NSTrustedOn: "apple.com", Threat: true, ThreatHits: 2, Whois: WhoisInfo{AgeDays: 4800}},
+			wantBlock: true, maxLegit: blockThreshold - 1,
 		},
 		{
 			name:      "young domain the model calls phishing is blocked",

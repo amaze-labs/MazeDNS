@@ -95,17 +95,15 @@ func imin(a, b int) int {
 // computeScore turns the signals into a legitimacy score + an auditable factor
 // breakdown.
 func computeScore(in ScoreInput) Score {
-	// Trusted is authoritative: a domain on the popularity allowlist — or served
-	// by a trusted entity's own nameservers (which can't be faked) — cannot be
-	// malicious. This is the strongest false-positive guard, so it short-circuits
-	// to a perfect score, overriding the model and even a threat-feed hit.
-	if in.ListTrusted || in.CDN || in.NSTrustedOn != "" {
+	// Trusted is authoritative: a domain on the popularity allowlist, or CDN
+	// infrastructure, cannot be malicious. This is the strongest false-positive
+	// guard, so it short-circuits to a perfect score, overriding the model and
+	// even a threat-feed hit. (Nameserver ownership is weaker evidence — see the
+	// "Own nameservers" factor — and never short-circuits.)
+	if in.ListTrusted || in.CDN {
 		detail := "on the trusted top-domains list — cannot be malicious"
-		switch {
-		case in.CDN && !in.ListTrusted:
+		if in.CDN && !in.ListTrusted {
 			detail = "CDN / cloud-edge infrastructure — trusted (a verdict would apply to the whole provider)"
-		case in.NSTrustedOn != "" && !in.ListTrusted:
-			detail = fmt.Sprintf("authoritative nameservers on trusted infrastructure (%s) — cannot be malicious", in.NSTrustedOn)
 		}
 		return Score{Legitimacy: 100, Factors: []Factor{{Label: "Trusted", Detail: detail, Delta: 0}}}
 	}
@@ -182,6 +180,15 @@ func computeScore(in ScoreInput) Score {
 		vouchWhois("Domain age", fmt.Sprintf("%d years old — long-established", age/365), 14)
 	default:
 		vouchWhois("Domain age", fmt.Sprintf("%d years old — long-established", age/365), 20)
+	}
+
+	// Nameserver ownership — served only by a trusted company's own nameservers,
+	// verified (see nscheck.go): strong evidence it's that company's
+	// infrastructure (aaplimg.com on Apple's), but it is ordinary trust evidence
+	// under the cap, so a gap in the shared-DNS-host list can't wave a domain
+	// through a real threat signal.
+	if in.NSTrustedOn != "" {
+		vouch("Own nameservers", "served only by "+in.NSTrustedOn+"’s own nameservers (verified)", 15)
 	}
 
 	// Registration details — how the domain is held says a lot about who holds it.

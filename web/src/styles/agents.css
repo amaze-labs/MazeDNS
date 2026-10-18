@@ -50,37 +50,63 @@
 .pg-agents .ag-site {
   padding-bottom: 8px;
 }
+/* The card's edge carries the site's health: amber when some agents don't
+   serve DNS, coral when none do. */
+.pg-agents .ag-site.warn {
+  border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+}
+.pg-agents .ag-site.bad {
+  border-color: color-mix(in srgb, var(--block) 45%, var(--line));
+}
 .pg-agents .ag-site-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 10px;
+}
+.pg-agents .ag-site-title {
+  display: flex;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
-.pg-agents .ag-site-head h2 {
+.pg-agents .ag-site-title h2 {
   font-size: 15px;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
-.pg-agents .ag-site-head small {
-  color: var(--muted);
-  font-size: 12.5px;
-}
-.pg-agents .ag-site-del {
-  align-self: center;
+.pg-agents .ag-site-edit {
   margin: -4px -8px -4px 0;
-}
-.pg-agents .ag-site-del:hover:not(:disabled) {
-  color: var(--block);
 }
 .pg-agents .ag-site-desc {
   color: var(--muted);
   font-size: 12.5px;
   margin: 4px 0 0;
 }
+.pg-agents .ag-site-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.pg-agents .ag-site-stats b {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .pg-agents .ag-list {
-  margin: 8px -20px 0;
+  margin: 10px -20px 0;
+  border-top: 1px solid var(--soft);
 }
 .pg-agents .ag-list-empty {
-  margin: 0;
-  padding: 10px 20px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 20px 6px;
 }
 
 /* One agent in a site card */
@@ -109,6 +135,22 @@
 .pg-agents .ag-agent-name {
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+.pg-agents .ag-role {
+  margin-left: 8px;
+  font-weight: 500;
+}
+.pg-agents .ag-role.primary {
+  --k: var(--fwd);
+}
+.pg-agents .ag-role.backup,
+.pg-agents .ag-role.none {
+  --k: var(--faint);
+}
+/* An offline agent recedes; its "offline" label stays at full strength. */
+.pg-agents .ag-agent.off .ag-agent-main,
+.pg-agents .ag-agent.off .ag-agent-num {
+  opacity: 0.6;
 }
 .pg-agents .ag-agent-role {
   color: var(--muted);
@@ -306,6 +348,42 @@
 }
 .ag-form .error {
   margin: 0;
+}
+
+/* Site dialog: the agents in the site, with their roles */
+.ag-members {
+  display: grid;
+  gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.ag-members-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ag-member {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--soft);
+}
+.ag-member-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.ag-member-name small {
+  font-weight: 400;
+}
+.ag-member select {
+  width: auto;
+}
+.ag-member-add {
+  justify-self: start;
 }
 
 /* Add-an-agent guide. The drawer body is a grid: let wide code blocks scroll

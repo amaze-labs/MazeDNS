@@ -887,6 +887,12 @@ export const api = {
   clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
   createSite: (name: string, description = '') =>
     fetch('/api/cluster/sites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name, description }) }).then(j),
+  updateSite: (name: string, newName: string, description: string) =>
+    fetch(`/api/cluster/sites/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ name: newName, description }),
+    }).then(j),
   deleteSite: (name: string) => fetch(`/api/cluster/sites/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(j),
   setNodeSite: (id: string, site: string, role: string) =>
     fetch(`/api/cluster/nodes/${encodeURIComponent(id)}/site`, {

@@ -28,10 +28,6 @@ const FWD_COLS: SortAccessors<Forwarder> = {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)) || 'Request failed'
 
-// Record filter values besides an integration's slug.
-const ALL = '*'
-const MANUAL = ''
-
 export default function LocalDNS() {
   const admin = useIsAdmin() === true
   const [rows, setRows] = useState<Rewrite[]>([])
@@ -42,7 +38,6 @@ export default function LocalDNS() {
   const [scope, setScope] = useState<Scope>(ALL_SCOPE)
   const [adding, setAdding] = useState(false)
   const [err, setErr] = useState('')
-  const [owner, setOwner] = useState(ALL)
 
   const [fwds, setFwds] = useState<Forwarder[]>([])
   const [fwdsLoaded, setFwdsLoaded] = useState(false)
@@ -199,14 +194,27 @@ export default function LocalDNS() {
     }
   }
 
-  // Integrations that own at least one record; the filter only appears with one.
+  // Manual records first; each integration that owns records gets its own
+  // section below them.
+  const manual = rows.filter((r) => !r.source)
   const sources = [...new Set(rows.map((r) => r.source).filter(Boolean))].sort()
-  const filter = owner !== ALL && (owner === MANUAL || sources.includes(owner)) ? owner : ALL
-  const shown = filter === ALL ? rows : rows.filter((r) => r.source === filter)
-  const table = useTable(shown, COLS, 'domain')
   const fwdTable = useTable(fwds, FWD_COLS, 'suffix')
   const known = (t?: string) => (t === 'nodes' ? nodes ?? undefined : t === 'sites' ? sites ?? undefined : undefined)
   const recCols = admin ? 5 : 4
+  const recordTable = (rs: Rewrite[], empty: string) => (
+    <RecordTable
+      rows={rs}
+      loaded={loaded}
+      err={err}
+      admin={admin}
+      known={known}
+      empty={empty}
+      onToggle={toggle}
+      onEdit={setEditing}
+      onDelete={del}
+      onDetach={detach}
+    />
+  )
 
   return (
     <div className="pg-local-dns">
@@ -234,29 +242,9 @@ export default function LocalDNS() {
           <div>
             <h2>Local records</h2>
             <p className="sub">
-              {!loaded
-                ? 'Loading…'
-                : `${filter === ALL ? '' : `${shown.length} of `}${rows.length} ${rows.length === 1 ? 'record' : 'records'}`}
+              {loaded ? `${manual.length} ${manual.length === 1 ? 'record' : 'records'}` : 'Loading…'}
             </p>
           </div>
-          {sources.length > 0 && (
-            <>
-              <span className="spacer" />
-              <div className="seg" role="group" aria-label="Managed by">
-                <button className={filter === ALL ? 'on' : ''} onClick={() => setOwner(ALL)}>
-                  All
-                </button>
-                <button className={filter === MANUAL ? 'on' : ''} onClick={() => setOwner(MANUAL)}>
-                  Manual
-                </button>
-                {sources.map((src) => (
-                  <button key={src} className={filter === src ? 'on' : ''} onClick={() => setOwner(src)}>
-                    {src}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
         </div>
         {admin && (
           <form className="rw-addrow" onSubmit={add}>
@@ -300,91 +288,30 @@ export default function LocalDNS() {
             {err}
           </div>
         )}
-        <div className="table-scroll">
-          <table className="stackable rw-table">
-            <thead>
-              <tr>
-                <Th table={table} col="domain">Name</Th>
-                <Th table={table} col="value">Answer</Th>
-                <Th table={table} col="scope">Scope</Th>
-                <th>{admin ? <span className="sr-only">Enabled</span> : 'Status'}</th>
-                {admin && <th></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((r) => (
-                <tr key={r.id} className={r.enabled ? '' : 'off'}>
-                  <td className="lead">
-                    <span className="domain">{r.domain}</span>
-                    {r.source && (
-                      <>
-                        {' '}
-                        <span className="tag info rw-source" title={`Managed by the ${r.source} integration`}>
-                          {r.source}
-                        </span>
-                      </>
-                    )}
-                  </td>
-                  <td>
-                    <span className="tag rewrite">{r.rrtype}</span> <span className="domain">{r.value}</span>
-                  </td>
-                  <td>{scopeBadge(r.scope_type, r.scope_values, known(r.scope_type))}</td>
-                  <td className="lead-r rw-switch">
-                    {admin ? (
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={r.enabled}
-                        aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.domain}`}
-                        className={`switch-btn`}
-                        onClick={() => toggle(r)}
-                        title={r.enabled ? 'On — click to turn off' : 'Off — click to turn on'}
-                      >
-                        <span className={`switch${r.enabled ? ' on' : ''}`} />
-                      </button>
-                    ) : r.enabled ? (
-                      <span className="tag ok">On</span>
-                    ) : (
-                      <span className="tag">Off</span>
-                    )}
-                  </td>
-                  {admin && (
-                    <td className="actions">
-                      {r.source ? (
-                        <>
-                          <span className="muted rw-managed">Managed by {r.source}</span>
-                          <button
-                            className="btn sm quiet"
-                            onClick={() => detach(r)}
-                            title={`Stop ${r.source} from managing this record and edit it by hand`}
-                          >
-                            Detach
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="btn sm quiet" onClick={() => setEditing(r)}>
-                            Edit
-                          </button>
-                          <button className="btn sm quiet rw-del" onClick={() => del(r)}>
-                            Delete
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
-              <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={recCols}>
-                {rows.length > 0
-                  ? 'No records match this filter.'
-                  : `No records yet.${admin ? ' Add one above to answer a name on your network.' : ''}`}
-              </TableStatusRow>
-            </tbody>
-          </table>
-        </div>
-        <Pager table={table} unit="records" />
+        {recordTable(
+          manual,
+          sources.length > 0
+            ? 'No manual records.'
+            : `No records yet.${admin ? ' Add one above to answer a name on your network.' : ''}`,
+        )}
       </section>
+
+      {sources.map((src) => {
+        const owned = rows.filter((r) => r.source === src)
+        return (
+          <div key={src}>
+            <h2 className="section">
+              Synced from <span className="mono">{src}</span>
+            </h2>
+            <p className="section">
+              {owned.length} {owned.length === 1 ? 'record' : 'records'} pushed and kept up to date by the {src}{' '}
+              integration. Switching one off sticks; to edit or delete one by hand, detach it and it moves to your local
+              records.
+            </p>
+            <section className="card flush">{recordTable(owned, 'No records.')}</section>
+          </div>
+        )
+      })}
 
       <h2 className="section">Conditional forwarding</h2>
       <p className="section">
@@ -522,6 +449,109 @@ export default function LocalDNS() {
         />
       )}
     </div>
+  )
+}
+
+// RecordTable lists local records. A manual record can be edited and deleted;
+// one an integration owns can only be switched, or detached to make it manual.
+function RecordTable({
+  rows,
+  loaded,
+  err,
+  admin,
+  known,
+  empty,
+  onToggle,
+  onEdit,
+  onDelete,
+  onDetach,
+}: {
+  rows: Rewrite[]
+  loaded: boolean
+  err: string
+  admin: boolean
+  known: (scopeType?: string) => string[] | undefined
+  empty: string
+  onToggle: (r: Rewrite) => void
+  onEdit: (r: Rewrite) => void
+  onDelete: (r: Rewrite) => void
+  onDetach: (r: Rewrite) => void
+}) {
+  const table = useTable(rows, COLS, 'domain')
+  return (
+    <>
+      <div className="table-scroll">
+        <table className="stackable rw-table">
+          <thead>
+            <tr>
+              <Th table={table} col="domain">Name</Th>
+              <Th table={table} col="value">Answer</Th>
+              <Th table={table} col="scope">Scope</Th>
+              <th>{admin ? <span className="sr-only">Enabled</span> : 'Status'}</th>
+              {admin && <th></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((r) => (
+              <tr key={r.id} className={r.enabled ? '' : 'off'}>
+                <td className="lead">
+                  <span className="domain">{r.domain}</span>
+                </td>
+                <td>
+                  <span className="tag rewrite">{r.rrtype}</span> <span className="domain">{r.value}</span>
+                </td>
+                <td>{scopeBadge(r.scope_type, r.scope_values, known(r.scope_type))}</td>
+                <td className="lead-r rw-switch">
+                  {admin ? (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={r.enabled}
+                      aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.domain}`}
+                      className="switch-btn"
+                      onClick={() => onToggle(r)}
+                      title={r.enabled ? 'On — click to turn off' : 'Off — click to turn on'}
+                    >
+                      <span className={`switch${r.enabled ? ' on' : ''}`} />
+                    </button>
+                  ) : r.enabled ? (
+                    <span className="tag ok">On</span>
+                  ) : (
+                    <span className="tag">Off</span>
+                  )}
+                </td>
+                {admin && (
+                  <td className="actions">
+                    {r.source ? (
+                      <button
+                        className="btn sm quiet"
+                        onClick={() => onDetach(r)}
+                        title={`Stop ${r.source} from managing this record and edit it by hand`}
+                      >
+                        Detach
+                      </button>
+                    ) : (
+                      <>
+                        <button className="btn sm quiet" onClick={() => onEdit(r)}>
+                          Edit
+                        </button>
+                        <button className="btn sm quiet rw-del" onClick={() => onDelete(r)}>
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </td>
+                )}
+              </tr>
+            ))}
+            <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={admin ? 5 : 4}>
+              {empty}
+            </TableStatusRow>
+          </tbody>
+        </table>
+      </div>
+      <Pager table={table} unit="records" />
+    </>
   )
 }
 

@@ -604,3 +604,91 @@
     margin-inline: -8px;
   }
 }
+
+/* About & updates (About.tsx). */
+.pg-about .ab-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--sunk);
+}
+.pg-about .ab-hero.warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+.pg-about .ab-hero.ok {
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
+}
+.pg-about .ab-hero-ver {
+  display: grid;
+  line-height: 1.2;
+}
+.pg-about .ab-hero-ver b {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+.pg-about .ab-agents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.pg-about .ab-agents li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.pg-about .ab-names {
+  flex-basis: 100%;
+}
+.pg-about .ab-releases {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.pg-about .ab-release {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.pg-about .ab-release-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pg-about .ab-release-head b {
+  font-size: 15px;
+}
+.pg-about .ab-notes {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.pg-about .ab-notes h4 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pg-about .ab-notes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.pg-about .ab-notes li {
+  margin: 2px 0;
+}
+.pg-about .ab-notes p {
+  margin: 6px 0;
+}

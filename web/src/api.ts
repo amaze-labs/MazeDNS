@@ -48,6 +48,19 @@ export interface CategoryList {
 }
 
 // Where a domain's category came from.
+// The control plane's version against the published releases (GET /api/updates).
+export type Release = { version: string; name: string; published_at: string; url: string; notes: string }
+export type UpdateStatus = {
+  current: string
+  latest?: string
+  update_available: boolean
+  comparable: boolean // false for dev/commit builds
+  disabled?: boolean // MAZEDNS_UPDATE_CHECK=off
+  checked_at?: number // unix secs
+  error?: string
+  releases: Release[] // newest first: what an update brings, or the latest few
+}
+
 export type CategorySource = 'override' | 'classifier' | 'database' | 'model' | 'local' | ''
 
 export interface DomainCategory {
@@ -829,6 +842,7 @@ export const api = {
 
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
+  updates: (refresh = false) => fetch(`/api/updates${refresh ? '?refresh=1' : ''}`).then(j<UpdateStatus>),
   // Control plane's own build version (the up-to-date reference for agents) and
   // the current replicated-config version (the rules hash agents should carry).
   serverVersion: () => fetch('/api/version').then(j<{ version: string; config_version: string }>),

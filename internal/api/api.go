@@ -31,6 +31,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/ruleimport"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/updates"
 	"github.com/IPMaze/MazeDNS/internal/version"
 	"github.com/IPMaze/MazeDNS/web"
 )
@@ -79,7 +80,8 @@ type Server struct {
 	// plus one shipped ring per agent (see logs.go).
 	procLogs *procLogStore
 	// live fans agents' streamed queries out to the Live view (see live.go).
-	live *liveHub
+	live    *liveHub
+	updates *updates.Checker // nil = no update checks (agents)
 }
 
 // SetClusterEnrollment configures agent self-enrollment and per-node key rotation.
@@ -263,6 +265,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		// Build version: the console shows it under the name, and the cluster
 		// view compares each agent's app_version against it.
 		mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
+		mux.HandleFunc("GET /api/updates", s.requireRole(roleReadonly, s.updateStatus))
 
 		// Cluster control plane (master only).
 		if clusterEnabled {

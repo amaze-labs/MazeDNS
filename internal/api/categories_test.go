@@ -250,6 +250,12 @@ func TestClusterMetricsRelay(t *testing.T) {
 	if got.user != "u" || got.pass != "pw" || !strings.Contains(got.body, "mazedns_queries_total") {
 		t.Errorf("forwarded auth %s:%s body %q", got.user, got.pass, got.body)
 	}
+	// A failed forward tells the agent nothing about where VictoriaMetrics is.
+	vm.Close()
+	rr := post(key)
+	if rr.Code != http.StatusBadGateway || strings.Contains(rr.Body.String(), vm.URL) || strings.Contains(rr.Body.String(), "127.0.0.1") {
+		t.Errorf("failed forward: code %d body %s", rr.Code, rr.Body.String())
+	}
 }
 
 // Blocking a domain records its security reason; allowing records none (what the

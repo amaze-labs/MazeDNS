@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -174,7 +175,10 @@ func (s *Server) clusterMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := metrics.VMConfig{URL: vm.URL, Job: vm.Job, Username: vm.Username, Password: vm.Password}
 	if err := metrics.Import(r.Context(), vmRelayClient, cfg, node.Name, bytes.NewReader(body)); err != nil {
-		writeError(w, http.StatusBadGateway, "victoriametrics: "+err.Error())
+		// The error names the VictoriaMetrics URL (and any credentials in it),
+		// which stays on the control plane: log it here, tell the agent less.
+		slog.Warn("relaying agent metrics to victoriametrics failed", "node", node.Name, "err", err)
+		writeError(w, http.StatusBadGateway, "victoriametrics push failed; see the control plane's log")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

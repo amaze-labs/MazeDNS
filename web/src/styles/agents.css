@@ -41,14 +41,22 @@
 }
 
 /* Site cards */
+/* Site cards in a row share its height; the card clips its agent rows so a
+   hovered or selected row follows the rounded corners. */
 .pg-agents .ag-sites {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
 }
 .pg-agents .ag-site {
-  padding-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.pg-agents .ag-site .ag-list {
+  flex: 1;
 }
 /* The card's edge carries the site's health: amber when some agents don't
    serve DNS, coral when none do. */

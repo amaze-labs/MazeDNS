@@ -565,7 +565,8 @@ p.section {
   background: var(--panel);
   color: var(--text);
   border-radius: 999px;
-  padding: 7px 15px;
+  min-height: 40px;
+  padding: 7px 16px;
   font-weight: 500;
   font-size: 13px;
   line-height: 1.4;
@@ -619,7 +620,8 @@ p.section {
   color: #fff;
 }
 .btn.sm {
-  padding: 4px 11px;
+  min-height: 30px;
+  padding: 4px 12px;
   font-size: 12.5px;
   border-radius: 999px;
 }
@@ -728,6 +730,7 @@ button.linklike {
   background: var(--sunk);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
+  min-height: 40px;
   padding: 9px 13px;
   color: var(--text);
 }
@@ -839,10 +842,10 @@ label.check {
 .switch {
   position: relative;
   flex: none;
-  width: 34px;
-  height: 20px;
+  width: 38px;
+  height: 22px;
   border-radius: 999px;
-  background: var(--line);
+  background: color-mix(in srgb, var(--muted) 38%, var(--line));
   transition: background 0.15s;
 }
 .thumb,
@@ -850,11 +853,12 @@ label.check {
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--muted);
-  transition: left 0.15s, background 0.15s;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s;
 }
 .switch::after {
   content: '';
@@ -865,8 +869,7 @@ label.check {
 }
 .toggle > input:checked + .track .thumb,
 .switch.on::after {
-  left: 17px;
-  background: #fff;
+  left: 19px;
 }
 .toggle > input:focus-visible + .track {
   outline: 2px solid var(--focus);
@@ -994,35 +997,59 @@ label.check {
 }
 
 /* Tabs (page sections) and the older .subtabs markup. */
+/* Page sections: a pill track, the current section a raised pill — the same
+   language as the top bar and the segmented controls. */
 .tabs,
 .subtabs {
   display: flex;
   gap: 2px;
-  border-bottom: 1px solid var(--line);
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
   margin: 6px 0 22px;
+  border-radius: 999px;
+  background: var(--sunk);
+  border: 1px solid var(--card-edge);
   overflow-x: auto;
   scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar,
+.subtabs::-webkit-scrollbar {
+  display: none;
 }
 .tabs > a,
 .tabs > button,
 .subtabs > button {
-  padding: 9px 14px;
+  flex: none;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
   color: var(--muted);
   text-decoration: none;
   font-weight: 500;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  background: none;
   white-space: nowrap;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tabs > a:hover,
+.tabs > button:hover,
+.subtabs > button:hover {
+  color: var(--text);
 }
 .tabs > .on,
 .tabs > .active,
 .subtabs > .active,
 .tabs > [aria-selected='true'] {
   color: var(--text);
-  border-color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(20, 32, 51, 0.08), 0 0 0 1px var(--line);
+}
+:root[data-theme='dark'] .tabs > .on,
+:root[data-theme='dark'] .tabs > .active,
+:root[data-theme='dark'] .subtabs > .active,
+:root[data-theme='dark'] .tabs > [aria-selected='true'] {
+  background: var(--raise);
 }
 .tabs .n {
   color: var(--faint);

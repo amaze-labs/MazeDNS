@@ -68,6 +68,11 @@
 .pg-filtering .cols {
   align-items: start;
 }
+/* Side-by-side cards of a section (Classifier: enforcement | signals) share
+   their row's height. */
+.pg-filtering .cols.even {
+  align-items: stretch;
+}
 .pg-filtering .cols.lists-cols {
   grid-template-columns: minmax(0, 1.75fr) minmax(310px, 1fr);
 }

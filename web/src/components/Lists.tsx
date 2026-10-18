@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { api, type List, type Rule } from '../api'
 import Spinner from './Spinner'
+import { SkelList } from './Skeleton'
 
 const CATEGORIES: { value: string; label: string }[] = [
   { value: 'ads', label: 'Ads' },
@@ -189,7 +190,7 @@ export default function Lists({
                 <div className="error list-load-err">Could not load the lists: {loadErr}</div>
               ) : (
                 <div className="rowitem">
-                  <Spinner label="Loading lists…" />
+                  <SkelList rows={3} gap={18} />
                 </div>
               )
             ) : rows.length === 0 ? (
@@ -404,7 +405,7 @@ function RuleViewer({
       {error ? (
         <div className="error">Could not load the rules: {error}</div>
       ) : rules === null ? (
-        <Spinner label="Loading rules…" />
+        <SkelList rows={5} />
       ) : rules.length === 0 ? (
         <span className="muted">This list has no rules.</span>
       ) : (

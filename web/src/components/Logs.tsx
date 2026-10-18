@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type LogEntry, type Node } from '../api'
 import { pollWhileVisible } from '../poll'
-import Spinner from './Spinner'
+import { PageProgress, SkelList } from './Skeleton'
 import '../styles/logs.css'
 
 const CONTROL_PLANE = 'control-plane'
@@ -157,7 +157,7 @@ export default function Logs() {
     <div className="pg-logs">
       <header className="page-head">
         <h1>Logs</h1>
-        {loading && <Spinner />}
+        {loading && <PageProgress />}
         <span className="spacer" />
         <button
           className="btn quiet lg-follow"
@@ -266,7 +266,7 @@ export default function Logs() {
         {shown.length === 0 && (
           <div className="lg-empty">
             {loading || err ? (
-              loading && !err ? <Spinner label="Loading…" /> : null
+              loading && !err ? <SkelList rows={10} gap={14} /> : null
             ) : search || levels.length ? (
               'No lines match these filters.'
             ) : source === CONTROL_PLANE || source === ALL ? (

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import Spinner from './Spinner'
+import { SkelTableRows } from './Skeleton'
 import { RANGES } from './filters'
 
 // tableKit standardizes every client-side table in the app: clickable header
@@ -131,13 +131,9 @@ export function TableStatusRow({
 }) {
   if (loading) {
     if (error || !empty) return null
-    return (
-      <tr>
-        <td colSpan={colSpan} className="table-empty">
-          <Spinner label="Loading…" />
-        </td>
-      </tr>
-    )
+    // Placeholder rows shaped like the table's own, so it keeps its height
+    // and nothing jumps when the data arrives.
+    return <SkelTableRows rows={5} cols={Math.min(colSpan ?? 3, 6)} />
   }
   if (!empty) return null
   return (

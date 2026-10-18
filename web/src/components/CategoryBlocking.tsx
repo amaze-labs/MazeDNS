@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { api, type CategoryInfo } from '../api'
 import { reloadCategories, useCategories } from '../categories'
-import Spinner from './Spinner'
+import { SkelToggles } from './Skeleton'
 import { timeAgo } from './tableKit'
 
 const fmtCount = (n: number) =>
@@ -15,7 +15,13 @@ export default function CategoryBlocking({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
 
-  if (!list) return <Spinner label="Loading categories…" />
+  if (!list) {
+    return (
+      <section className="card cat-block" aria-busy="true">
+        <SkelToggles count={12} />
+      </section>
+    )
+  }
   if (!list.enabled) {
     return (
       <section className="card">

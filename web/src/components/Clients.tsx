@@ -5,7 +5,7 @@ import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel, { clientName } from './ClientLabel'
 import ClientDetail, { ACTIVE_MS } from './ClientDetail'
-import Spinner from './Spinner'
+import { PageProgress, Skel } from './Skeleton'
 import { useTable, Th, Pager, TableStatusRow, timeAgo, windowLabel, WindowPicker, SearchBox, type SortAccessors } from './tableKit'
 import '../styles/queries.css'
 
@@ -118,7 +118,7 @@ export default function Clients() {
   const seen = win?.clients ?? rows.length
   const t = win?.totals
   const blockedPct = t ? (t.total ? (t.blocked / t.total) * 100 : 0) : null
-  const fig = (v: string) => (loaded ? v : '—')
+  const fig = (v: string) => (loaded ? v : <Skel w={48} h={24} />)
   const plus = capped ? '+' : ''
   const closeDrawer = useCallback(() => setSelected(null), [])
 
@@ -127,7 +127,7 @@ export default function Clients() {
       {selected && <ClientDetail client={selected} hours={hours} nodes={focus} names={names} onClose={closeDrawer} />}
       <header className="page-head">
         <h1>Clients</h1>
-        {loading && !err && <Spinner />}
+        {loading && !err && <PageProgress />}
         <span className="spacer" />
         <WindowPicker hours={hours} onChange={setHours} />
         {nodeNames.length > 0 && <NodeFilter options={nodeNames} selected={focus} onChange={setFocus} color={nodeColor} sites={siteGroups(nodes)} />}

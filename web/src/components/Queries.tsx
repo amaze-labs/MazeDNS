@@ -7,7 +7,7 @@ import { useClientNames } from '../useClientNames'
 import ClientLabel, { clientName } from './ClientLabel'
 import ClientDetail, { resultOf } from './ClientDetail'
 import Modal from './Modal'
-import Spinner from './Spinner'
+import { PageProgress, SkelList } from './Skeleton'
 import { PAGE_SIZE, TableStatusRow, Th, fmtMs, fmtWhen, WindowPicker, SearchBox } from './tableKit'
 import '../styles/queries.css'
 
@@ -290,7 +290,7 @@ export default function Queries() {
             Live
           </button>
         </div>
-        {!live && loading && !err && <Spinner />}
+        {!live && loading && !err && <PageProgress />}
         <span className="spacer" />
         {live ? (
           <div className="q-live">
@@ -819,7 +819,7 @@ function QueryDrawer({
           Clients that queried it or its subdomains, across the whole query log.
         </p>
         {askers === null ? (
-          <Spinner label="Loading…" />
+          <SkelList rows={3} />
         ) : askers.clients.length === 0 ? (
           <p className="muted small" style={{ margin: 0 }}>
             No other queries recorded.

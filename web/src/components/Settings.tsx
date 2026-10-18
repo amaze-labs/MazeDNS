@@ -13,6 +13,7 @@ import {
 } from '../api'
 import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
+import { SkelGroups, SkelList } from './Skeleton'
 import { invalidateAllClientNames } from '../useClientNames'
 import { PASSWORD_RULE } from '../passwordPolicy'
 import '../styles/settings.css'
@@ -552,7 +553,14 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </button>
           </div>
         ) : (
-          <Spinner label="Loading settings…" />
+          <div className="st-layout" aria-busy="true">
+            <div className="st-nav">
+              <SkelList rows={5} gap={22} />
+            </div>
+            <div className="st-main">
+              <SkelGroups groups={4} />
+            </div>
+          </div>
         )}
       </div>
     )
@@ -969,7 +977,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </button>
       </div>
     ) : (
-      <Spinner label="Loading access settings…" />
+      <SkelGroups groups={3} />
     )
   ) : (
     <>
@@ -1403,7 +1411,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // -------------------------------------------------------------- Integrations
   const integrationsView = (
     <>
-      {!vm && !vl && !cp && <Spinner label="Loading integrations…" />}
+      {!vm && !vl && !cp && <SkelGroups groups={3} />}
       {cp && !readonly && (
         <Group title="Metrics endpoint" desc={<>Protect the control plane’s <code>/metrics</code> with a bearer token.</>}>
           <div className="check-row">
@@ -1619,7 +1627,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </button>
           </div>
         ) : audit === null ? (
-          <Spinner label="Loading…" />
+          <SkelList rows={5} />
         ) : audit.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>
             No changes recorded yet.

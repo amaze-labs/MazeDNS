@@ -630,3 +630,39 @@
     padding-inline: 4px;
   }
 }
+
+/* Loading and failure states inside the cards. */
+.pg-overview .ov-err {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.pg-overview .ov-total-skel {
+  align-self: center;
+}
+.pg-overview .ov-band > .band-skel {
+  flex: 1;
+  height: 100%;
+  border-radius: 0;
+}
+.pg-overview .ov-legend .n-skel {
+  display: block;
+  margin: 2px 0 6px;
+}
+.pg-overview .ov-meta .skel {
+  margin-top: 4px;
+}
+@media (max-width: 640px) {
+  .skel-donut {
+    grid-template-columns: 110px minmax(0, 1fr);
+  }
+  .skel-donut .ring {
+    width: 104px;
+    height: 104px;
+    -webkit-mask: radial-gradient(circle, transparent 36px, #000 37px);
+    mask: radial-gradient(circle, transparent 36px, #000 37px);
+  }
+}

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import Spinner from './Spinner'
+import { Skel, SkelBars, SkelDonut, SkelLine, SkelRank } from './Skeleton'
 import { TableStatusRow } from './tableKit'
 import {
   Area,
@@ -275,8 +276,17 @@ function TimeTick({ x, y, payload, textAnchor, label }: any) {
 }
 
 // Load is a widget's state while its first answer is pending or failed.
-function Load({ error, what }: { error?: string; what: string }) {
-  return error ? <p className="muted small">Couldn't load {what}.</p> : <Spinner label="Loading…" />
+// Load stands in for a card's content until it arrives: the placeholder the
+// card passes, or — when its request failed — a note that it keeps retrying.
+function Load({ error, what, children }: { error?: string; what: string; children?: ReactNode }) {
+  if (error) {
+    return (
+      <p className="ov-err" role="status">
+        <span className="dot bad" /> Couldn't load {what}. It will retry on its own.
+      </p>
+    )
+  }
+  return children ? <>{children}</> : <Spinner label="Loading…" />
 }
 
 export default function Dashboard() {
@@ -491,7 +501,7 @@ export default function Dashboard() {
         <h1>Overview</h1>
         <ProtectionPill prot={prot} />
         <span className="spacer" />
-        {updating && <Spinner size={14} label="Updating…" />}
+        {updating && <div className="page-progress" role="progressbar" aria-label="Updating" />}
         <RangeNodeBar
           hours={hours}
           setHours={setHours}
@@ -508,7 +518,7 @@ export default function Dashboard() {
       {/* Hero: how the window's queries were answered. */}
       <section className="ov-flow" aria-label="How queries were answered">
         <div className="ov-flow-head">
-          <CountUp className="ov-total" value={totals ? total : null} />
+          {totals ? <CountUp className="ov-total" value={total} /> : <Skel className="on-dark ov-total-skel" w={150} h={40} r={10} />}
           <span className="ov-what">queries in {windowPhrase(hours)}</span>
           <span className="ov-meta">
             {ins ? (
@@ -526,7 +536,12 @@ export default function Dashboard() {
                 )}
               </>
             ) : (
-              !errs.insights && <Spinner size={14} />
+              !errs.insights && (
+                <>
+                  <Skel w={92} className="on-dark" />
+                  <Skel w={64} className="on-dark" />
+                </>
+              )
             )}
           </span>
         </div>
@@ -546,7 +561,7 @@ export default function Dashboard() {
               )
             })
           ) : (
-            <div className="empty-band">{totals ? 'No queries in this window yet' : ''}</div>
+            totals ? <div className="empty-band">No queries in this window yet</div> : <Skel className="on-dark band-skel" w="100%" h="100%" />
           )}
         </div>
         <div className="ov-legend">
@@ -554,7 +569,7 @@ export default function Dashboard() {
             const v = totals?.[f.key]
             return (
               <div key={f.key} style={{ ['--k' as any]: `var(--${f.k})` }}>
-                <CountUp className="n" value={v ?? null} as="div" />
+                {v == null ? <Skel className="on-dark n-skel" w={56} h={22} r={6} /> : <CountUp className="n" value={v} as="div" />}
                 <div className="l">
                   <b>{f.label}</b>
                   {v != null && <> · {fmtPct(pct(v, total))}%</>} · {flowHint[f.key]}
@@ -585,7 +600,9 @@ export default function Dashboard() {
           </div>
           {!series ? (
             <div className="ov-chart-load">
-              <Load error={errs.series} what="the traffic series" />
+              <Load error={errs.series} what="the traffic series">
+                <SkelBars height={260} />
+              </Load>
             </div>
           ) : (
             <div className="ov-chart">
@@ -857,7 +874,7 @@ export default function Dashboard() {
             <>
               {topErr && <div className="error">{topErr}</div>}
               {!topDom ? (
-                !topErr && <Spinner label="Loading…" />
+                !topErr && <SkelRank rows={6} />
               ) : (topRows ?? []).length === 0 ? (
                 <p className="muted small">{topKind === 'blocked' ? 'Nothing was blocked in this window.' : 'No queries in this window.'}</p>
               ) : (
@@ -906,7 +923,9 @@ export default function Dashboard() {
           </div>
           {!lat ? (
             <div className="ov-chart-load">
-              <Load error={errs.latency} what="latency" />
+              <Load error={errs.latency} what="latency">
+                <SkelLine height={300} />
+              </Load>
             </div>
           ) : (
             <div className="ov-chart">
@@ -981,7 +1000,12 @@ export default function Dashboard() {
             </div>
           </div>
           {!ins ? (
-            <Load error={errs.insights} what="the distribution" />
+            <Load error={errs.insights} what="the distribution">
+              <div className="ov-donuts">
+                <SkelDonut />
+                <SkelDonut />
+              </div>
+            </Load>
           ) : (
             <div className="ov-donuts">
               {byNodeData.length > 1 && <Donut title="By agent" data={byNodeData} />}
@@ -1000,7 +1024,9 @@ export default function Dashboard() {
           {catList && !catList.enabled ? (
             <p className="muted small">Domain categories are turned off on this control plane.</p>
           ) : !catTraffic ? (
-            <Load error={errs.cats} what="the categories" />
+            <Load error={errs.cats} what="the categories">
+              <SkelRank rows={5} columns={2} />
+            </Load>
           ) : catTraffic.length === 0 ? (
             <p className="muted small">
               No categorised queries in this window yet. Queries are labelled as they arrive, so older traffic isn’t counted.

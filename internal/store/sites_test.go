@@ -106,3 +106,81 @@ func TestMasterSiteSinglePrimary(t *testing.T) {
 		t.Errorf("master = %s/%s, want office/primary", s.MasterSite(), s.MasterRole())
 	}
 }
+
+// Renaming a site carries its agents (and their roles), the rules scoped to it
+// and the master's assignment; the new name must be free.
+func TestUpdateSiteRename(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	a, _ := s.CreateNode("agent-a", "ha", "p")
+	if _, err := s.CreateNode("agent-b", "hb", "p"); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"office", "lab", "zoo"} {
+		if err := s.CreateSite(n, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetNodeSite(a, "office", "primary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetMasterSite("office", "backup"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddRewriteScoped("nas.lan", "A", "192.0.2.1", ScopeSites, []string{"office", "zoo"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddForwarder("corp.internal", []string{"10.0.0.2:53"}, ScopeSites, []string{"office"}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.ListRewritesForNode("agent-a", "office")
+
+	if err := s.UpdateSite("office", "lab", ""); err != ErrSiteExists {
+		t.Fatalf("rename onto an existing site: err = %v, want ErrSiteExists", err)
+	}
+	if err := s.UpdateSite("office", "hq", "Head office"); err != nil {
+		t.Fatal(err)
+	}
+
+	sites, _ := s.ListSites()
+	got := map[string]string{}
+	for _, si := range sites {
+		got[si.Name] = si.Description
+	}
+	if _, old := got["office"]; old || got["hq"] != "Head office" {
+		t.Errorf("sites = %v", got)
+	}
+	nodes, _ := s.ListNodes()
+	for _, n := range nodes {
+		if n.Name == "agent-a" && (n.Site != "hq" || n.Role != "primary") {
+			t.Errorf("agent-a = %s/%s, want hq/primary", n.Site, n.Role)
+		}
+	}
+	if s.MasterSite() != "hq" || s.MasterRole() != "backup" {
+		t.Errorf("master = %s/%s", s.MasterSite(), s.MasterRole())
+	}
+	rws, _ := s.ListRewrites()
+	if len(rws) != 1 || len(rws[0].ScopeValues) != 2 || rws[0].ScopeValues[0] != "hq" || rws[0].ScopeValues[1] != "zoo" {
+		t.Errorf("rewrite scope = %v, want [hq zoo] (canonical order)", rws[0].ScopeValues)
+	}
+	fws, _ := s.ListForwarders()
+	if len(fws) != 1 || len(fws[0].ScopeValues) != 1 || fws[0].ScopeValues[0] != "hq" {
+		t.Errorf("forwarder scope = %v", fws[0].ScopeValues)
+	}
+	after, _ := s.ListRewritesForNode("agent-a", "hq")
+	if len(before) != 1 || len(after) != 1 {
+		t.Errorf("agent-a's rewrites: %d before, %d after the rename", len(before), len(after))
+	}
+
+	// Description only.
+	if err := s.UpdateSite("hq", "hq", "HQ, floor 2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateSite("nowhere", "x", ""); err == nil {
+		t.Error("updating a site that doesn't exist must fail")
+	}
+}

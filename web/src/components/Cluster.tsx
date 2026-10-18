@@ -146,7 +146,7 @@ export default function Cluster() {
   const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
   const [newEnrollKey, setNewEnrollKey] = useState<{ name: string; key: string } | null>(null)
   const [selected, setSelected] = useState<string | null>(null) // agent id whose drawer is open
-  const [addingSite, setAddingSite] = useState(false)
+  const [siteDialog, setSiteDialog] = useState<{ name: string } | null>(null) // name '' = a new site
   const [deployOpen, setDeployOpen] = useState(false)
   const [pendingBusy, setPendingBusy] = useState('')
   const [pendingErr, setPendingErr] = useState<{ id: string; msg: string } | null>(null)
@@ -314,19 +314,26 @@ export default function Cluster() {
     }
   }
 
-  const createSite = async (name: string, description: string) => {
-    await api.createSite(name, description)
-    load()
+  // Saves the site dialog: create or rename/re-describe the site, then apply
+  // the membership changes under its (new) name. A primary goes last, so the
+  // site ends with exactly the roles the dialog showed (the server demotes a
+  // previous primary when another takes over). Throws so the dialog keeps its
+  // input and shows the error.
+  const saveSite = async (orig: string, name: string, description: string, changes: MemberChange[]) => {
+    if (!orig) await api.createSite(name, description)
+    else await api.updateSite(orig, name, description)
+    const ordered = [...changes].sort((a, b) => Number(a.role === 'primary') - Number(b.role === 'primary'))
+    try {
+      for (const c of ordered) await api.setNodeSite(c.id, c.role ? name : '', c.role)
+    } finally {
+      await load()
+    }
   }
   const delSite = async (name: string) => {
-    if (!window.confirm(`Delete site “${name}”? Its agents are unassigned (they keep serving DNS).`)) return
-    try {
-      await api.deleteSite(name)
-      setErr('')
-      load()
-    } catch (e) {
-      setErr(errMsg(e))
-    }
+    if (!window.confirm(`Delete site “${name}”? Its agents are unassigned (they keep serving DNS).`)) return false
+    await api.deleteSite(name)
+    load()
+    return true
   }
 
   // Throws so the form that called it can keep its input and show the error.
@@ -357,7 +364,7 @@ export default function Cluster() {
   }
 
   const closeAgent = useCallback(() => setSelected(null), [])
-  const closeSite = useCallback(() => setAddingSite(false), [])
+  const closeSite = useCallback(() => setSiteDialog(null), [])
   const closeDeploy = useCallback(() => setDeployOpen(false), [])
 
   // ---- derived ----
@@ -390,7 +397,7 @@ export default function Cluster() {
         <span className="spacer" />
         {admin && (
           <>
-            <button className="btn" onClick={() => setAddingSite(true)}>
+            <button className="btn" onClick={() => setSiteDialog({ name: '' })}>
               Add a site
             </button>
             <button className="btn primary" onClick={() => setDeployOpen(true)}>
@@ -511,36 +518,19 @@ export default function Cluster() {
         </section>
       ) : (
         <div className="ag-sites">
-          {sitesInUse.map((site) => {
-            const members = membersOf(site)
-            const desc = sites.find((s) => s.name === site)?.description
-            return (
-              <section className="card ag-site" key={site}>
-                <div className="ag-site-head">
-                  <h2>{site}</h2>
-                  <small>
-                    {members.length} {members.length === 1 ? 'agent' : 'agents'}
-                    {members.length > 1 && ' · clients fail over in this order'}
-                  </small>
-                  <span className="spacer" />
-                  {admin && (
-                    <button className="btn sm quiet ag-site-del" onClick={() => delSite(site)} title={`Delete site ${site}`}>
-                      Delete
-                    </button>
-                  )}
-                </div>
-                {desc && <p className="ag-site-desc">{desc}</p>}
-                <div className="ag-list">
-                  {members.map(agentRow)}
-                  {members.length === 0 && (
-                    <p className="muted small ag-list-empty">
-                      No agents here yet{admin ? '. Open an agent and pick this site.' : '.'}
-                    </p>
-                  )}
-                </div>
-              </section>
-            )
-          })}
+          {sitesInUse.map((site) => (
+            <SiteCard
+              key={site}
+              name={site}
+              description={sites.find((x) => x.name === site)?.description}
+              members={membersOf(site)}
+              rates={rates}
+              admin={admin}
+              onEdit={() => setSiteDialog({ name: site })}
+            >
+              {membersOf(site).map(agentRow)}
+            </SiteCard>
+          ))}
           {unassigned.length > 0 && (
             <section className="card ag-site ag-unassigned">
               <div className="ag-site-head">
@@ -640,7 +630,18 @@ export default function Cluster() {
         </>
       )}
 
-      {addingSite && <AddSiteDialog onClose={closeSite} onCreate={createSite} />}
+      {siteDialog && (
+        <SiteDialog
+          key={siteDialog.name}
+          name={siteDialog.name}
+          description={sites.find((x) => x.name === siteDialog.name)?.description || ''}
+          agents={admitted}
+          taken={sitesInUse.filter((x) => x !== siteDialog.name)}
+          onClose={closeSite}
+          onSave={saveSite}
+          onDelete={() => delSite(siteDialog.name)}
+        />
+      )}
 
       {deployOpen && (
         <DeployDrawer
@@ -705,7 +706,7 @@ function AgentRow({
   const ms = fmtMs(rate?.ms)
   return (
     <div
-      className={`ag-agent${selected ? ' sel' : ''}`}
+      className={`ag-agent${selected ? ' sel' : ''}${st.dot === 'off' ? ' off' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onOpen}
@@ -719,15 +720,14 @@ function AgentRow({
     >
       <span className={`dot ${st.dot}`} title={st.label} />
       <div className="ag-agent-main">
-        <div className="ag-agent-name">{n.name}</div>
+        <div className="ag-agent-name">
+          {n.name}
+          {n.site && <span className={`tag ag-role ${n.role || 'none'}`}>{roleLabel(n.role)}</span>}
+        </div>
         <div className="ag-agent-role">
-          {n.site ? roleLabel(n.role) : st.label}
-          {ip && (
-            <>
-              {' · '}
-              <span className="mono">{ip}</span>
-            </>
-          )}
+          {!n.site && st.label}
+          {!n.site && ip && ' · '}
+          {ip && <span className="mono">{ip}</span>}
         </div>
       </div>
       <div className="ag-agent-num" title={`Average over the last ${RATE_HOURS === 1 ? 'hour' : `${RATE_HOURS} hours`}`}>
@@ -748,9 +748,132 @@ function AgentRow({
   )
 }
 
-function AddSiteDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, desc: string) => Promise<void> }) {
-  const [name, setName] = useState('')
-  const [desc, setDesc] = useState('')
+// siteHealth summarises a site from its agents: how many serve DNS, and the
+// tone of the card (every agent serving, some not, none).
+function siteHealth(members: Node[]): { tone: 'ok' | 'warn' | 'bad' | 'empty'; text: string } {
+  if (members.length === 0) return { tone: 'empty', text: 'No agents' }
+  const serving = members.filter(SERVING).length
+  const offline = members.filter((n) => !ONLINE(n)).length
+  if (serving === members.length) return { tone: 'ok', text: members.length === 1 ? 'Serving' : `All ${members.length} serving` }
+  if (serving === 0) return { tone: 'bad', text: members.length === 1 ? 'Not serving' : 'None serving' }
+  return { tone: 'warn', text: offline ? `${offline} of ${members.length} offline` : `${serving} of ${members.length} serving` }
+}
+
+function SiteCard({
+  name,
+  description,
+  members,
+  rates,
+  admin,
+  onEdit,
+  children,
+}: {
+  name: string
+  description?: string
+  members: Node[]
+  rates: Record<string, Rate>
+  admin: boolean
+  onEdit: () => void
+  children: ReactNode
+}) {
+  const health = siteHealth(members)
+  // Site totals: query rate summed, latency weighted by each agent's rate.
+  let qps = 0
+  let msWeighted = 0
+  let msWeight = 0
+  for (const n of members) {
+    const r = rates[n.name]
+    if (r?.qps) qps += r.qps
+    if (r?.ms !== undefined && r.qps) {
+      msWeighted += r.ms * r.qps
+      msWeight += r.qps
+    }
+  }
+  const rate = fmtRate(qps || undefined)
+  const ms = fmtMs(msWeight ? msWeighted / msWeight : undefined)
+  return (
+    <section className={`card ag-site ${health.tone}`}>
+      <div className="ag-site-head">
+        <div className="ag-site-title">
+          <h2>{name}</h2>
+          <span className={`tag ${health.tone === 'empty' ? '' : health.tone}`}>
+            {health.tone !== 'empty' && <span className={`dot ${health.tone === 'ok' ? '' : health.tone}`} />}
+            {health.text}
+          </span>
+        </div>
+        {admin && (
+          <button className="btn sm quiet ag-site-edit" onClick={onEdit} title={`Edit site ${name}`}>
+            Edit
+          </button>
+        )}
+      </div>
+      {description && <p className="ag-site-desc">{description}</p>}
+      {members.length > 0 && (
+        <div className="ag-site-stats">
+          <span>
+            <b>{members.length}</b> {members.length === 1 ? 'agent' : 'agents'}
+          </span>
+          {rate !== null && (
+            <span title={`Total over the last ${RATE_HOURS === 1 ? 'hour' : `${RATE_HOURS} hours`}`}>
+              <b>{rate}</b> q/s
+            </span>
+          )}
+          {ms !== null && (
+            <span title="Average answer time, weighted by each agent's traffic">
+              <b>{ms}</b> ms
+            </span>
+          )}
+          {members.length > 1 && <span className="faint">clients fail over top to bottom</span>}
+        </div>
+      )}
+      <div className="ag-list">
+        {children}
+        {members.length === 0 && (
+          <div className="ag-list-empty">
+            <span className="muted small">No agents in this site yet.</span>
+            {admin && (
+              <button className="btn sm" onClick={onEdit}>
+                Add agents
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+type MemberChange = { id: string; role: string } // role '' = leave the site
+
+// SiteDialog creates a site (name '') or edits one: its name, description and
+// which agents belong to it with what role. Nothing is saved until Save; a
+// rename keeps the site's agents and the rules scoped to it.
+function SiteDialog({
+  name: orig,
+  description: origDesc,
+  agents,
+  taken,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  name: string
+  description: string
+  agents: Node[]
+  taken: string[]
+  onClose: () => void
+  onSave: (orig: string, name: string, description: string, changes: MemberChange[]) => Promise<void>
+  onDelete: () => Promise<boolean>
+}) {
+  const creating = orig === ''
+  const [name, setName] = useState(orig)
+  const [desc, setDesc] = useState(origDesc)
+  // Role per agent id in this site; absent = not in it.
+  const initial = useRef<Record<string, string>>(
+    Object.fromEntries(agents.filter((n) => orig && n.site === orig).map((n) => [n.id, n.role || 'backup'])),
+  )
+  const [roles, setRoles] = useState<Record<string, string>>(initial.current)
+  const [adding, setAdding] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const field = useRef<HTMLInputElement>(null)
@@ -758,51 +881,141 @@ function AddSiteDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (
     const t = setTimeout(() => field.current?.focus(), 0)
     return () => clearTimeout(t)
   }, [])
+
+  const trimmed = name.trim()
+  const clash = trimmed !== orig && taken.includes(trimmed)
+  const members = agents.filter((n) => roles[n.id]).sort((a, b) => roleRank(roles[a.id]) - roleRank(roles[b.id]) || a.name.localeCompare(b.name))
+  const others = agents.filter((n) => !roles[n.id]).sort((a, b) => a.name.localeCompare(b.name))
+  const changes: MemberChange[] = agents
+    .filter((n) => (roles[n.id] || '') !== (initial.current[n.id] || ''))
+    .map((n) => ({ id: n.id, role: roles[n.id] || '' }))
+  const dirty = trimmed !== orig || desc.trim() !== origDesc || changes.length > 0
+
+  // One primary per site, as the server enforces: a new primary demotes the
+  // previous one to secondary.
+  const setRole = (id: string, role: string) =>
+    setRoles((cur) => {
+      const next = { ...cur }
+      if (role === 'primary') for (const k in next) if (next[k] === 'primary') next[k] = 'secondary'
+      if (role) next[id] = role
+      else delete next[id]
+      return next
+    })
+  const add = (id: string) => {
+    if (!id) return
+    setRole(id, Object.values(roles).includes('primary') ? 'secondary' : 'primary')
+    setAdding('')
+  }
+
   const submit = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (!name.trim() || busy) return
+    if (!trimmed || clash || busy || (!creating && !dirty)) return
     setBusy(true)
     setErr('')
     try {
-      await onCreate(name.trim(), desc.trim())
+      await onSave(orig, trimmed, desc.trim(), changes)
       onClose()
     } catch (e) {
       setErr(errMsg(e))
       setBusy(false)
     }
   }
+  const remove = async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      if (await onDelete()) onClose()
+      else setBusy(false)
+    } catch (e) {
+      setErr(errMsg(e))
+      setBusy(false)
+    }
+  }
+
   return (
     <Modal
       kind="dialog"
-      title="Add a site"
+      title={creating ? 'Add a site' : `Edit ${orig}`}
       onClose={onClose}
       footer={
         <>
+          {!creating && (
+            <button className="btn danger" onClick={remove} disabled={busy}>
+              Delete site
+            </button>
+          )}
           <span className="spacer" />
           <button className="btn ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
-          <button className="btn primary" onClick={() => submit()} disabled={busy || !name.trim()}>
-            {busy ? 'Adding…' : 'Add site'}
+          <button className="btn primary" onClick={() => submit()} disabled={busy || !trimmed || clash || (!creating && !dirty)}>
+            {busy ? 'Saving…' : creating ? 'Add site' : 'Save'}
           </button>
         </>
       }
     >
       <form className="ag-form" onSubmit={submit}>
-        <p className="muted">
-          A site groups the agents that serve one network. Give each agent a role in it — primary, secondary, backup —
-          to record the order clients fail over in.
-        </p>
+        {creating && (
+          <p className="muted">
+            A site groups the agents that serve one network. Give each agent a role in it — primary, secondary, backup —
+            to record the order clients fail over in.
+          </p>
+        )}
         <label className="field">
           <span>Name</span>
           <input ref={field} placeholder="office-london" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
+        {clash && <p className="bad-text small">Another site is already called “{trimmed}”.</p>}
+        {!creating && trimmed && trimmed !== orig && !clash && (
+          <p className="hint">Its agents and the rewrites and forwarders scoped to “{orig}” move to the new name.</p>
+        )}
         <label className="field">
           <span>
             Description <span className="muted">(optional)</span>
           </span>
           <input placeholder="London office, floor 2" value={desc} onChange={(e) => setDesc(e.target.value)} />
         </label>
+
+        <div className="ag-members">
+          <div className="ag-members-head">
+            <b>Agents</b>
+            <span className="muted small">Roles are advisory: every agent serves DNS.</span>
+          </div>
+          {members.length === 0 && <p className="muted small">No agents in this site yet.</p>}
+          {members.map((n) => {
+            const st = statusOf(n)
+            return (
+              <div className="ag-member" key={n.id}>
+                <span className={`dot ${st.dot}`} title={st.label} />
+                <span className="ag-member-name">
+                  {n.name}
+                  {n.site && n.site !== orig && <small className="muted"> moves from {n.site}</small>}
+                </span>
+                <select aria-label={`Role of ${n.name}`} value={roles[n.id]} onChange={(e) => setRole(n.id, e.target.value)} disabled={busy}>
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {roleLabel(r)}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn sm quiet" onClick={() => setRole(n.id, '')} disabled={busy} title={`Remove ${n.name} from this site`}>
+                  Remove
+                </button>
+              </div>
+            )
+          })}
+          {others.length > 0 && (
+            <select className="ag-member-add" aria-label="Add an agent" value={adding} onChange={(e) => add(e.target.value)} disabled={busy}>
+              <option value="">Add an agent…</option>
+              {others.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name}
+                  {n.site ? ` (now in ${n.site})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
         {err && (
           <div className="error" role="alert">
             {err}

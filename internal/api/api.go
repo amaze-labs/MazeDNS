@@ -275,6 +275,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("PUT /api/cluster/nodes/{id}/name", s.requireSession(roleAdmin, s.renameNode))
 			mux.HandleFunc("GET /api/cluster/sites", s.requireRole(roleReadonly, s.listSites))
 			mux.HandleFunc("POST /api/cluster/sites", s.requireSession(roleAdmin, s.createSite))
+			mux.HandleFunc("PUT /api/cluster/sites/{name}", s.requireSession(roleAdmin, s.updateSite))
 			mux.HandleFunc("DELETE /api/cluster/sites/{name}", s.requireSession(roleAdmin, s.deleteSite))
 			mux.HandleFunc("DELETE /api/cluster/nodes/{id}", s.requireSession(roleAdmin, s.deleteNode))
 			mux.HandleFunc("GET /api/cluster/revoked", s.requireSession(roleAdmin, s.listRevoked))
@@ -1119,6 +1120,27 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.store.CreateSite(in.Name, in.Description); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": strings.TrimSpace(in.Name)})
+}
+
+// updateSite renames a site and/or changes its description.
+func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.store.UpdateSite(r.PathValue("name"), in.Name, in.Description); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, store.ErrSiteExists) {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"name": strings.TrimSpace(in.Name)})

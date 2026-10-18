@@ -87,3 +87,14 @@ func TestPrecedenceCoversTaxonomy(t *testing.T) {
 		}
 	}
 }
+
+// Measured on real UT1 data: a messaging app listed under both chat and social
+// networks (discord.com) is chat, the more specific one.
+func TestChatBeatsSocial(t *testing.T) {
+	var b Builder
+	b.Add("discord.com", "social")
+	b.Add("discord.com", "chat")
+	if got, _ := b.Build().Lookup("discord.com"); got != "chat" {
+		t.Errorf("discord.com = %q, want chat", got)
+	}
+}

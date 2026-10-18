@@ -251,3 +251,45 @@ func TestClusterMetricsRelay(t *testing.T) {
 		t.Errorf("forwarded auth %s:%s body %q", got.user, got.pass, got.body)
 	}
 }
+
+// Blocking a domain records its security reason; allowing records none (what the
+// domain is belongs to its domain category, not the verdict).
+func TestDecideClassificationCategories(t *testing.T) {
+	s, st := newCategoryServer(t)
+	if _, err := st.InsertClassification(store.Classification{Domain: "maybe.example", Category: "phishing", Block: true, Status: store.ClassSuggested}); err != nil {
+		t.Fatal(err)
+	}
+	verdict := func() store.Classification {
+		items, _ := st.ListClassifications("", "maybe.example", 1, 0)
+		if len(items) != 1 {
+			t.Fatalf("verdict missing: %v", items)
+		}
+		return items[0]
+	}
+	for _, bad := range []string{
+		`{"domain":"maybe.example","decision":"approve","category":"social"}`, // blocking needs a security reason
+		`{"domain":"maybe.example","decision":"reject","category":"social"}`,  // allowing takes no content category
+	} {
+		if rr := call(t, s.decideClassification, http.MethodPost, "/", bad); rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: code %d, want 400", bad, rr.Code)
+		}
+	}
+	if rr := call(t, s.decideClassification, http.MethodPost, "/", `{"domain":"maybe.example","decision":"approve","category":"malware"}`); rr.Code != http.StatusOK {
+		t.Fatal(rr.Body.String())
+	}
+	if v := verdict(); v.Status != store.ClassApproved || v.Category != "malware" || !v.Block {
+		t.Errorf("after blocking: %+v", v)
+	}
+	if rr := call(t, s.decideClassification, http.MethodPost, "/", `{"domain":"maybe.example","decision":"reject","note":"ours"}`); rr.Code != http.StatusOK {
+		t.Fatal(rr.Body.String())
+	}
+	if v := verdict(); v.Status != store.ClassRejected || v.Category != "other" || v.Block || v.Note != "ours" {
+		t.Errorf("after allowing: %+v", v)
+	}
+	if rr := call(t, s.decideClassification, http.MethodPost, "/", `{"domain":"maybe.example","decision":"dismiss"}`); rr.Code != http.StatusOK {
+		t.Fatal(rr.Body.String())
+	}
+	if items, _ := st.ListClassifications("", "maybe.example", 1, 0); len(items) != 0 {
+		t.Errorf("dismissed verdict still there: %v", items)
+	}
+}

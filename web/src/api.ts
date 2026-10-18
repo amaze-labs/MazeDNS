@@ -252,6 +252,10 @@ export interface Classification {
   threat: boolean
   note: string // operator review note set when allowing/blocking
   updated_at: number
+  // What the domain is (its domain category: social, shopping, …). `category`
+  // is the verdict's blocking reason, or "other".
+  label?: string
+  content_category?: string
 }
 
 export interface DomainClient {
@@ -353,7 +357,6 @@ export interface WhoisInfo {
 export interface ClassifierStatus {
   settings: ClassifierSettings
   counts: Record<string, number>
-  category_counts: Record<string, number>
   trusted_count: number
   threat_count: number
   threat_feed_catalog: ThreatFeed[]

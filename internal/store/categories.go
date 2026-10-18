@@ -1,6 +1,11 @@
 package store
 
-import "time"
+import (
+	"strings"
+	"time"
+
+	"github.com/IPMaze/MazeDNS/internal/categories"
+)
 
 // CategoryOverride is an operator's category for a registered domain.
 type CategoryOverride struct {
@@ -52,10 +57,8 @@ type VerdictCategories struct {
 	Content  map[string]string // domain -> the model's content category
 }
 
-// ClassifierCategories loads VerdictCategories. legacyContent reports whether a
-// verdict's category is a content one (from before content_category existed),
-// so it can serve as the model's content category too.
-func (s *Store) ClassifierCategories(legacyContent func(string) bool) (VerdictCategories, error) {
+// ClassifierCategories loads VerdictCategories.
+func (s *Store) ClassifierCategories() (VerdictCategories, error) {
 	vc := VerdictCategories{Enforced: map[string]string{}, Content: map[string]string{}}
 	rows, err := s.read.Query(
 		`SELECT domain, category, block, status, content_category FROM classifications`)
@@ -72,11 +75,8 @@ func (s *Store) ClassifierCategories(legacyContent func(string) bool) (VerdictCa
 		if block && (status == ClassAuto || status == ClassApproved) {
 			vc.Enforced[domain] = cat
 		}
-		switch {
-		case content != "":
+		if content != "" {
 			vc.Content[domain] = content
-		case legacyContent != nil && legacyContent(cat):
-			vc.Content[domain] = cat
 		}
 	}
 	return vc, rows.Err()
@@ -138,4 +138,29 @@ func (s *Store) RollupByCategory(sinceMs int64, nodes []string) ([]ContentCount,
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// moveVerdictContentCategories finishes the move of content labels off the
+// classifier's verdicts. Before domain categories, a verdict that didn't block
+// carried the model's content label (social, streaming, …) as its category, and
+// allowing a domain took one too. That now lives in content_category; a
+// verdict's category is only ever the reason it blocks, or "other". Idempotent:
+// nothing matches once moved.
+func (s *Store) moveVerdictContentCategories() error {
+	var ids []string
+	var args []any
+	for _, c := range categories.Content() {
+		if c == categories.Other {
+			continue
+		}
+		ids = append(ids, "?")
+		args = append(args, c)
+	}
+	_, err := s.db.Exec(
+		`UPDATE classifications
+		 SET content_category = CASE WHEN content_category = '' THEN category ELSE content_category END,
+		     content_checked = 1,
+		     category = 'other'
+		 WHERE category IN (`+strings.Join(ids, ",")+`)`, args...)
+	return err
 }

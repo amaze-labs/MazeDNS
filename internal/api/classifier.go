@@ -21,11 +21,6 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	categoryCounts, err := s.store.ClassificationCategoryCounts()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
 	// Never leak API keys to the UI — but tell it which ones are set so it can show
 	// a "key present" indicator.
 	hasAPIKey, hasVTKey, hasAbuseKey, hasOpenTIPKey := cfg.APIKey != "", cfg.VTAPIKey != "", cfg.AbuseIPDBAPIKey != "", cfg.OpenTIPAPIKey != ""
@@ -47,7 +42,6 @@ func (s *Server) getClassifier(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"settings":            cfg,
 		"counts":              counts,
-		"category_counts":     categoryCounts,
 		"trusted_count":       trustedCount,
 		"threat_count":        threatCount,
 		"threat_feed_catalog": classifier.ThreatFeedCatalog(),
@@ -182,10 +176,21 @@ func (s *Server) listClassifications(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if items == nil {
-		items = []store.Classification{}
+	// Each row also carries what the domain is (its domain category), which the
+	// verdict's own category — the blocking reason, or "other" — doesn't say.
+	type row struct {
+		store.Classification
+		Label string `json:"label"`
 	}
-	writeJSON(w, http.StatusOK, items)
+	out := make([]row, 0, len(items))
+	for _, c := range items {
+		r := row{Classification: c, Label: c.ContentCategory}
+		if s.categorizer != nil {
+			r.Label, _ = s.categorizer.Category(c.Domain)
+		}
+		out = append(out, r)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // clearClassifications wipes all AI verdicts (a clean-slate reset) and rebuilds
@@ -264,14 +269,14 @@ func (s *Server) getDomainClients(w http.ResponseWriter, r *http.Request) {
 const domainClientsWindow = 7 * 24 * time.Hour
 
 // validDecisionCategory checks the corrected category matches the decision:
-// blocking ("approve") wants a security category; allowing ("reject") wants a
-// non-blocking content/other category.
+// blocking ("approve") names the security reason; allowing ("reject") has none
+// — what the domain is, is its domain category (an override), not the verdict's.
 func validDecisionCategory(decision, category string) bool {
 	switch decision {
 	case "approve":
 		return classifier.IsBlockCategory(category)
 	case "reject":
-		return classifier.IsContentCategory(category)
+		return category == "other"
 	}
 	return false
 }
@@ -322,6 +327,9 @@ func (s *Server) decideClassification(w http.ResponseWriter, r *http.Request) {
 	if in.Category != "" && !validDecisionCategory(in.Decision, in.Category) {
 		writeError(w, http.StatusBadRequest, "category is not valid for this decision")
 		return
+	}
+	if in.Decision == "reject" {
+		in.Category = "other" // an allowed domain has no blocking reason
 	}
 	if err := s.store.SetClassificationDecision(in.Domain, status, in.Category, in.Note); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

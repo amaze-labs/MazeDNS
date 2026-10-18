@@ -52,7 +52,7 @@ func (c *Categorizer) Refresh() error {
 	if err != nil {
 		return err
 	}
-	vc, err := c.st.ClassifierCategories(isLegacyContent)
+	vc, err := c.st.ClassifierCategories()
 	if err != nil {
 		return err
 	}
@@ -124,12 +124,6 @@ func (c *Categorizer) Status() categories.Status {
 		return categories.Status{}
 	}
 	return c.db.Status()
-}
-
-// isLegacyContent reports whether a verdict category from before content
-// categories were stored separately is a content one (a model's label).
-func isLegacyContent(cat string) bool {
-	return IsContentCategory(cat) && cat != categories.Other
 }
 
 // DomainsFor returns the per-domain corrections agents need to block the given

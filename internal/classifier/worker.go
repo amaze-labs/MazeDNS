@@ -448,14 +448,10 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	if (threat || in.RepMalicious()) && !v.ShouldBlock() {
 		category = "malware" // flagged by a feed/reputation but the model missed it
 	}
-	// A clean verdict must not keep a malicious tag: if it isn't blocked, drop any
-	// security category the model assigned (it was overridden by trust/score).
-	if !block && blockCategories[category] {
-		category = "other"
-	}
-	// Static-only analysis (no model) leaves the category blank for clean domains —
-	// content categories (social/streaming/…) need the LLM. Fall back to "other".
-	if category == "" {
+	// A verdict's category is the reason it blocks; one that doesn't block is
+	// "other" — a malicious tag the trust/score overrode is dropped, and what the
+	// domain is (social, …) is its content category, recorded separately below.
+	if !block || category == "" {
 		category = "other"
 	}
 

@@ -110,6 +110,10 @@ type Settings struct {
 	// UpstreamTimeoutMs is the ordered strategy's per-upstream failover timeout:
 	// how long one upstream may take before the next one is tried. 0 = default.
 	UpstreamTimeoutMs int `json:"upstream_timeout_ms"`
+	// BlockedCategories are the domain categories (internal/categories) blocked
+	// network-wide: each agent loads the category database for just these and
+	// blocks what it lists, unless an allow rule says otherwise.
+	BlockedCategories []string `json:"blocked_categories,omitempty"`
 }
 
 // Options holds the static (non-UI-editable) resolver configuration.

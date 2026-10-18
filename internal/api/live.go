@@ -231,6 +231,7 @@ func (s *Server) clusterLivePush(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	s.labelEntries(entries)
 	s.live.publish(node.Name, entries)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/IPMaze/MazeDNS/internal/categories"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -128,6 +129,10 @@ type Worker struct {
 	rep     *RepCache
 
 	zoneResolves func(ctx context.Context, domain string) bool // overridden in tests
+
+	// catDB is the category database: a domain it knows needs no content
+	// category from the model (nil = no database: always ask).
+	catDB *categories.Holder
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -227,10 +232,17 @@ func (w *Worker) Run(ctx context.Context) {
 	w.threat.ensureSync(threatSources(s))
 	go w.refreshThreatLoop(ctx)
 	go w.rescoreLegacyTrusted(ctx) // feeds the queue below, so it can't run inline
+	// Content categories for verdicts from before categories existed are asked
+	// of the model while the queue is idle, one call per tick, so the backfill
+	// never competes with newly seen domains.
+	backfill := time.NewTicker(contentBackfillEvery)
+	defer backfill.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-backfill.C:
+			w.backfillContent(ctx)
 		case domain := <-w.queue:
 			cur := w.get()
 			w.process(ctx, domain)
@@ -363,6 +375,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	cdn := cdnInfrastructure(domain) // a verdict here would apply to the whole provider — never blockable
 	if listTrusted || cdn {
 		w.recordTrusted(ScoreInput{Domain: domain, ListTrusted: listTrusted, CDN: cdn})
+		w.categorize(ctx, s, domain) // the shortcut skipped the model: ask it what the domain is
 		return
 	}
 
@@ -464,10 +477,21 @@ func (w *Worker) process(ctx context.Context, domain string) {
 		// must not be shown as the model's opinion.
 		model = "static analysis"
 	}
+	// What the domain is: the model's content category when it was asked (a
+	// security answer says nothing about content), or nothing to ask when the
+	// category database knows the domain.
+	content, checked := "", w.knownToCategoryDB(domain)
+	if asked {
+		checked = true
+		if IsContentCategory(v.Category) && v.Category != categories.Other {
+			content = v.Category
+		}
+	}
 	inserted, err := w.store.InsertClassification(store.Classification{
 		Domain: domain, Category: category, Block: block, Status: status,
 		Confidence: v.Confidence, Score: score.Legitimacy, Factors: factors,
 		Reason: reason, Model: model, Trusted: false, Threat: threat,
+		ContentCategory: content, ContentChecked: checked,
 	})
 	if err != nil {
 		slog.Warn("store classification failed", "domain", domain, "err", err)

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/net/publicsuffix"
+
+	"github.com/IPMaze/MazeDNS/internal/categories"
 )
 
 // blockCategories are the security categories that warrant blocking. Everything
@@ -24,11 +26,9 @@ var blockCategories = map[string]bool{
 }
 
 // contentCategories label legitimate traffic by type, so the classifier gives
-// visibility into what a network is doing — not just what to block.
-var contentCategories = []string{
-	"social", "streaming", "shopping", "news", "gaming", "productivity",
-	"search", "email", "finance", "technology", "cdn", "adult",
-}
+// visibility into what a network is doing — not just what to block. They are
+// the shared taxonomy's content categories (internal/categories).
+var contentCategories = categories.Content()
 
 // validCategories is the full accepted set (security + content + "other").
 var validCategories = func() map[string]bool {
@@ -119,18 +119,27 @@ Blocking categories (only choose when reasonably sure):
 - phishing: credential theft / scams
 
 Legitimate content categories (describe what the domain is for; never blocked):
-- social: social networks / messaging (e.g. facebook, instagram, reddit)
+- social: social networks / forums (e.g. facebook, instagram, reddit)
+- chat: messaging / chat / voice (e.g. whatsapp, telegram, discord)
 - streaming: video/music streaming (e.g. youtube, netflix, spotify, twitch)
 - shopping: e-commerce / retail
 - news: news / media publications
+- sports: sports news / clubs / leagues
 - gaming: games / gaming platforms
 - productivity: work / office / collaboration tools
 - search: search engines
 - email: webmail / email providers
-- finance: banking / payments / investing
+- finance: banking / payments / investing / crypto
+- jobs: job search / recruiting
+- education: schools / universities / learning
 - technology: developer / software / tech services (e.g. github)
+- ai: AI assistants / AI services (e.g. chatgpt, claude)
+- vpn: VPN / proxy services
+- filesharing: file hosting / downloads / torrents
 - cdn: CDNs / cloud infrastructure
 - adult: adult content
+- gambling: betting / casinos / lotteries
+- dating: dating services
 
 Fallback:
 - other: legitimate but none of the above fit, or unknown

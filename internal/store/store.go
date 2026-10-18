@@ -190,6 +190,24 @@ CREATE TABLE IF NOT EXISTS client_rollup (
 	blocked INTEGER NOT NULL,
 	PRIMARY KEY (hour, node, client)
 ) WITHOUT ROWID;
+-- category_rollup: per-hour, per-node query counts by content category (what
+-- the queried domain is: social, shopping, …), for the dashboard breakdown.
+CREATE TABLE IF NOT EXISTS category_rollup (
+	hour     INTEGER NOT NULL,   -- unix hour = ts/3600000
+	node     TEXT NOT NULL,
+	category TEXT NOT NULL,
+	cnt      INTEGER NOT NULL,
+	blocked  INTEGER NOT NULL,
+	PRIMARY KEY (hour, node, category)
+) WITHOUT ROWID;
+-- category_overrides: an operator's category for a registered domain, which
+-- wins over every automatic source.
+CREATE TABLE IF NOT EXISTS category_overrides (
+	domain     TEXT PRIMARY KEY,
+	category   TEXT NOT NULL,
+	set_by     TEXT NOT NULL DEFAULT '',
+	updated_at INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS users (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	username TEXT NOT NULL UNIQUE,
@@ -414,6 +432,13 @@ func (s *Store) migrate() error {
 		`ALTER TABLE nodes ADD COLUMN prev_key_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN prev_key_expires_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN app_version TEXT NOT NULL DEFAULT ''`,
+		// What the queried domain is (social, shopping, …), labelled on the control
+		// plane as entries arrive; '' for entries logged before categories.
+		`ALTER TABLE query_log ADD COLUMN content_category TEXT NOT NULL DEFAULT ''`,
+		// The language model's content category for a domain the category
+		// database doesn't know, and whether it was asked yet.
+		`ALTER TABLE classifications ADD COLUMN content_category TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE classifications ADD COLUMN content_checked INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)
@@ -421,6 +446,17 @@ func (s *Store) migrate() error {
 	}
 	if err := s.widenAPITokenTimes(); err != nil {
 		return err
+	}
+	// Indexes on columns added above (they can't be in the schema: on an older
+	// database the column doesn't exist yet when the schema runs).
+	for _, idx := range []string{
+		// The Queries page filters by category, newest first.
+		`CREATE INDEX IF NOT EXISTS idx_query_log_ccat_ts ON query_log(content_category, ts)`,
+		`CREATE INDEX IF NOT EXISTS idx_classifications_content_checked ON classifications(content_checked)`,
+	} {
+		if _, err := s.db.Exec(idx); err != nil {
+			return fmt.Errorf("migrate index: %w", err)
+		}
 	}
 	if err := s.backfillNodeIDs(); err != nil {
 		return fmt.Errorf("migrate node ids: %w", err)

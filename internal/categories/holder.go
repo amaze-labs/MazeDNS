@@ -124,3 +124,12 @@ func (h *Holder) load(ctx context.Context) time.Duration {
 	slog.Info("category database loaded", "categories", cats, "domains", idx.Len(), "took", time.Since(start).Round(time.Millisecond))
 	return refreshEvery
 }
+
+// NewLoadedHolder returns a Holder already serving idx, without a source or
+// refresh — for tests, and for callers that build an Index themselves.
+func NewLoadedHolder(idx *Index) *Holder {
+	h := &Holder{kick: make(chan struct{}, 1)}
+	h.idx.Store(idx)
+	h.status = Status{Domains: idx.Len(), Counts: idx.Counts(), UpdatedAt: time.Now().Unix()}
+	return h
+}

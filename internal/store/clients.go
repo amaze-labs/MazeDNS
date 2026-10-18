@@ -55,14 +55,17 @@ type ClientDetail struct {
 	AvgLatencyMS  float64         `json:"avg_latency_ms"`
 	Actions       []CategoryCount `json:"actions"`    // all traffic, grouped by action (for the donut)
 	Categories    []CategoryCount `json:"categories"` // blocked traffic, grouped by block category (for the bar)
-	TopDomains    []DomainStat    `json:"top_domains"`
-	TopBlocked    []DomainStat    `json:"top_blocked"`
+	// Content is all traffic grouped by what the domains are (social, …);
+	// entries logged before categories existed are left out.
+	Content    []CategoryCount `json:"content"`
+	TopDomains []DomainStat    `json:"top_domains"`
+	TopBlocked []DomainStat    `json:"top_blocked"`
 }
 
 // ClientDetailStats gathers every per-client breakdown for one client since
 // sinceMs (with the optional node filter). Slices are never nil.
 func (s *Store) ClientDetailStats(client string, sinceMs int64, nodes []string) (ClientDetail, error) {
-	d := ClientDetail{Actions: []CategoryCount{}, Categories: []CategoryCount{}, TopDomains: []DomainStat{}, TopBlocked: []DomainStat{}}
+	d := ClientDetail{Actions: []CategoryCount{}, Categories: []CategoryCount{}, Content: []CategoryCount{}, TopDomains: []DomainStat{}, TopBlocked: []DomainStat{}}
 	nf, nargs := nodeFilterSQL(nodes)
 	// Base args shared by every query: ts lower-bound, the node filter, the client.
 	base := func() []any {
@@ -100,6 +103,10 @@ func (s *Store) ClientDetailStats(client string, sinceMs int64, nodes []string) 
 	if d.Categories, err = scanCategoryCounts(s,
 		`SELECT CASE WHEN category='' THEN 'custom' ELSE category END AS cat, COUNT(*)`+where+
 			` AND action='blocked' GROUP BY cat ORDER BY COUNT(*) DESC`, catArgs); err != nil {
+		return d, err
+	}
+	if d.Content, err = scanCategoryCounts(s,
+		`SELECT content_category, COUNT(*)`+where+` AND content_category <> '' GROUP BY content_category ORDER BY COUNT(*) DESC`, base()); err != nil {
 		return d, err
 	}
 	// Top queried + top blocked domains.

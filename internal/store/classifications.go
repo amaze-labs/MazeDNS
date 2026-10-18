@@ -23,7 +23,12 @@ type Classification struct {
 	Trusted    bool            `json:"trusted"` // on the trusted list — not blocked
 	Threat     bool            `json:"threat"`  // corroborated by a threat-intel list
 	Note       string          `json:"note"`    // operator review note set when allowing/blocking
-	UpdatedAt  int64           `json:"updated_at"`
+	// ContentCategory is the language model's content category ("" = none or
+	// not asked); ContentChecked records that the model was asked, or that the
+	// category database already knows the domain.
+	ContentCategory string `json:"content_category"`
+	ContentChecked  bool   `json:"-"`
+	UpdatedAt       int64  `json:"updated_at"`
 }
 
 // DomainClient is one client that queried a (typically flagged) domain, with how
@@ -100,10 +105,11 @@ func (s *Store) InsertClassification(c Classification) (bool, error) {
 		exec = s.db.execUntracked
 	}
 	res, err := exec(
-		`INSERT INTO classifications(domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, updated_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO classifications(domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, content_category, content_checked, updated_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(domain) DO NOTHING`,
-		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Score, factors, c.Reason, c.Model, boolToInt(c.Trusted), boolToInt(c.Threat), time.Now().UnixMilli())
+		c.Domain, c.Category, boolToInt(c.Block), c.Status, c.Confidence, c.Score, factors, c.Reason, c.Model, boolToInt(c.Trusted), boolToInt(c.Threat),
+		c.ContentCategory, boolToInt(c.ContentChecked), time.Now().UnixMilli())
 	if err != nil {
 		return false, err
 	}
@@ -362,58 +368,6 @@ func (s *Store) countClassificationsBy(column string) (map[string]int, error) {
 			return nil, err
 		}
 		out[k] = n
-	}
-	return out, rows.Err()
-}
-
-// ClassificationCategoryMap returns registered-domain -> category for every
-// verdict, so query volume can be folded into categories.
-func (s *Store) ClassificationCategoryMap() (map[string]string, error) {
-	rows, err := s.read.Query(`SELECT domain, category FROM classifications`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var d, c string
-		if err := rows.Scan(&d, &c); err != nil {
-			return nil, err
-		}
-		out[d] = c
-	}
-	return out, rows.Err()
-}
-
-// NameCount is a per-name query count.
-type NameCount struct {
-	Name  string
-	Count int64
-}
-
-// TopQueryNames returns the most-queried names since sinceMs (grouped by name),
-// for folding query volume into categories. limited to the top `limit`.
-func (s *Store) TopQueryNames(sinceMs int64, nodes []string, limit int) ([]NameCount, error) {
-	if limit <= 0 || limit > 50000 {
-		limit = 10000
-	}
-	nf, nargs := nodeFilterSQL(nodes)
-	args := append([]any{sinceMs}, nargs...)
-	args = append(args, limit)
-	rows, err := s.read.Query(
-		`SELECT name, COUNT(*) c FROM query_log WHERE ts >= ?`+nf+`
-		 GROUP BY name ORDER BY c DESC LIMIT ?`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []NameCount
-	for rows.Next() {
-		var n NameCount
-		if err := rows.Scan(&n.Name, &n.Count); err != nil {
-			return nil, err
-		}
-		out = append(out, n)
 	}
 	return out, rows.Err()
 }

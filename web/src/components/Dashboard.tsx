@@ -435,6 +435,16 @@ export default function Dashboard() {
   const strays = (ins?.by_node ?? []).filter((n) => n.total > 0 && !agentNames.includes(n.node))
   const online = agents.filter((n) => n.last_seen && nowSec - n.last_seen < ONLINE_WINDOW).length
   const showAgents = (nodes?.length ?? 0) > 0
+  // Agents come sorted by site, so each site is a run of the list. Once any
+  // agent has a site, the card groups them under a header with the site's
+  // totals; agents without one gather under "No site" at the end.
+  const siteRuns: { site: string; nodes: typeof agents }[] = []
+  for (const n of agents) {
+    const last = siteRuns[siteRuns.length - 1]
+    if (last && last.site === (n.site || '')) last.nodes.push(n)
+    else siteRuns.push({ site: n.site || '', nodes: [n] })
+  }
+  const bySite = agents.some((n) => n.site)
 
   // ---- flow hints ----
   const flowHint: Record<string, string> = {
@@ -618,6 +628,7 @@ export default function Dashboard() {
                 <h2>Agents</h2>
                 <p className="sub">
                   Clients query these directly · {online} of {agents.length} online
+                  {bySite && ` · ${siteRuns.length} ${siteRuns.length === 1 ? 'site' : 'sites'}`}
                 </p>
               </div>
               <span className="spacer" />
@@ -626,42 +637,72 @@ export default function Dashboard() {
               </a>
             </div>
             <div className="rowlist ov-agents">
-              {agents.map((n) => {
-                const isOnline = !!n.last_seen && nowSec - n.last_seen < ONLINE_WINDOW
-                const st = byNode.get(n.name)
-                const syncing = !!n.version && !!n.expected_version && n.version !== n.expected_version
-                const dot = !n.approved || n.maintenance || (isOnline && syncing) ? 'warn' : isOnline ? '' : 'off'
-                const state = !n.approved ? (
-                  <span className="warn-text">waiting for approval</span>
-                ) : !isOnline ? (
-                  <span>offline · seen {n.last_seen ? ago(n.last_seen) : 'never'}</span>
-                ) : n.maintenance ? (
-                  <span className="warn-text">draining</span>
-                ) : syncing ? (
-                  <span className="warn-text">config syncing</span>
-                ) : (
-                  <span>in sync</span>
-                )
+              {siteRuns.map(({ site, nodes: members }) => {
+                const rows = members.map((n) => {
+                  const isOnline = !!n.last_seen && nowSec - n.last_seen < ONLINE_WINDOW
+                  const st = byNode.get(n.name)
+                  const syncing = !!n.version && !!n.expected_version && n.version !== n.expected_version
+                  const dot = !n.approved || n.maintenance || (isOnline && syncing) ? 'warn' : isOnline ? '' : 'off'
+                  const state = !n.approved ? (
+                    <span className="warn-text">waiting for approval</span>
+                  ) : !isOnline ? (
+                    <span>offline · seen {n.last_seen ? ago(n.last_seen) : 'never'}</span>
+                  ) : n.maintenance ? (
+                    <span className="warn-text">draining</span>
+                  ) : syncing ? (
+                    <span className="warn-text">config syncing</span>
+                  ) : (
+                    <span>in sync</span>
+                  )
+                  // Under a site header the site would only repeat itself.
+                  const where = bySite ? n.role : [n.site || 'No site', n.role].filter(Boolean).join(' · ')
+                  return (
+                    <a key={n.id} className="rowitem" href="/agents" onClick={go('/agents')}>
+                      <span className={`dot ${dot}`} />
+                      <div>
+                        <div className="title">
+                          <span className="ov-swatch" style={{ background: nodeColor(n.name) }} />
+                          {n.name}
+                        </div>
+                        <div className="meta">
+                          {where && <span>{where}</span>}
+                          {state}
+                        </div>
+                      </div>
+                      <div className="num ov-agent-num">
+                        {st ? `${(st.total / windowSec).toFixed(2)} q/s` : ins ? '0 q/s' : '—'}
+                        <div className="muted">
+                          {st ? `${fmt(st.total)} · ${fmtPct(pct(st.blocked, st.total))}% blocked` : ''}
+                        </div>
+                      </div>
+                    </a>
+                  )
+                })
+                if (!bySite) return rows
+                let total = 0
+                let blocked = 0
+                for (const n of members) {
+                  total += byNode.get(n.name)?.total ?? 0
+                  blocked += byNode.get(n.name)?.blocked ?? 0
+                }
                 return (
-                  <a key={n.id} className="rowitem" href="/agents" onClick={go('/agents')}>
-                    <span className={`dot ${dot}`} />
-                    <div>
-                      <div className="title">
-                        <span className="ov-swatch" style={{ background: nodeColor(n.name) }} />
-                        {n.name}
+                  <div key={site || '\0'} className="ov-site">
+                    <div className="ov-site-head">
+                      <div>
+                        <b>{site || 'No site'}</b>
+                        <span className="muted">
+                          {members.length} {members.length === 1 ? 'agent' : 'agents'}
+                        </span>
                       </div>
-                      <div className="meta">
-                        <span>{[n.site || 'No site', n.role].filter(Boolean).join(' · ')}</span>
-                        {state}
-                      </div>
-                    </div>
-                    <div className="num ov-agent-num">
-                      {st ? `${(st.total / windowSec).toFixed(2)} q/s` : ins ? '0 q/s' : '—'}
-                      <div className="muted">
-                        {st ? `${fmt(st.total)} · ${fmtPct(pct(st.blocked, st.total))}% blocked` : ''}
+                      <div className="ov-agent-num">
+                        {ins ? `${(total / windowSec).toFixed(2)} q/s` : '—'}
+                        <div className="muted">
+                          {ins ? `${fmt(total)} · ${fmtPct(pct(blocked, total))}% blocked` : ''}
+                        </div>
                       </div>
                     </div>
-                  </a>
+                    {rows}
+                  </div>
                 )
               })}
               {strays.map((s) => (
@@ -926,24 +967,26 @@ export default function Dashboard() {
   )
 }
 
-// ProtectionPill: is blocking on, and a way to pause / resume it (the controls
-// live on the Filtering page).
+// ProtectionPill: is blocking on, plus a separate button to pause / resume it
+// (the controls live on the Filtering page). The action sits outside the pill
+// so "Pause" doesn't read as part of the state.
 function ProtectionPill({ prot }: { prot: Protection | null }) {
   if (!prot) return null
-  return prot.paused ? (
-    <span className="ov-shield paused">
-      <span className="dot warn pulse" />
-      Blocking paused{prot.seconds_left > 0 ? ` · ${fmtLeft(prot.seconds_left)} left` : ''}
-      <a href="/filtering" onClick={go('/filtering')}>
-        Resume
-      </a>
-    </span>
-  ) : (
-    <span className="ov-shield">
-      <span className="dot pulse" />
-      Protection on
-      <a href="/filtering" onClick={go('/filtering')}>
-        Pause
+  return (
+    <span className="ov-shield-wrap">
+      {prot.paused ? (
+        <span className="ov-shield paused">
+          <span className="dot warn pulse" />
+          Blocking paused{prot.seconds_left > 0 ? ` · ${fmtLeft(prot.seconds_left)} left` : ''}
+        </span>
+      ) : (
+        <span className="ov-shield">
+          <span className="dot pulse" />
+          Protection on
+        </span>
+      )}
+      <a className="btn sm quiet" href="/filtering" onClick={go('/filtering')}>
+        {prot.paused ? 'Resume protection' : 'Pause protection…'}
       </a>
     </span>
   )

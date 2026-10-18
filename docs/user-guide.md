@@ -168,6 +168,12 @@ suffix → upstream routing with identical scoping. Agents pick changes up on
 their next config poll; the cluster page shows a per-node sync flag (⟳) until
 each node has applied its own expected version.
 
+The search box at the top of the page filters every list on it at once —
+local records, each integration's section, and the conditional forwarders —
+by name, answer or resolver, record type, scope target, or the integration
+that owns a record. Integration sections with no match are hidden while a
+search is active.
+
 ### Reverse lookups (PTR) from rewrites
 
 Exact `A`/`AAAA` rewrites also answer reverse lookups for their address:
@@ -191,6 +197,54 @@ nothing to configure:
 - Addresses with no matching rewrite, and other query types on reverse names,
   are forwarded as before. Forward answers are unchanged, including the
   `NODATA` for the address family a rewritten name has no record for.
+
+### Records managed by an integration
+
+An integration that pushes records (an IPAM sync, say) marks the rows it owns,
+so it can reconcile them without touching yours. A rewrite has two more fields:
+
+- `source` — the integration that owns it: a short slug of 1–32 lowercase
+  letters, digits or dashes (`ipmaze`). Empty means a manual record.
+- `external_id` — optional, the integration's own key for the object behind the
+  record (`host:5b1e…`); MazeDNS doesn't interpret it. One source can't use the
+  same `external_id` for two records of the same type, so the integration can
+  find "its" record for an object without re-deriving the name. It needs a
+  `source`.
+
+Neither field changes how a record resolves, its scope, its PTR or the client
+name it gives, and agents never see them: owning a record doesn't resync any
+agent.
+
+**API.** Every row of `GET /api/rewrites` carries both fields (`""` when
+unset). `?source=ipmaze` lists only that integration's rows, `?source=` (empty)
+only the manual ones. Writes check the owner, and refuse with **409** when it
+doesn't match; the 409 body names the row in the way (`id`) and its owner
+(`source`, `""` = manual):
+
+- `POST /api/rewrites` with `source` (and `external_id`) adds the record, or
+  updates the one with the same name, type and scope **if it has the same
+  source**. Any other owner is a 409 (`a manual rewrite already serves
+  nas.example.lan A`), so a sync never takes over a manual record and a manual
+  add never takes over a synced one. A sync's update keeps the record's
+  enabled switch as it is.
+- `PUT /api/rewrites/{id}` changes the value or scope only when the body names
+  the row's `source` (none for a manual row). The **enabled switch belongs to
+  the operator**: changing only `enabled` works without the source. A sync must
+  send back the current `enabled`, so it never turns on a record someone
+  switched off.
+- `DELETE /api/rewrites/{id}?source=ipmaze` deletes an owned row; a manual row
+  is deleted without the parameter.
+- `POST /api/rewrites/{id}/detach` (admin) clears `source` and `external_id`:
+  the record becomes manual, and the integration meets it as a conflict from
+  then on.
+
+This guards against mistakes, not against a hostile caller: who may write at
+all is decided by the token's role ([API tokens](#api-tokens)).
+
+**Console.** **Local records** lists only the manual records. Each integration
+that owns records gets its own section below it, **Synced from <source>**. There
+a record can only be switched on or off: instead of Edit and Delete it has a
+**Detach** button, which moves it to the local records.
 
 ## Client names
 
@@ -294,6 +348,9 @@ curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   https://dns.example.internal/api/rewrites
 ```
 
+An integration that syncs records should mark them as its own with `source`; see
+[Records managed by an integration](#records-managed-by-an-integration).
+
 - **What a token can do:** whatever its role allows on DNS data: rewrites,
   forwarders, rules, lists, clients, resolver settings and the read-only views.
 - **What it can never do, whatever its role:** manage users, API tokens, your
@@ -337,7 +394,8 @@ rewrites — as one versioned JSON bundle, and import it back. Import has two mo
 `merge` (upsert on top of what's there) and `replace` (clear rules and rewrites
 first). A restore applies settings live, reloads the filtering policy, and bumps the
 cluster config version so agents re-sync. The bundle omits users/sessions, the query
-log, and per-node cluster keys.
+log, and per-node cluster keys. Rewrites keep their `source` and `external_id`: a
+restored record wins over the one it replaces, owner included.
 
 From the command line against the control plane:
 

@@ -186,6 +186,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("PUT /api/rewrites/{id}", s.requireRole(roleAdmin, s.updateRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))
+		mux.HandleFunc("POST /api/rewrites/{id}/detach", s.requireRole(roleAdmin, s.detachRewrite))
 		mux.HandleFunc("GET /api/forwarders", s.requireRole(roleReadonly, s.listForwarders))
 		mux.HandleFunc("POST /api/forwarders", s.requireRole(roleAdmin, s.addForwarder))
 		mux.HandleFunc("PUT /api/forwarders/{id}", s.requireRole(roleAdmin, s.updateForwarder))
@@ -255,9 +256,12 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/tokens", s.requireSession(roleAdmin, s.createAPIToken))
 		mux.HandleFunc("DELETE /api/tokens/{id}", s.requireSession(roleAdmin, s.deleteAPIToken))
 
+		// Build version: the console shows it under the name, and the cluster
+		// view compares each agent's app_version against it.
+		mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
+
 		// Cluster control plane (master only).
 		if clusterEnabled {
-			mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireSession(roleAdmin, s.addNode))
 			mux.HandleFunc("POST /api/cluster/nodes/{id}/key", s.requireSession(roleAdmin, s.renewNodeKey))
@@ -1809,16 +1813,55 @@ func (s *Server) deleteRule(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listRewrites(w http.ResponseWriter, _ *http.Request) {
+// rewriteOut is a rewrite as the API returns it: unlike the snapshot sent to
+// agents, every row carries its owner, empty or not.
+type rewriteOut struct {
+	store.Rewrite
+	Source     string `json:"source"`
+	ExternalID string `json:"external_id"`
+}
+
+func rewriteJSON(rw store.Rewrite) rewriteOut {
+	return rewriteOut{Rewrite: rw, Source: rw.Source, ExternalID: rw.ExternalID}
+}
+
+// listRewrites returns every rewrite, or with ?source=<slug> only that
+// integration's rows (?source= with no value: only the manual ones).
+func (s *Server) listRewrites(w http.ResponseWriter, r *http.Request) {
 	rws, err := s.store.ListRewrites()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if rws == nil {
-		rws = []store.Rewrite{}
+	q := r.URL.Query()
+	out := make([]rewriteOut, 0, len(rws))
+	for _, rw := range rws {
+		if q.Has("source") && rw.Source != q.Get("source") {
+			continue
+		}
+		out = append(out, rewriteJSON(rw))
 	}
-	writeJSON(w, http.StatusOK, rws)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// maxExternalIDLen bounds an integration's opaque key for a rewrite.
+const maxExternalIDLen = 256
+
+// writeRewriteConflict answers 409 naming the row in the way and its owner
+// ("" = manual), so an integration can log the conflict and move on.
+func writeRewriteConflict(w http.ResponseWriter, id int64, source, msg string) {
+	noteError(w, msg)
+	writeJSON(w, http.StatusConflict, map[string]any{"error": msg, "id": id, "source": source})
+}
+
+// rewriteOwnerMismatch is the 409 message for an edit or delete of rw that
+// names another owner than its own.
+func rewriteOwnerMismatch(rw store.Rewrite, named string) string {
+	what := rw.Domain + " " + rw.RRType
+	if rw.Source == "" {
+		return what + " is a manual rewrite, not managed by " + named
+	}
+	return what + " is managed by " + rw.Source + ": change it there, or detach it first"
 }
 
 func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
@@ -1828,6 +1871,8 @@ func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 		Value       string   `json:"value"`
 		ScopeType   string   `json:"scope_type"`
 		ScopeValues []string `json:"scope_values"`
+		Source      string   `json:"source"`
+		ExternalID  string   `json:"external_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -1849,6 +1894,18 @@ func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "wildcards must be a single leading label, e.g. *.example.com")
 		return
 	}
+	if in.Source != "" && !store.ValidRewriteSource(in.Source) {
+		writeError(w, http.StatusBadRequest, "source must be 1-32 lowercase letters, digits or dashes")
+		return
+	}
+	if in.ExternalID != "" && in.Source == "" {
+		writeError(w, http.StatusBadRequest, "external_id needs a source")
+		return
+	}
+	if len(in.ExternalID) > maxExternalIDLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("external_id is limited to %d bytes", maxExternalIDLen))
+		return
+	}
 	scopeType, valsJSON, err := store.CanonicalScope(in.ScopeType, in.ScopeValues)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1861,17 +1918,26 @@ func (s *Server) addRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "another rewrite for this domain already targets overlapping "+scopeType)
 		return
 	}
-	id, err := s.store.AddRewriteScoped(domain, in.RRType, in.Value, scopeType, in.ScopeValues)
+	id, err := s.store.UpsertRewrite(store.Rewrite{Domain: domain, RRType: in.RRType, Value: in.Value,
+		ScopeType: scopeType, ScopeValues: in.ScopeValues, Source: in.Source, ExternalID: in.ExternalID})
+	var owned *store.RewriteConflictError
+	if errors.As(err, &owned) {
+		writeRewriteConflict(w, owned.ID, owned.Source, owned.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.afterChange()
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "domain": domain, "rrtype": in.RRType, "value": in.Value, "scope_type": scopeType, "scope_values": in.ScopeValues})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "domain": domain, "rrtype": in.RRType, "value": in.Value,
+		"scope_type": scopeType, "scope_values": in.ScopeValues, "source": in.Source, "external_id": in.ExternalID})
 }
 
 // updateRewrite edits a rewrite's value, enabled flag, and scope in place, so
-// re-scoping doesn't require delete-and-recreate.
+// re-scoping doesn't require delete-and-recreate. Only the row's owner may
+// change its value or scope (body "source", "" = manual); the enabled flag is
+// the operator's and can be toggled on any row.
 func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -1883,6 +1949,7 @@ func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
 		Enabled     bool     `json:"enabled"`
 		ScopeType   string   `json:"scope_type"`
 		ScopeValues []string `json:"scope_values"`
+		Source      string   `json:"source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -1914,6 +1981,11 @@ func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "rewrite not found")
 		return
 	}
+	toggleOnly := in.Value == cur.Value && scopeType == cur.ScopeType && valsJSON == scopeValuesJSON(cur.ScopeValues)
+	if in.Source != cur.Source && !toggleOnly {
+		writeRewriteConflict(w, cur.ID, cur.Source, rewriteOwnerMismatch(*cur, in.Source))
+		return
+	}
 	// RewriteScopeConflict deliberately skips rows whose scope is IDENTICAL to
 	// the new one (that's the correct upsert behavior for POST), so re-scoping
 	// this row onto another row's exact (domain+rrtype+scope) would sail past it
@@ -1939,13 +2011,29 @@ func (s *Server) updateRewrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.afterChange()
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "value": in.Value, "enabled": in.Enabled, "scope_type": scopeType, "scope_values": in.ScopeValues})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "value": in.Value, "enabled": in.Enabled, "scope_type": scopeType,
+		"scope_values": in.ScopeValues, "source": cur.Source, "external_id": cur.ExternalID})
 }
 
+// deleteRewrite removes a rewrite. An owned row is deleted only by naming its
+// owner (?source=<slug>); a manual row only without one.
 func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	cur, ok, err := s.store.GetRewrite(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		w.WriteHeader(http.StatusNoContent) // already gone
+		return
+	}
+	if named := r.URL.Query().Get("source"); named != cur.Source {
+		writeRewriteConflict(w, cur.ID, cur.Source, rewriteOwnerMismatch(cur, named))
 		return
 	}
 	if err := s.store.DeleteRewrite(id); err != nil {
@@ -1954,6 +2042,32 @@ func (s *Server) deleteRewrite(w http.ResponseWriter, r *http.Request) {
 	}
 	s.afterChange()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// detachRewrite hands an owned rewrite over to the operator: it becomes a
+// manual row, which its former integration then meets as a conflict. What
+// agents serve doesn't change, so there is nothing to reload.
+func (s *Server) detachRewrite(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	rw, ok, err := s.store.GetRewrite(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "rewrite not found")
+		return
+	}
+	if err := s.store.DetachRewrite(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	rw.Source, rw.ExternalID = "", ""
+	writeJSON(w, http.StatusOK, rewriteJSON(rw))
 }
 
 // afterChange reloads the local policy after a config mutation. The cluster

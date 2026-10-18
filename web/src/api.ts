@@ -82,6 +82,8 @@ export interface Rewrite {
   updated_at: number
   scope_type?: string
   scope_values?: string[]
+  source: string // owning integration slug ("" = manual)
+  external_id: string // the integration's opaque key ("" if none)
 }
 
 export interface Forwarder {
@@ -735,6 +737,8 @@ export const api = {
       body: JSON.stringify({ value, enabled, scope_type: scopeType, scope_values: scopeValues }),
     }).then(j),
   deleteRewrite: (id: number) => fetch(`/api/rewrites/${id}`, { method: 'DELETE' }).then(ok),
+  // Turns a row an integration owns into a manual one.
+  detachRewrite: (id: number) => fetch(`/api/rewrites/${id}/detach`, { method: 'POST' }).then(j<Rewrite>),
 
   // Centrally-managed conditional forwarders (pushed to agents via the snapshot).
   forwarders: () => fetch('/api/forwarders').then(j<Forwarder[]>),

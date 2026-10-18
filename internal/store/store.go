@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -49,6 +50,9 @@ type Rule struct {
 // Rewrite is a local DNS record override. Scope fields exist only on the
 // control plane (agents receive pre-filtered, scope-free entries): ScopeType
 // is all|nodes|sites and ScopeValues the node/site names it applies to.
+// Source and ExternalID are control-plane only too: Source names the
+// integration that owns the row ("" = manual) and ExternalID is that
+// integration's opaque key for it. Neither is hashed nor sent to agents.
 type Rewrite struct {
 	ID          int64    `json:"id"`
 	Domain      string   `json:"domain"`
@@ -58,6 +62,8 @@ type Rewrite struct {
 	UpdatedAt   int64    `json:"updated_at"`
 	ScopeType   string   `json:"scope_type,omitempty"`
 	ScopeValues []string `json:"scope_values,omitempty"`
+	Source      string   `json:"source,omitempty"`
+	ExternalID  string   `json:"external_id,omitempty"`
 }
 
 // Open opens (creating if needed) the SQLite database at path and runs migrations.
@@ -148,6 +154,8 @@ CREATE TABLE IF NOT EXISTS rewrites (
 	updated_at INTEGER NOT NULL,
 	scope_type TEXT NOT NULL DEFAULT 'all',
 	scope_values TEXT NOT NULL DEFAULT '[]',
+	source TEXT NOT NULL DEFAULT '',
+	external_id TEXT NOT NULL DEFAULT '',
 	UNIQUE(domain, rrtype, scope_type, scope_values)
 );
 CREATE TABLE IF NOT EXISTS query_log (
@@ -414,6 +422,9 @@ func (s *Store) migrate() error {
 		`ALTER TABLE nodes ADD COLUMN prev_key_hash TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE nodes ADD COLUMN prev_key_expires_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN app_version TEXT NOT NULL DEFAULT ''`,
+		// Rewrite ownership: existing rows become manual (source '').
+		`ALTER TABLE rewrites ADD COLUMN source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE rewrites ADD COLUMN external_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)
@@ -454,6 +465,9 @@ func (s *Store) migrate() error {
 		// while leaving local users (source='local', subject='') unconstrained.
 		// Portable across SQLite and Postgres.
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_subject ON users(subject) WHERE source='oidc' AND subject <> ''`,
+		// An integration addresses its own record for one object by
+		// (source, external_id, rrtype); manual rows carry no external_id.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_rewrites_external ON rewrites(source, external_id, rrtype) WHERE external_id <> ''`,
 	} {
 		if _, err := s.db.Exec(idx); err != nil {
 			return fmt.Errorf("migrate node index: %w", err)
@@ -628,45 +642,136 @@ func (s *Store) ClearRules() error {
 	return err
 }
 
+const rewriteCols = `id, domain, rrtype, value, enabled, updated_at, scope_type, scope_values, source, external_id`
+
+func scanRewrite(sc interface{ Scan(...any) error }) (Rewrite, error) {
+	var r Rewrite
+	var valsJSON string
+	if err := sc.Scan(&r.ID, &r.Domain, &r.RRType, &r.Value, &r.Enabled, &r.UpdatedAt, &r.ScopeType, &valsJSON, &r.Source, &r.ExternalID); err != nil {
+		return r, err
+	}
+	_ = json.Unmarshal([]byte(valsJSON), &r.ScopeValues)
+	return r, nil
+}
+
 // ListRewrites returns all rewrites ordered by domain.
 func (s *Store) ListRewrites() ([]Rewrite, error) {
-	rows, err := s.read.Query(`SELECT id, domain, rrtype, value, enabled, updated_at, scope_type, scope_values FROM rewrites ORDER BY domain`)
+	rows, err := s.read.Query(`SELECT ` + rewriteCols + ` FROM rewrites ORDER BY domain`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Rewrite
 	for rows.Next() {
-		var r Rewrite
-		var valsJSON string
-		if err := rows.Scan(&r.ID, &r.Domain, &r.RRType, &r.Value, &r.Enabled, &r.UpdatedAt, &r.ScopeType, &valsJSON); err != nil {
+		r, err := scanRewrite(rows)
+		if err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(valsJSON), &r.ScopeValues)
 		out = append(out, r)
 	}
 	return out, rows.Err()
 }
 
-// AddRewriteScoped inserts or updates a rewrite under a specific scope and
-// returns its id. The scope is canonicalized so equal scopes hit the same row.
-func (s *Store) AddRewriteScoped(domain, rrtype, value, scopeType string, scopeValues []string) (int64, error) {
-	st, vals, err := CanonicalScope(scopeType, scopeValues)
+// GetRewrite returns one rewrite by id; ok is false when it doesn't exist.
+func (s *Store) GetRewrite(id int64) (r Rewrite, ok bool, err error) {
+	r, err = scanRewrite(s.read.QueryRow(`SELECT `+rewriteCols+` FROM rewrites WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Rewrite{}, false, nil
+	}
+	return r, err == nil, err
+}
+
+var rewriteSourceRe = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
+// ValidRewriteSource reports whether src is a usable integration slug.
+func ValidRewriteSource(src string) bool { return rewriteSourceRe.MatchString(src) }
+
+// RewriteConflictError is a rewrite write refused because another row is in
+// the way: one with a different owner, or one of the same integration that
+// already holds the external id. ID and Source identify that row ("" =
+// manual).
+type RewriteConflictError struct {
+	ID     int64
+	Source string
+	msg    string
+}
+
+func (e *RewriteConflictError) Error() string { return e.msg }
+
+// rewriteOwner names a row's owner for conflict messages.
+func rewriteOwner(source string) string {
+	if source == "" {
+		return "a manual rewrite"
+	}
+	return "a rewrite managed by " + source
+}
+
+// UpsertRewrite inserts a rewrite, or updates the row with the same domain,
+// type and (canonicalized) scope, and returns its id. It only updates a row
+// of the same owner (rw.Source, "" = manual): any other owner is a
+// *RewriteConflictError, so an integration never takes over a manual row and
+// a manual write never takes over an owned one. Re-adding a manual row
+// re-enables it as before; an owned row keeps its enabled flag, which is the
+// operator's.
+func (s *Store) UpsertRewrite(rw Rewrite) (int64, error) {
+	st, vals, err := CanonicalScope(rw.ScopeType, rw.ScopeValues)
 	if err != nil {
 		return 0, err
 	}
+	if rw.ExternalID != "" {
+		var id int64
+		var domain string
+		err := s.read.QueryRow(
+			`SELECT id, domain FROM rewrites WHERE source=? AND external_id=? AND rrtype=?
+			 AND NOT (domain=? AND scope_type=? AND scope_values=?)`,
+			rw.Source, rw.ExternalID, rw.RRType, rw.Domain, st, vals).Scan(&id, &domain)
+		if err == nil {
+			return 0, &RewriteConflictError{ID: id, Source: rw.Source,
+				msg: fmt.Sprintf("%s already uses external_id %q for %s %s", rw.Source, rw.ExternalID, domain, rw.RRType)}
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
 	now := time.Now().Unix()
 	if _, err := s.db.Exec(
-		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at, scope_type, scope_values) VALUES(?,?,?,1,?,?,?)
-		 ON CONFLICT(domain, rrtype, scope_type, scope_values) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at`,
-		domain, rrtype, value, now, st, vals,
+		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at, scope_type, scope_values, source, external_id) VALUES(?,?,?,1,?,?,?,?,?)
+		 ON CONFLICT(domain, rrtype, scope_type, scope_values) DO UPDATE SET value=excluded.value, external_id=excluded.external_id,
+		 enabled=CASE WHEN rewrites.source='' THEN 1 ELSE rewrites.enabled END, updated_at=excluded.updated_at
+		 WHERE rewrites.source=excluded.source`,
+		rw.Domain, rw.RRType, rw.Value, now, st, vals, rw.Source, rw.ExternalID,
 	); err != nil {
 		return 0, err
 	}
 	var id int64
-	err = s.read.QueryRow(`SELECT id FROM rewrites WHERE domain=? AND rrtype=? AND scope_type=? AND scope_values=?`,
-		domain, rrtype, st, vals).Scan(&id)
-	return id, err
+	var owner string
+	if err := s.read.QueryRow(`SELECT id, source FROM rewrites WHERE domain=? AND rrtype=? AND scope_type=? AND scope_values=?`,
+		rw.Domain, rw.RRType, st, vals).Scan(&id, &owner); err != nil {
+		return 0, err
+	}
+	if owner != rw.Source {
+		return 0, &RewriteConflictError{ID: id, Source: owner, msg: rewriteOwner(owner) + " already serves " + rw.Domain + " " + rw.RRType}
+	}
+	return id, nil
+}
+
+// AddRewriteScoped inserts or updates a manual rewrite under a specific scope
+// and returns its id. The scope is canonicalized so equal scopes hit the same
+// row.
+func (s *Store) AddRewriteScoped(domain, rrtype, value, scopeType string, scopeValues []string) (int64, error) {
+	return s.UpsertRewrite(Rewrite{Domain: domain, RRType: rrtype, Value: value, ScopeType: scopeType, ScopeValues: scopeValues})
+}
+
+// DetachRewrite clears a rewrite's owner, turning it into a manual row.
+func (s *Store) DetachRewrite(id int64) error {
+	res, err := s.db.Exec(`UPDATE rewrites SET source='', external_id='', updated_at=? WHERE id=?`, time.Now().Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("rewrite not found")
+	}
+	return nil
 }
 
 // AddRewrite inserts or updates a cluster-wide ('all' scope) rewrite.
@@ -720,7 +825,11 @@ func (s *Store) RewriteScopeConflict(domain, rrtype, scopeType, valuesJSON strin
 	return false, rows.Err()
 }
 
-// AddRewritesBulk inserts/updates many rewrites in one transaction, returning the count applied.
+// AddRewritesBulk inserts/updates many rewrites in one transaction, returning
+// the count applied. It restores a config bundle, so the bundle wins: the
+// imported row's owner replaces the existing one. An unusable source makes the
+// row manual, and an external id another row of the same source already
+// holds is dropped rather than failing the whole import.
 func (s *Store) AddRewritesBulk(rws []Rewrite) (int, error) {
 	if len(rws) == 0 {
 		return 0, nil
@@ -730,8 +839,9 @@ func (s *Store) AddRewritesBulk(rws []Rewrite) (int, error) {
 		return 0, err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at, scope_type, scope_values) VALUES(?,?,?,1,?,?,?)
-		 ON CONFLICT(domain, rrtype, scope_type, scope_values) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at`)
+		`INSERT INTO rewrites(domain, rrtype, value, enabled, updated_at, scope_type, scope_values, source, external_id) VALUES(?,?,?,1,?,?,?,?,?)
+		 ON CONFLICT(domain, rrtype, scope_type, scope_values) DO UPDATE SET value=excluded.value, enabled=1, updated_at=excluded.updated_at,
+		 source=excluded.source, external_id=excluded.external_id`)
 	if err != nil {
 		_ = tx.Rollback()
 		return 0, err
@@ -744,7 +854,24 @@ func (s *Store) AddRewritesBulk(rws []Rewrite) (int, error) {
 		if cerr != nil {
 			st, vals = ScopeAll, "[]" // tolerate malformed imported scopes: fall back to cluster-wide
 		}
-		if _, err := stmt.Exec(r.Domain, r.RRType, r.Value, now, st, vals); err != nil {
+		src, ext := r.Source, r.ExternalID
+		if !ValidRewriteSource(src) {
+			src, ext = "", ""
+		}
+		if ext != "" {
+			var other int64
+			err := tx.QueryRow(
+				`SELECT id FROM rewrites WHERE source=? AND external_id=? AND rrtype=?
+				 AND NOT (domain=? AND scope_type=? AND scope_values=?)`,
+				src, ext, r.RRType, r.Domain, st, vals).Scan(&other)
+			if err == nil {
+				ext = ""
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				_ = tx.Rollback()
+				return 0, err
+			}
+		}
+		if _, err := stmt.Exec(r.Domain, r.RRType, r.Value, now, st, vals, src, ext); err != nil {
 			_ = tx.Rollback()
 			return 0, err
 		}

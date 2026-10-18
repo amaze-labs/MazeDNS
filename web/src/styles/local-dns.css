@@ -169,3 +169,18 @@
     color: var(--text);
   }
 }
+
+/* Records an integration owns: source chip, and the read-only note next to
+   Detach in place of Edit/Delete. */
+.pg-local-dns .rw-table .tag.rw-source {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.pg-local-dns .rw-managed {
+  font-size: 12.5px;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+.pg-local-dns .card-head .seg {
+  margin-top: 2px;
+}

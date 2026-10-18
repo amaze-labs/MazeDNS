@@ -28,6 +28,10 @@ const FWD_COLS: SortAccessors<Forwarder> = {
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)) || 'Request failed'
 
+// Record filter values besides an integration's slug.
+const ALL = '*'
+const MANUAL = ''
+
 export default function LocalDNS() {
   const admin = useIsAdmin() === true
   const [rows, setRows] = useState<Rewrite[]>([])
@@ -38,6 +42,7 @@ export default function LocalDNS() {
   const [scope, setScope] = useState<Scope>(ALL_SCOPE)
   const [adding, setAdding] = useState(false)
   const [err, setErr] = useState('')
+  const [owner, setOwner] = useState(ALL)
 
   const [fwds, setFwds] = useState<Forwarder[]>([])
   const [fwdsLoaded, setFwdsLoaded] = useState(false)
@@ -122,6 +127,22 @@ export default function LocalDNS() {
     }
   }
 
+  const detach = async (r: Rewrite) => {
+    if (
+      !window.confirm(
+        `Detach the ${r.rrtype} record for ${r.domain} from ${r.source}? It becomes a manual record you can edit or delete, and ${r.source} will report it as a conflict instead of updating it.`,
+      )
+    )
+      return
+    try {
+      await api.detachRewrite(r.id)
+      setErr('')
+      load()
+    } catch (e) {
+      setErr(errMsg(e))
+    }
+  }
+
   const saveEdit = async (r: Rewrite, value: string, s: Scope) => {
     if (!value) throw new Error('Enter an answer')
     await api.updateRewrite(r.id, value, r.enabled, s.scope_type, s.scope_values)
@@ -178,7 +199,11 @@ export default function LocalDNS() {
     }
   }
 
-  const table = useTable(rows, COLS, 'domain')
+  // Integrations that own at least one record; the filter only appears with one.
+  const sources = [...new Set(rows.map((r) => r.source).filter(Boolean))].sort()
+  const filter = owner !== ALL && (owner === MANUAL || sources.includes(owner)) ? owner : ALL
+  const shown = filter === ALL ? rows : rows.filter((r) => r.source === filter)
+  const table = useTable(shown, COLS, 'domain')
   const fwdTable = useTable(fwds, FWD_COLS, 'suffix')
   const known = (t?: string) => (t === 'nodes' ? nodes ?? undefined : t === 'sites' ? sites ?? undefined : undefined)
   const recCols = admin ? 5 : 4
@@ -209,9 +234,29 @@ export default function LocalDNS() {
           <div>
             <h2>Local records</h2>
             <p className="sub">
-              {loaded ? `${rows.length} ${rows.length === 1 ? 'record' : 'records'}` : 'Loading…'}
+              {!loaded
+                ? 'Loading…'
+                : `${filter === ALL ? '' : `${shown.length} of `}${rows.length} ${rows.length === 1 ? 'record' : 'records'}`}
             </p>
           </div>
+          {sources.length > 0 && (
+            <>
+              <span className="spacer" />
+              <div className="seg" role="group" aria-label="Managed by">
+                <button className={filter === ALL ? 'on' : ''} onClick={() => setOwner(ALL)}>
+                  All
+                </button>
+                <button className={filter === MANUAL ? 'on' : ''} onClick={() => setOwner(MANUAL)}>
+                  Manual
+                </button>
+                {sources.map((src) => (
+                  <button key={src} className={filter === src ? 'on' : ''} onClick={() => setOwner(src)}>
+                    {src}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
         {admin && (
           <form className="rw-addrow" onSubmit={add}>
@@ -271,6 +316,14 @@ export default function LocalDNS() {
                 <tr key={r.id} className={r.enabled ? '' : 'off'}>
                   <td className="lead">
                     <span className="domain">{r.domain}</span>
+                    {r.source && (
+                      <>
+                        {' '}
+                        <span className="tag info rw-source" title={`Managed by the ${r.source} integration`}>
+                          {r.source}
+                        </span>
+                      </>
+                    )}
                   </td>
                   <td>
                     <span className="tag rewrite">{r.rrtype}</span> <span className="domain">{r.value}</span>
@@ -297,18 +350,35 @@ export default function LocalDNS() {
                   </td>
                   {admin && (
                     <td className="actions">
-                      <button className="btn sm quiet" onClick={() => setEditing(r)}>
-                        Edit
-                      </button>
-                      <button className="btn sm quiet rw-del" onClick={() => del(r)}>
-                        Delete
-                      </button>
+                      {r.source ? (
+                        <>
+                          <span className="muted rw-managed">Managed by {r.source}</span>
+                          <button
+                            className="btn sm quiet"
+                            onClick={() => detach(r)}
+                            title={`Stop ${r.source} from managing this record and edit it by hand`}
+                          >
+                            Detach
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn sm quiet" onClick={() => setEditing(r)}>
+                            Edit
+                          </button>
+                          <button className="btn sm quiet rw-del" onClick={() => del(r)}>
+                            Delete
+                          </button>
+                        </>
+                      )}
                     </td>
                   )}
                 </tr>
               ))}
               <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={recCols}>
-                No records yet.{admin ? ' Add one above to answer a name on your network.' : ''}
+                {rows.length > 0
+                  ? 'No records match this filter.'
+                  : `No records yet.${admin ? ' Add one above to answer a name on your network.' : ''}`}
               </TableStatusRow>
             </tbody>
           </table>

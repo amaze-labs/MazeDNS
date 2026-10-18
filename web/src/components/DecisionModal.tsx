@@ -1,13 +1,10 @@
 import { useEffect, useState } from 'react'
 import Modal from './Modal'
 
-// Security categories apply when blocking; content categories (+ "other") apply
-// when allowing. Kept in sync with internal/classifier/classifier.go.
+// Blocking records the security reason; allowing records none — what the domain
+// is (social, shopping, …) is its domain category, changed from its details.
+// Kept in sync with internal/classifier/classifier.go.
 const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
-const CONTENT_CATS = [
-  'social', 'streaming', 'shopping', 'news', 'gaming', 'productivity',
-  'search', 'email', 'finance', 'technology', 'cdn', 'adult', 'other',
-]
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 export type Decision = 'approve' | 'reject'
@@ -22,7 +19,7 @@ export function useDecision(
   onSubmit: (category: string, note: string) => Promise<void>,
 ) {
   const blocking = decision === 'approve'
-  const cats = blocking ? BLOCK_CATS : CONTENT_CATS
+  const cats = blocking ? BLOCK_CATS : ['other']
   const [category, setCategory] = useState(cats.includes(currentCategory) ? currentCategory : cats[0])
   const [note, setNote] = useState(currentNote || '')
   const [saving, setSaving] = useState(false)
@@ -60,18 +57,20 @@ export function DecisionFields({ d }: { d: DecisionState }) {
       <p className="muted decision-lead">
         {d.blocking
           ? 'Block this domain and record why. Pick the security category that fits best and add a short note for whoever reviews it later.'
-          : 'Allow this domain so it is never blocked. Pick the content category that describes it best and add a short note for whoever reviews it later.'}
+          : 'Allow this domain so it is never blocked, and add a short note for whoever reviews it later. To change what the domain is (its category), use Change in its details.'}
       </p>
-      <label className="field">
-        <span>Category</span>
-        <select value={d.category} onChange={(e) => d.setCategory(e.target.value)}>
-          {d.cats.map((c) => (
-            <option key={c} value={c}>
-              {cap(c)}
-            </option>
-          ))}
-        </select>
-      </label>
+      {d.blocking && (
+        <label className="field">
+          <span>Reason</span>
+          <select value={d.category} onChange={(e) => d.setCategory(e.target.value)}>
+            {d.cats.map((c) => (
+              <option key={c} value={c}>
+                {cap(c)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="field">
         <span>Note</span>
         <textarea

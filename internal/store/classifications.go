@@ -244,7 +244,7 @@ func (s *Store) ListClassifications(status, search string, limit, offset int) ([
 	if offset < 0 {
 		offset = 0
 	}
-	q := `SELECT domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, note, updated_at
+	q := `SELECT domain, category, block, status, confidence, score, factors, reason, model, trusted, threat, note, updated_at, content_category
 	      FROM classifications`
 	var conds []string
 	var args []any
@@ -271,7 +271,7 @@ func (s *Store) ListClassifications(status, search string, limit, offset int) ([
 		var c Classification
 		var block, trusted, threat int
 		var factors string
-		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Score, &factors, &c.Reason, &c.Model, &trusted, &threat, &c.Note, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.Domain, &c.Category, &block, &c.Status, &c.Confidence, &c.Score, &factors, &c.Reason, &c.Model, &trusted, &threat, &c.Note, &c.UpdatedAt, &c.ContentCategory); err != nil {
 			return nil, err
 		}
 		c.Block = block != 0
@@ -345,12 +345,6 @@ func (s *Store) ActiveAIBlocked() ([]Classification, error) {
 // ClassificationCounts returns the number of verdicts per status.
 func (s *Store) ClassificationCounts() (map[string]int, error) {
 	return s.countClassificationsBy("status")
-}
-
-// ClassificationCategoryCounts returns the number of verdicts per category, for
-// the traffic-by-category breakdown (social, streaming, ads, …).
-func (s *Store) ClassificationCategoryCounts() (map[string]int, error) {
-	return s.countClassificationsBy("category")
 }
 
 func (s *Store) countClassificationsBy(column string) (map[string]int, error) {

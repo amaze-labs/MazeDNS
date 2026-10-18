@@ -22,6 +22,12 @@ const shippedCursorKey = "vl_shipped_log_id"
 
 const shipBatch = 5000 // max entries per POST
 
+// maxBatchesPerCycle bounds one cycle's catch-up: while a backlog remains (a
+// busy cluster, VictoriaLogs back after an outage, the export just turned on),
+// batches go back to back instead of one per interval — at one 5,000-entry
+// batch per 15s the export could never keep up with more than ~330 queries/s.
+const maxBatchesPerCycle = 40
+
 // Config is the live VictoriaLogs export configuration, re-read each cycle so UI
 // edits apply without a restart.
 type Config struct {
@@ -69,8 +75,15 @@ func (e *Exporter) Run(ctx context.Context) {
 		cfg := e.get()
 		wait := idleRecheck
 		if cfg.Enabled && strings.TrimSpace(cfg.URL) != "" {
-			if err := e.ship(ctx, cfg); err != nil {
-				slog.Warn("victorialogs ship failed", "err", err)
+			for i := 0; i < maxBatchesPerCycle; i++ {
+				n, err := e.ship(ctx, cfg)
+				if err != nil {
+					slog.Warn("victorialogs ship failed", "err", err)
+					break
+				}
+				if n < shipBatch {
+					break // caught up
+				}
 			}
 			if wait = cfg.Interval; wait <= 0 {
 				wait = 15 * time.Second
@@ -84,14 +97,15 @@ func (e *Exporter) Run(ctx context.Context) {
 	}
 }
 
-// ship forwards new query-log entries since the cursor as newline-delimited JSON.
-func (e *Exporter) ship(ctx context.Context, cfg Config) error {
+// ship forwards one batch of new query-log entries since the cursor as
+// newline-delimited JSON, and returns how many it sent.
+func (e *Exporter) ship(ctx context.Context, cfg Config) (int, error) {
 	entries, maxID, err := e.store.QueryLogSince(e.cursor, shipBatch)
 	if err != nil {
-		return fmt.Errorf("read: %w", err)
+		return 0, fmt.Errorf("read: %w", err)
 	}
 	if len(entries) == 0 {
-		return nil
+		return 0, nil
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -103,16 +117,18 @@ func (e *Exporter) ship(ctx context.Context, cfg Config) error {
 		// VictoriaLogs ingests one JSON object per line; _time/_msg are mapped via
 		// the query params below, the rest become searchable fields.
 		_ = enc.Encode(map[string]any{
-			"_time":      time.UnixMilli(q.TS).UTC().Format(time.RFC3339Nano),
-			"_msg":       q.Action + " " + strings.TrimSuffix(q.Name, ".") + " " + q.QType,
-			"node":       node,
-			"client":     q.Client,
-			"name":       strings.TrimSuffix(q.Name, "."),
-			"qtype":      q.QType,
-			"action":     q.Action,
-			"category":   q.Category,
-			"rcode":      q.Rcode,
-			"elapsed_ms": q.ElapsedMS,
+			"_time":    time.UnixMilli(q.TS).UTC().Format(time.RFC3339Nano),
+			"_msg":     q.Action + " " + strings.TrimSuffix(q.Name, ".") + " " + q.QType,
+			"node":     node,
+			"client":   q.Client,
+			"name":     strings.TrimSuffix(q.Name, "."),
+			"qtype":    q.QType,
+			"action":   q.Action,
+			"category": q.Category, // the block reason
+			// What the domain is (social, shopping, …), labelled on arrival.
+			"content_category": q.ContentCategory,
+			"rcode":            q.Rcode,
+			"elapsed_ms":       q.ElapsedMS,
 		})
 	}
 
@@ -120,7 +136,7 @@ func (e *Exporter) ship(ctx context.Context, cfg Config) error {
 		"/insert/jsonline?_time_field=_time&_msg_field=_msg&_stream_fields=node,action"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/stream+json")
 	if cfg.Username != "" || cfg.Password != "" {
@@ -128,16 +144,16 @@ func (e *Exporter) ship(ctx context.Context, cfg Config) error {
 	}
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+		return 0, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	e.cursor = maxID
 	_ = e.store.SetMetaInt(shippedCursorKey, maxID)
-	return nil
+	return len(entries), nil
 }

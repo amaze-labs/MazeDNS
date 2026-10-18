@@ -47,12 +47,14 @@ var All = []Category{
 // Other is the label for a domain nothing knows.
 const Other = "other"
 
-// precedence decides a domain listed in several categories (first wins). A
-// content category beats a security one: UT1's phishing and malware folders
-// also list big legitimate brands that are phishing targets (bet365.com is in
-// both gambling and phishing), and the classifier judges security on its own.
+// precedence decides a domain listed in several categories (first wins): the
+// more specific category first (a messaging app UT1 lists under both chat and
+// social networks, like discord.com, is chat). A content category beats a
+// security one: UT1's phishing and malware folders also list big legitimate
+// brands that are phishing targets (bet365.com is in both gambling and
+// phishing), and the classifier judges security on its own.
 var precedence = []string{
-	"adult", "gambling", "dating", "social", "chat", "streaming", "gaming", "shopping",
+	"adult", "gambling", "dating", "chat", "social", "streaming", "gaming", "shopping",
 	"news", "sports", "finance", "jobs", "education", "email", "search", "productivity",
 	"technology", "ai", "vpn", "filesharing", "cdn",
 	"ads", "trackers", "malware", "phishing", "other",

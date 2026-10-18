@@ -6,6 +6,7 @@ import DomainDetail, { catTag, scoreTone, statusLabel } from './DomainDetail'
 import DecisionModal, { type Decision } from './DecisionModal'
 import ReputationUsage from './ReputationUsage'
 import { pollWhileVisible } from '../poll'
+import { CategoryTag, useCategories } from '../categories'
 import { PAGE_SIZE, TableStatusRow } from './tableKit'
 
 const MODES = [
@@ -209,7 +210,7 @@ export default function Classifier({
   // Keep the open drawer in step with polled rows.
   const sel = selected ? (rows.find((r) => r.domain === selected.domain) ?? selected) : null
 
-  const catCounts = Object.entries(info?.category_counts ?? {}).sort((a, b) => b[1] - a[1])
+  const catList = useCategories()
   const st = info?.settings
   // The model is on when one is set and reachable: Anthropic needs no endpoint,
   // OpenAI-compatible providers do.
@@ -284,7 +285,7 @@ export default function Classifier({
               <tr>
                 <th>Domain</th>
                 <th>Category</th>
-                <th title="Every domain starts at 100 and each risk factor deducts. Below 50 it is a block candidate.">Legitimacy</th>
+                <th title="Every domain starts at 85; risk factors lower it and trust evidence raises it. Below 50, with a threat signal, it is a block candidate.">Legitimacy</th>
                 <th className="hide-sm">Main reason</th>
                 {canEdit && <th aria-label="Actions" />}
               </tr>
@@ -309,7 +310,9 @@ export default function Classifier({
                       <span className="domain">{c.domain}</span>
                     </td>
                     <td className="cat-cell">
-                      <span className={`tag ${catTag(c.category)}`}>{cap(c.category)}</span>
+                      {/* What the domain is, unless unknown and the verdict already names a security reason. */}
+                      {!(c.category !== 'other' && (!c.label || c.label === 'other')) && <CategoryTag id={c.label || c.category} list={catList} />}
+                      {c.category !== 'other' && c.category !== c.label && <span className={`tag ${catTag(c.category)}`}>{cap(c.category)}</span>}
                       {c.threat && <span className="tag block">Threat feed</span>}
                       {c.trusted && <span className="tag ok">Trusted</span>}
                     </td>
@@ -520,21 +523,6 @@ export default function Classifier({
       {info && (info.llm_usage_totals?.calls ?? 0) > 0 && <LLMUsage info={info} />}
       {info && <ReputationUsage info={info} />}
 
-      {catCounts.length > 0 && (
-        <section className="card">
-          <h2>Traffic by category</h2>
-          <p className="sub">
-            Across all classified domains: security categories, plus content types (social, streaming…) when the language model is on.
-          </p>
-          <div className="row">
-            {catCounts.map(([cat, n]) => (
-              <span key={cat} className={`tag ${catTag(cat)}`}>
-                {cap(cat)} <b className="num">{n.toLocaleString()}</b>
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   )
 }

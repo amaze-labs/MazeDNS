@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -156,5 +157,145 @@ func TestReplicatedSettingsCarryCategoryDomains(t *testing.T) {
 	stored, _ := st.GetSettings()
 	if strings.Contains(stored, "category_domains") {
 		t.Errorf("category_domains was stored: %s", stored)
+	}
+}
+
+// When the VictoriaMetrics export is on, agents learn only that (and how
+// often): they relay their metrics through the control plane, so the URL and
+// credentials never leave it.
+func TestReplicatedSettingsCarryMetricsRelay(t *testing.T) {
+	s, st := newCategoryServer(t)
+	if err := st.SaveSettings(`{"upstreams":["192.0.2.1:53"]}`); err != nil {
+		t.Fatal(err)
+	}
+	decode := func() (map[string]json.RawMessage, string) {
+		raw, err := s.replicatedSettings()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m, string(raw)
+	}
+	if m, _ := decode(); m["metrics_export"] != nil {
+		t.Error("metrics_export sent while the export is off")
+	}
+	if err := st.SaveVMExport(store.VMExport{Enabled: true, URL: "http://vm:8428", IntervalSec: 15, Username: "u", Password: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	m, raw := decode()
+	if got := string(m["metrics_export"]); got != `{"enabled":true,"interval_sec":15}` {
+		t.Errorf("metrics_export = %s", got)
+	}
+	if strings.Contains(raw, "secret") || strings.Contains(raw, "vm:8428") {
+		t.Error("the VictoriaMetrics URL or password reached the replicated settings")
+	}
+}
+
+// An agent's relayed metrics are forwarded with the control plane's
+// credentials, labelled with the agent's authenticated name — never a name the
+// agent picks. Without a valid key, or with the export off, nothing is sent.
+func TestClusterMetricsRelay(t *testing.T) {
+	s, st := newCategoryServer(t)
+	var got struct {
+		path, user, pass, body string
+		calls                  int
+	}
+	vm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.calls++
+		got.path = r.URL.RequestURI()
+		got.user, got.pass, _ = r.BasicAuth()
+		b, _ := io.ReadAll(r.Body)
+		got.body = string(b)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer vm.Close()
+
+	const key = "node-key-for-test"
+	if err := st.CreateNodeWithID("node-1", "oci-dns03", hashKey(key), keyPrefix(key), true); err != nil {
+		t.Fatal(err)
+	}
+	post := func(key string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/cluster/metrics", strings.NewReader("mazedns_queries_total{action=\"forward\"} 42\n"))
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+		rr := httptest.NewRecorder()
+		s.clusterMetrics(rr, req)
+		return rr
+	}
+
+	if rr := post(key); rr.Code != http.StatusConflict || got.calls != 0 {
+		t.Fatalf("export off: code %d, %d forwarded", rr.Code, got.calls)
+	}
+	if err := st.SaveVMExport(store.VMExport{Enabled: true, URL: vm.URL, Job: "mazedns", Instance: "control", Username: "u", Password: "pw"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "wrong-key"} {
+		if rr := post(bad); rr.Code != http.StatusUnauthorized {
+			t.Errorf("key %q: code %d, want 401", bad, rr.Code)
+		}
+	}
+	if got.calls != 0 {
+		t.Fatalf("forwarded without a valid key")
+	}
+	if rr := post(key); rr.Code != http.StatusNoContent {
+		t.Fatalf("code %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(got.path, "instance%3Doci-dns03") || !strings.Contains(got.path, "job%3Dmazedns") || strings.Contains(got.path, "control") {
+		t.Errorf("forwarded to %s, want instance=oci-dns03 (not the control plane's)", got.path)
+	}
+	if got.user != "u" || got.pass != "pw" || !strings.Contains(got.body, "mazedns_queries_total") {
+		t.Errorf("forwarded auth %s:%s body %q", got.user, got.pass, got.body)
+	}
+	// A failed forward tells the agent nothing about where VictoriaMetrics is.
+	vm.Close()
+	rr := post(key)
+	if rr.Code != http.StatusBadGateway || strings.Contains(rr.Body.String(), vm.URL) || strings.Contains(rr.Body.String(), "127.0.0.1") {
+		t.Errorf("failed forward: code %d body %s", rr.Code, rr.Body.String())
+	}
+}
+
+// Blocking a domain records its security reason; allowing records none (what the
+// domain is belongs to its domain category, not the verdict).
+func TestDecideClassificationCategories(t *testing.T) {
+	s, st := newCategoryServer(t)
+	if _, err := st.InsertClassification(store.Classification{Domain: "maybe.example", Category: "phishing", Block: true, Status: store.ClassSuggested}); err != nil {
+		t.Fatal(err)
+	}
+	verdict := func() store.Classification {
+		items, _ := st.ListClassifications("", "maybe.example", 1, 0)
+		if len(items) != 1 {
+			t.Fatalf("verdict missing: %v", items)
+		}
+		return items[0]
+	}
+	for _, bad := range []string{
+		`{"domain":"maybe.example","decision":"approve","category":"social"}`, // blocking needs a security reason
+		`{"domain":"maybe.example","decision":"reject","category":"social"}`,  // allowing takes no content category
+	} {
+		if rr := call(t, s.decideClassification, http.MethodPost, "/", bad); rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: code %d, want 400", bad, rr.Code)
+		}
+	}
+	if rr := call(t, s.decideClassification, http.MethodPost, "/", `{"domain":"maybe.example","decision":"approve","category":"malware"}`); rr.Code != http.StatusOK {
+		t.Fatal(rr.Body.String())
+	}
+	if v := verdict(); v.Status != store.ClassApproved || v.Category != "malware" || !v.Block {
+		t.Errorf("after blocking: %+v", v)
+	}
+	if rr := call(t, s.decideClassification, http.MethodPost, "/", `{"domain":"maybe.example","decision":"reject","note":"ours"}`); rr.Code != http.StatusOK {
+		t.Fatal(rr.Body.String())
+	}
+	if v := verdict(); v.Status != store.ClassRejected || v.Category != "other" || v.Block || v.Note != "ours" {
+		t.Errorf("after allowing: %+v", v)
+	}
+	if rr := call(t, s.decideClassification, http.MethodPost, "/", `{"domain":"maybe.example","decision":"dismiss"}`); rr.Code != http.StatusOK {
+		t.Fatal(rr.Body.String())
+	}
+	if items, _ := st.ListClassifications("", "maybe.example", 1, 0); len(items) != 0 {
+		t.Errorf("dismissed verdict still there: %v", items)
 	}
 }

@@ -52,8 +52,12 @@ func TestClassifierCategoriesAndContentBackfill(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	isContent := func(c string) bool { return c == "streaming" || c == "shopping" }
-	vc, err := s.ClassifierCategories(isContent)
+	// A verdict from before categories carried the model's content label as its
+	// category; the migration moves it.
+	if err := s.moveVerdictContentCategories(); err != nil {
+		t.Fatal(err)
+	}
+	vc, err := s.ClassifierCategories()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,16 +72,16 @@ func TestClassifierCategoriesAndContentBackfill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(unchecked) != 4 { // all but shop.com
-		t.Fatalf("unchecked = %v, want 4", unchecked)
+	if len(unchecked) != 3 { // all but shop.com and legacy.com (moved = answered)
+		t.Fatalf("unchecked = %v, want 3", unchecked)
 	}
 	if err := s.SetContentCategory("unknown.com", "news"); err != nil {
 		t.Fatal(err)
 	}
-	if unchecked, _ = s.UncheckedContent(10); len(unchecked) != 3 {
+	if unchecked, _ = s.UncheckedContent(10); len(unchecked) != 2 {
 		t.Errorf("after answering one: unchecked = %v", unchecked)
 	}
-	if vc, _ = s.ClassifierCategories(isContent); vc.Content["unknown.com"] != "news" {
+	if vc, _ = s.ClassifierCategories(); vc.Content["unknown.com"] != "news" {
 		t.Errorf("model answer not used: %v", vc.Content)
 	}
 }
@@ -134,5 +138,48 @@ func TestContentCategoryLogAndRollup(t *testing.T) {
 	}
 	if cats, _ = s.RollupByCategory(now-3600_000, []string{"agent-renamed"}); len(cats) != 2 {
 		t.Errorf("after rename: %+v", cats)
+	}
+}
+
+// The migration moves a verdict's content label into content_category and
+// leaves the verdict category "other"; security and "other" verdicts stay; a
+// content category the model already gave wins; running it again changes
+// nothing.
+func TestMoveVerdictContentCategories(t *testing.T) {
+	s := openCatStore(t)
+	for _, c := range []Classification{
+		{Domain: "legacy.com", Category: "streaming", Status: ClassClean},
+		{Domain: "allowed.com", Category: "news", Status: ClassRejected},
+		{Domain: "both.com", Category: "gaming", Status: ClassClean, ContentCategory: "shopping", ContentChecked: true},
+		{Domain: "evil.com", Category: "phishing", Block: true, Status: ClassAuto},
+		{Domain: "plain.com", Category: "other", Status: ClassClean},
+	} {
+		if _, err := s.InsertClassification(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.moveVerdictContentCategories(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string][2]string{}
+	items, err := s.ListClassifications("", "", 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range items {
+		got[c.Domain] = [2]string{c.Category, c.ContentCategory}
+	}
+	for d, want := range map[string][2]string{
+		"legacy.com":  {"other", "streaming"},
+		"allowed.com": {"other", "news"},
+		"both.com":    {"other", "shopping"},
+		"evil.com":    {"phishing", ""},
+		"plain.com":   {"other", ""},
+	} {
+		if got[d] != want {
+			t.Errorf("%s: (category, content) = %v, want %v", d, got[d], want)
+		}
 	}
 }

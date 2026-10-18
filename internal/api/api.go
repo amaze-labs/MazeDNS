@@ -57,6 +57,7 @@ type Server struct {
 	enqueue             func(string) // feed classifier from ingested agent logs (may be nil)
 	enricher            *clientname.Enricher
 	categorizer         *classifier.Categorizer // nil = domain categories off
+	ingested            atomic.Int64            // query-log entries received from agents
 	requireApproval     bool                    // hold self-enrolled agents until an admin approves
 	keyMaxAge           time.Duration           // rotate a node's key once it exceeds this age (0 = disabled)
 	keyGrace            time.Duration           // overlap window a rotated-out node key stays valid
@@ -114,6 +115,9 @@ type classifierStatus interface {
 	ThreatSearch(q string, limit int) []string
 	Whois(ctx context.Context, domain string) (classifier.WhoisInfo, error)
 }
+
+// QueryLogIngested is how many query-log entries agents have shipped since start.
+func (s *Server) QueryLogIngested() int64 { return s.ingested.Load() }
 
 // SetClassifierStatus wires the running classifier worker into the API.
 func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
@@ -281,6 +285,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)    // enrollment-key auth
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
+			mux.HandleFunc("POST /api/cluster/metrics", s.clusterMetrics)  // per-node key auth
 			mux.HandleFunc("POST /api/cluster/proclog", s.clusterProcLog)  // per-node key auth
 			mux.HandleFunc("GET /api/cluster/live", s.clusterLiveState)    // per-node key auth
 			mux.HandleFunc("POST /api/cluster/live", s.clusterLivePush)    // per-node key auth
@@ -901,7 +906,19 @@ func (s *Server) replicatedSettings() (json.RawMessage, error) {
 		// settings payload, so its version changes with them and agents re-sync.
 		set.CategoryDomains = s.categorizer.DomainsFor(set.BlockedCategories)
 	}
-	return json.Marshal(set)
+	// The VictoriaMetrics export, so every agent's metrics are exported — the
+	// query counters live on the agents; the control plane answers no queries.
+	// Agents only learn that it's on and how often: they relay their metrics
+	// through POST /api/cluster/metrics, and the URL and credentials never
+	// leave the control plane.
+	out := struct {
+		resolver.Settings
+		MetricsExport *cluster.MetricsRelay `json:"metrics_export,omitempty"`
+	}{Settings: set}
+	if vm := s.store.LoadVMExport(store.VMExport{}); vm.Enabled && strings.TrimSpace(vm.URL) != "" {
+		out.MetricsExport = &cluster.MetricsRelay{Enabled: true, IntervalSec: vm.IntervalSec}
+	}
+	return json.Marshal(out)
 }
 
 // agentHoldsSnapshotState reports whether the polling agent advertised 304
@@ -1017,6 +1034,7 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.ingested.Add(int64(len(entries)))
 	if s.enqueue != nil {
 		for _, e := range entries {
 			s.enqueue(e.Name)

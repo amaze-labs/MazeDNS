@@ -210,7 +210,7 @@ export default function DomainDetail({
             Legitimacy {score} of 100{score < 50 ? ' — below 50 makes it a block candidate.' : '.'}
           </div>
           <div className="tags">
-            <span className={`tag ${catTag(c.category)}`}>{cap(c.category)}</span>
+            {c.category !== 'other' && <span className={`tag ${catTag(c.category)}`}>{cap(c.category)}</span>}
             {c.threat && <span className="tag block">On a threat feed</span>}
             {c.trusted && <span className="tag ok">Trusted</span>}
           </div>

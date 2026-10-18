@@ -58,15 +58,43 @@ func TestVMPusherPush(t *testing.T) {
 	}
 }
 
-// When the config leaves instance blank, the pusher's fallback (hostname) is used.
+// When the config leaves instance blank, the pusher's fallback (the node's name)
+// labels the push, and the job defaults to "mazedns".
 func TestVMPusherFallbackInstance(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
 	p := NewVMPusher(nil, "fallback-host", New().Gatherer())
-	u := p.importURL(VMConfig{URL: "http://vm:8428"})
-	if !strings.Contains(u, "extra_label=instance%3Dfallback-host") {
-		t.Errorf("fallback instance not applied: %s", u)
+	if err := p.push(context.Background(), VMConfig{URL: srv.URL}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(u, "extra_label=job%3Dmazedns") {
-		t.Errorf("default job not applied: %s", u)
+	if !strings.Contains(query, "extra_label=instance%3Dfallback-host") {
+		t.Errorf("fallback instance not applied: %s", query)
+	}
+	if !strings.Contains(query, "extra_label=job%3Dmazedns") {
+		t.Errorf("default job not applied: %s", query)
+	}
+}
+
+// With a relay set (an agent in a cluster), the metrics go through it — no
+// direct push, so no VictoriaMetrics URL or credentials are needed.
+func TestVMPusherRelay(t *testing.T) {
+	m := New()
+	m.IncQuery("forward")
+	var relayed []byte
+	p := NewVMPusher(nil, "node-a", m.Gatherer())
+	err := p.push(context.Background(), VMConfig{Enabled: true, Relay: func(_ context.Context, body []byte) error {
+		relayed = body
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(relayed), "mazedns_queries_total") {
+		t.Errorf("relayed body missing the metric:\n%s", relayed)
 	}
 }
 

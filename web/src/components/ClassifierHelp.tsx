@@ -137,8 +137,9 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           <dd>A well-known legitimate site or trusted infrastructure. Scores 100 and is never blocked, even if a threat list names it.</dd>
           <dt>Category</dt>
           <dd>
-            Security categories (ads, trackers, malware, phishing) can drive a block. Content categories such as social or streaming need
-            the language model and are labels only; <code>other</code> means legitimate but unclassified.
+            What the domain is — social, streaming, shopping, … — from your override, the category database (UT1) or the language model;
+            see Filtering → Categories to block whole categories. A security reason (ads, trackers, malware, phishing) is shown next to it
+            when the classifier blocks the domain for it.
           </dd>
         </dl>
       </div>

@@ -26,6 +26,10 @@ type VMConfig struct {
 	Instance string        // instance label ("" = the pusher's default, e.g. hostname)
 	Username string        // optional HTTP basic auth
 	Password string
+	// Relay, when set, sends each push through it instead of to URL — an agent
+	// relays through the control plane, which holds the VictoriaMetrics URL and
+	// credentials and labels the push with the agent's authenticated name.
+	Relay func(ctx context.Context, body []byte) error
 }
 
 // idleRecheck is how often the pusher re-reads settings while export is disabled,
@@ -59,7 +63,7 @@ func (p *VMPusher) Run(ctx context.Context) {
 	for {
 		cfg := p.get()
 		wait := idleRecheck
-		if cfg.Enabled && strings.TrimSpace(cfg.URL) != "" {
+		if cfg.Enabled && (strings.TrimSpace(cfg.URL) != "" || cfg.Relay != nil) {
 			if err := p.push(ctx, cfg); err != nil {
 				slog.Warn("victoriametrics push failed", "err", err)
 			}
@@ -88,7 +92,21 @@ func (p *VMPusher) push(ctx context.Context, cfg VMConfig) error {
 			return fmt.Errorf("encode: %w", err)
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.importURL(cfg), &buf)
+	if cfg.Relay != nil {
+		return cfg.Relay(ctx, buf.Bytes())
+	}
+	instance := cfg.Instance
+	if instance == "" {
+		instance = p.instance
+	}
+	return Import(ctx, p.client, cfg, instance, &buf)
+}
+
+// Import posts Prometheus text metrics to VictoriaMetrics, labelled with
+// cfg.Job (default "mazedns") and instance. The control plane uses it to
+// forward what agents relay.
+func Import(ctx context.Context, client *http.Client, cfg VMConfig, instance string, body io.Reader) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, importURL(cfg, instance), body)
 	if err != nil {
 		return err
 	}
@@ -96,7 +114,7 @@ func (p *VMPusher) push(ctx context.Context, cfg VMConfig) error {
 	if cfg.Username != "" || cfg.Password != "" {
 		req.SetBasicAuth(cfg.Username, cfg.Password)
 	}
-	resp, err := p.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -111,14 +129,10 @@ func (p *VMPusher) push(ctx context.Context, cfg VMConfig) error {
 
 // importURL builds VM's Prometheus import endpoint with job/instance applied
 // server-side via extra_label (so the metric bodies stay unmodified).
-func (p *VMPusher) importURL(cfg VMConfig) string {
+func importURL(cfg VMConfig, instance string) string {
 	job := cfg.Job
 	if job == "" {
 		job = "mazedns"
-	}
-	instance := cfg.Instance
-	if instance == "" {
-		instance = p.instance
 	}
 	q := url.Values{}
 	q.Add("extra_label", "job="+job)

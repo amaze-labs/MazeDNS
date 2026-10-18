@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -114,6 +116,7 @@ func main() {
 		catDB := categories.NewHolder(&categories.Source{Dir: filepath.Dir(cfg.Database.Path)}, false)
 		go catDB.Run(context.Background())
 		res.SetCategoryDB(catDB) // before ApplySettings, which sets what it loads
+		mx.RegisterCategoryDB(catDB)
 	}
 	res.ApplySettings(boot.EffectiveSettings(st, cfg))
 	go res.MaintainUpstreams(context.Background())
@@ -159,7 +162,7 @@ func main() {
 	}()
 
 	// Each node pushes its own metrics to VictoriaMetrics, labelled by instance.
-	startMetricsExport(st, cfg, mx)
+	startMetricsExport(st, cfg, mx, nodeName(cfg))
 
 	// DNS server (UDP/TCP).
 	dnsAddr := net.JoinHostPort(cfg.Listen.Address, strconv.Itoa(cfg.Listen.Port))
@@ -246,10 +249,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		slog.Info("standalone mode: no control plane configured (set MAZEDNS_CP_URL)")
 		return
 	}
-	name := cfg.Cluster.NodeName
-	if name == "" {
-		name, _ = os.Hostname()
-	}
+	name := nodeName(cfg)
 	// Pin the control-plane IP from (in order) the explicit config, then the address
 	// learned at a previous enrollment. Empty = reach the CP via its URL/DNS.
 	pinnedIP := cfg.Cluster.MasterIP
@@ -336,6 +336,8 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		// Re-merge local + centrally pushed settings after every applied snapshot
 		// (central forwarders win per suffix).
 		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
+		relay := ag.RelayMetrics
+		metricsRelay.Store(&relay)
 		if cfg.Cluster.JoinToken != "" {
 			ag.SetReenroll(reenroll)
 		}
@@ -465,20 +467,48 @@ func registerHealthMetrics(mx *metrics.Metrics, res *resolver.Resolver, sync *cl
 		func() time.Time { return sync.Status().LastError })
 }
 
-// startMetricsExport runs the VictoriaMetrics pusher for this node.
-func startMetricsExport(st *store.Store, cfg config.Config, mx *metrics.Metrics) {
+// startMetricsExport runs the VictoriaMetrics pusher for this node. When the
+// control plane's export is on (it says so in the replicated settings), the
+// metrics are relayed through the control plane, which holds the
+// VictoriaMetrics URL and credentials and labels them with this node's name;
+// otherwise this agent's own (env/YAML) export applies, pushed directly.
+func startMetricsExport(st *store.Store, cfg config.Config, mx *metrics.Metrics, name string) {
 	vm := cfg.Metrics.VictoriaMetrics
 	_ = st.EnsureVMExport(store.VMExport{
 		Enabled: vm.Enabled, URL: vm.URL, IntervalSec: int(vm.Interval.Std().Seconds()),
 		Job: vm.Job, Instance: vm.Instance, Username: vm.Username, Password: vm.Password,
 	})
-	hostname, _ := os.Hostname()
-	get := func() metrics.VMConfig {
-		v := st.LoadVMExport(store.VMExport{})
-		return metrics.VMConfig{
-			Enabled: v.Enabled, URL: v.URL, Interval: time.Duration(v.IntervalSec) * time.Second,
-			Job: v.Job, Instance: v.Instance, Username: v.Username, Password: v.Password,
+	get := func() metrics.VMConfig { return effectiveVMExport(st, metricsRelay.Load()) }
+	go metrics.NewVMPusher(get, name, mx.Gatherer()).Run(context.Background())
+}
+
+// metricsRelay sends metrics through the control plane once this agent is in a
+// cluster (nil until then, and in standalone mode).
+var metricsRelay atomic.Pointer[func(context.Context, []byte) error]
+
+// effectiveVMExport is the export to run: the control plane's, relayed, when
+// it is on and this agent can relay; else this agent's own.
+func effectiveVMExport(st *store.Store, relay *func(context.Context, []byte) error) metrics.VMConfig {
+	if raw, _ := st.ClusterSettings(); raw != "" && relay != nil {
+		var c struct {
+			MetricsExport *cluster.MetricsRelay `json:"metrics_export"`
+		}
+		if json.Unmarshal([]byte(raw), &c) == nil && c.MetricsExport != nil && c.MetricsExport.Enabled {
+			return metrics.VMConfig{Enabled: true, Interval: time.Duration(c.MetricsExport.IntervalSec) * time.Second, Relay: *relay}
 		}
 	}
-	go metrics.NewVMPusher(get, hostname, mx.Gatherer()).Run(context.Background())
+	v := st.LoadVMExport(store.VMExport{})
+	return metrics.VMConfig{
+		Enabled: v.Enabled, URL: v.URL, Interval: time.Duration(v.IntervalSec) * time.Second,
+		Job: v.Job, Instance: v.Instance, Username: v.Username, Password: v.Password,
+	}
+}
+
+// nodeName is this agent's name: the configured one, else the hostname.
+func nodeName(cfg config.Config) string {
+	if cfg.Cluster.NodeName != "" {
+		return cfg.Cluster.NodeName
+	}
+	h, _ := os.Hostname()
+	return h
 }

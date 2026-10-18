@@ -458,6 +458,9 @@ func (s *Store) migrate() error {
 	if err := s.widenAPITokenTimes(); err != nil {
 		return err
 	}
+	if err := s.moveVerdictContentCategories(); err != nil {
+		return fmt.Errorf("migrate verdict categories: %w", err)
+	}
 	// Indexes on columns added above (they can't be in the schema: on an older
 	// database the column doesn't exist yet when the schema runs).
 	for _, idx := range []string{

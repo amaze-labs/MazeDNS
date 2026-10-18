@@ -133,7 +133,7 @@ export function TableStatusRow({
     if (error || !empty) return null
     return (
       <tr>
-        <td colSpan={colSpan}>
+        <td colSpan={colSpan} className="table-empty">
           <Spinner label="Loading…" />
         </td>
       </tr>
@@ -142,7 +142,7 @@ export function TableStatusRow({
   if (!empty) return null
   return (
     <tr>
-      <td colSpan={colSpan} className="muted">
+      <td colSpan={colSpan} className="table-empty">
         {children}
       </td>
     </tr>

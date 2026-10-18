@@ -16,7 +16,7 @@ export interface NavBadges {
   filtering: number // blocklists whose last refresh failed
 }
 
-// useNavBadges polls the few cheap endpoints behind the sidebar counters, so
+// useNavBadges polls the few cheap endpoints behind the navigation counters, so
 // problems show up in the navigation instead of only on their own page.
 export function useNavBadges(enabled: { agents: boolean; filtering: boolean }): NavBadges {
   const [badges, setBadges] = useState<NavBadges>({ agents: 0, filtering: 0 })

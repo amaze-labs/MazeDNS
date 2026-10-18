@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import Spinner from './Spinner'
 import { TableStatusRow } from './tableKit'
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -192,6 +193,13 @@ function PieTip({ active, payload }: any) {
 }
 
 // Donut: one share-of-total ring with a key under it.
+// topKey is the series drawn last (on top) in a stacked column, the one that
+// gets the rounded corners.
+function topKey(row: Record<string, unknown>, stack: { key: string }[]): string {
+  for (let i = stack.length - 1; i >= 0; i--) if (Number(row[stack[i].key]) > 0) return stack[i].key
+  return ''
+}
+
 function Donut({ title, data }: { title: string; data: { name: string; value: number; fill: string }[] }) {
   const total = data.reduce((s, d) => s + d.value, 0)
   return (
@@ -208,11 +216,11 @@ function Donut({ title, data }: { title: string; data: { name: string; value: nu
                   data={data}
                   dataKey="value"
                   nameKey="name"
-                  innerRadius={46}
+                  innerRadius={48}
                   outerRadius={70}
-                  paddingAngle={data.length > 1 ? 2 : 0}
-                  stroke="var(--panel)"
-                  strokeWidth={2}
+                  paddingAngle={data.length > 1 ? 3 : 0}
+                  cornerRadius={data.length > 1 ? 5 : 0}
+                  stroke="none"
                   isAnimationActive={false}
                 >
                   {data.map((d) => (
@@ -583,10 +591,10 @@ export default function Dashboard() {
                       </pattern>
                     ))}
                   </defs>
-                  <CartesianGrid stroke="var(--soft)" vertical={false} />
+                  <CartesianGrid stroke="var(--line)" strokeDasharray="3 5" vertical={false} />
                   <XAxis
                     dataKey="ts"
-                    stroke="var(--line)"
+                    axisLine={false}
                     tick={<TimeTick label={xTick} />}
                     tickLine={false}
                     interval="preserveStartEnd"
@@ -604,14 +612,20 @@ export default function Dashboard() {
                     tickCount={5}
                   />
                   <Tooltip
-                    cursor={{ fill: 'var(--raise)', opacity: 0.6 }}
+                    cursor={{ fill: 'var(--raise)', opacity: 0.7, radius: 6 } as any}
                     content={<TrafficTooltip hours={hours} step={step} />}
                     isAnimationActive={false}
                   />
+                  {/* Each column's top segment gets rounded corners; a hairline
+                      in the card's colour separates the stacked segments. */}
                   {stack.map((s) => (
-                    <Bar key={s.key} dataKey={s.key} stackId="q" isAnimationActive={false}>
+                    <Bar key={s.key} dataKey={s.key} stackId="q" isAnimationActive={false} stroke="var(--panel)" strokeWidth={1}>
                       {traffic.map((r) => (
-                        <Cell key={r.ts} fill={r.partial ? `url(#ov-part-${s.k})` : `var(--${s.k})`} />
+                        <Cell
+                          key={r.ts}
+                          fill={r.partial ? `url(#ov-part-${s.k})` : `var(--${s.k})`}
+                          {...({ radius: topKey(r, stack) === s.key ? [4, 4, 0, 0] : 0 } as any)}
+                        />
                       ))}
                     </Bar>
                   ))}
@@ -872,12 +886,18 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="ov-chart">
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart syncId="ov-time" data={latData} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid stroke="var(--soft)" vertical={false} />
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart syncId="ov-time" data={latData} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="ov-lat-fill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={OVERALL_COLOR} stopOpacity={0.1} />
+                      <stop offset="100%" stopColor={OVERALL_COLOR} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="var(--line)" strokeDasharray="3 5" vertical={false} />
                   <XAxis
                     dataKey="ts"
-                    stroke="var(--line)"
+                    axisLine={false}
                     tick={<TimeTick label={xTick} />}
                     tickLine={false}
                     interval="preserveStartEnd"
@@ -911,16 +931,17 @@ export default function Dashboard() {
                         isAnimationActive={false}
                       />
                     ))}
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="overall"
                     stroke={OVERALL_COLOR}
                     strokeWidth={2}
+                    fill="url(#ov-lat-fill)"
                     dot={loneDot('overall', OVERALL_COLOR)}
                     activeDot={{ r: 4, stroke: 'var(--panel)', strokeWidth: 2 }}
                     isAnimationActive={false}
                   />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           )}

@@ -1128,7 +1128,9 @@ ${bridgeAlt}`
   return (
     <Modal title="Add an agent" eyebrow="Deploy a DNS agent" onClose={onClose} size="wide">
       <section className="ag-step">
-        <h3>1. Get an enrollment key</h3>
+        <h3 className="ag-step-title">
+          <span>1</span> Get an enrollment key
+        </h3>
         <p className="muted">
           Agents join with an enrollment key passed as <code>MAZEDNS_JOIN_TOKEN</code>; the secret is only shown when the
           key is created.{' '}
@@ -1140,7 +1142,9 @@ ${bridgeAlt}`
       </section>
 
       <section className="ag-step">
-        <h3>2. Start the agent</h3>
+        <h3 className="ag-step-title">
+          <span>2</span> Start the agent
+        </h3>
         <p className="muted">
           Run the agent image on the machine that should answer DNS. It appears on this page by itself — set{' '}
           <code>MAZEDNS_REQUIRE_APPROVAL=true</code> on the control plane to hold new agents until you approve them.

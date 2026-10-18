@@ -20,9 +20,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 12px;
+  padding: 8px 14px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 999px;
   background: none;
   color: var(--muted);
   font-weight: 500;
@@ -34,8 +34,8 @@
   color: var(--text);
 }
 .pg-settings .st-nav button.on {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
-  color: var(--text);
+  background: var(--pill);
+  color: var(--on-pill);
 }
 .pg-settings .st-nav button .dot {
   width: 7px;
@@ -50,8 +50,14 @@
   line-height: 1.45;
 }
 
+/* The section's groups sit on one card, like every other page's content. */
 .pg-settings .st-main {
   min-width: 0;
+  padding: 6px 24px 0;
+  background: var(--panel);
+  border: 1px solid var(--card-edge);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--r-card);
 }
 .pg-settings .st-fs {
   border: 0;
@@ -279,11 +285,18 @@
   align-items: center;
   font-size: 13px;
 }
+.pg-settings .presets {
+  gap: 6px 4px;
+}
 .pg-settings .presets .qf {
   width: auto;
-  padding: 4px 9px;
+  min-height: 30px;
+  padding: 4px 28px 4px 12px;
   font-size: 12.5px;
-  border-radius: 7px;
+  border-radius: 999px;
+}
+.pg-settings .presets .btn.quiet {
+  padding-inline: 10px;
 }
 
 /* Conditional forwarders. */
@@ -421,15 +434,35 @@
   white-space: pre;
   user-select: all;
 }
-.pg-settings .audit {
+/* Tables inside a settings group sit in their own rounded box. */
+.pg-settings .audit,
+.pg-settings .st-table {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 16px;
   overflow: hidden;
 }
 .pg-settings .audit th,
-.pg-settings .audit td {
-  padding: 8px 12px;
+.pg-settings .audit td,
+.pg-settings .st-table th,
+.pg-settings .st-table td {
+  padding: 10px 14px;
   vertical-align: top;
+}
+
+/* API tokens: name · role · expiry · create, on one line. */
+.pg-settings .tok-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+@media (max-width: 1100px) {
+  .pg-settings .tok-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-settings .tok-form .btn {
+    justify-self: start;
+  }
 }
 .pg-settings .audit td:first-child,
 .pg-settings .audit th:first-child {
@@ -449,11 +482,11 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 12px;
-  padding: 10px 12px 10px 16px;
+  margin: 12px -16px 16px;
+  padding: 8px 8px 8px 20px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 999px;
   box-shadow: var(--shadow);
 }
 .pg-settings .savebar:not(.dirty) {
@@ -478,23 +511,25 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
+  /* The section list becomes a scrolling pill track, like page tabs. */
   .pg-settings .st-nav {
     position: static;
     display: flex;
+    width: fit-content;
+    max-width: 100%;
+    padding: 4px;
+    gap: 2px;
+    border-radius: 999px;
+    background: var(--sunk);
     overflow-x: auto;
     scrollbar-width: none;
-    border-bottom: 1px solid var(--line);
-    gap: 0;
+  }
+  .pg-settings .st-nav::-webkit-scrollbar {
+    display: none;
   }
   .pg-settings .st-nav button {
-    padding: 9px 12px;
-    border-radius: 0;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
-  }
-  .pg-settings .st-nav button.on {
-    background: none;
-    border-color: var(--accent);
+    flex: none;
+    padding: 7px 14px;
   }
   .pg-settings .st-nav small {
     display: none;
@@ -537,7 +572,7 @@
     justify-self: start;
   }
   .pg-settings .savebar {
-    bottom: calc(66px + env(safe-area-inset-bottom));
+    bottom: 12px;
   }
   .pg-settings .savebar.idle {
     display: none;
@@ -555,5 +590,17 @@
   }
   .pg-settings .audit table.stackable tr {
     padding: 10px 12px;
+  }
+}
+
+/* Phones: the save bar rides above the floating tab bar, and the section
+   card's padding shrinks with the page gutter. */
+@media (max-width: 640px) {
+  .pg-settings .st-main {
+    padding: 4px 16px 0;
+  }
+  .pg-settings .savebar {
+    bottom: calc(88px + env(safe-area-inset-bottom));
+    margin-inline: -8px;
   }
 }

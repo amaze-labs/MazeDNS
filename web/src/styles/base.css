@@ -30,6 +30,12 @@
   --focus: #9fb6ff;
   --scrim: rgba(8, 12, 22, 0.55);
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  /* Cards float on the page: a hairline edge in the dark theme, a soft
+     shadow in the light one. */
+  --card-edge: var(--line);
+  --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset;
+  --pill: #e6ecf5; /* the active navigation pill (inverted) */
+  --on-pill: #121a2b;
 }
 :root[data-theme='light'] {
   color-scheme: light;
@@ -54,6 +60,10 @@
   --focus: #4566d8;
   --scrim: rgba(20, 32, 51, 0.25);
   --shadow: 0 18px 50px rgba(20, 32, 51, 0.16);
+  --card-edge: transparent;
+  --card-shadow: 0 1px 2px rgba(20, 32, 51, 0.04), 0 8px 24px rgba(20, 32, 51, 0.05);
+  --pill: #142033;
+  --on-pill: #ffffff;
 }
 :root {
   --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -67,6 +77,8 @@
   --hover: var(--raise);
   --track: var(--soft);
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --r-card: 22px;
+  --r-ctl: 12px;
 }
 
 /* ---- Base ---- */
@@ -187,14 +199,11 @@ td,
   flex-wrap: wrap;
 }
 
-/* ---- Shell ---- */
+/* ---- Shell ----
+   A floating top bar (brand · navigation · tools · account), each group a
+   pill on the page background; on phones a floating tab bar at the bottom. */
 .app {
-  display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
   min-height: 100vh;
-}
-.app.collapsed {
-  grid-template-columns: 68px minmax(0, 1fr);
 }
 .app > main {
   min-width: 0;
@@ -203,174 +212,314 @@ td,
      stretching rows and charts into hard-to-scan lines. */
   max-width: 1680px;
   margin-inline: auto;
-  padding: 22px 36px 56px;
+  padding: 18px 32px 56px;
 }
 .app > .boot {
-  grid-column: 1 / -1;
+  min-height: 100vh;
   display: grid;
   place-items: center;
 }
-.sidebar {
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 20px 12px 14px;
-  border-right: 1px solid var(--line);
-  min-width: 0;
-}
-/* Brand: same proportions as the IPMaze sidebar (40px tile, name over version). */
-.side-brand {
+.topbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 8px;
-  margin-bottom: 36px;
+  max-width: 1680px;
+  margin-inline: auto;
+  padding: calc(16px + env(safe-area-inset-top)) max(32px, env(safe-area-inset-right)) 4px
+    max(32px, env(safe-area-inset-left));
+}
+.tb-brand,
+.tb-nav,
+.tb-theme,
+.tb-account {
+  background: var(--panel);
+  border: 1px solid var(--card-edge);
+  box-shadow: var(--card-shadow);
+  border-radius: 999px;
+}
+.tb-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 48px;
+  padding: 0 16px 0 8px;
+  color: inherit;
+  text-decoration: none;
   white-space: nowrap;
 }
 .brand-logo {
   flex: none;
   display: block;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
-}
-.brand-text {
-  display: grid;
-  min-width: 0;
-  line-height: 1.25;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
 }
 .brand-name {
-  font-size: 20px;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: -0.025em;
-  line-height: 1.4;
+  letter-spacing: -0.02em;
 }
 .brand-version {
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--muted);
   font-size: 10px;
   font-weight: 500;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-.side-nav {
-  display: grid;
-  gap: 2px;
-}
-.side-nav button,
-.side-foot button {
+.tb-nav {
   display: flex;
   align-items: center;
-  gap: 11px;
-  width: 100%;
-  padding: 8px 10px;
+  gap: 2px;
+  height: 48px;
+  padding: 5px;
+  margin-inline: auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tb-nav::-webkit-scrollbar {
+  display: none;
+}
+.tb-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  height: 100%;
+  padding: 0 16px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 999px;
   background: none;
   color: var(--muted);
   font-weight: 500;
-  text-align: left;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
 }
-.side-nav button:hover,
-.side-foot button:hover {
+.tb-nav button:hover {
   color: var(--text);
 }
-.side-nav button.active {
-  color: var(--text);
-  background: var(--raise);
-  box-shadow: inset 2px 0 0 var(--accent);
+.tb-nav button.active {
+  background: var(--pill);
+  color: var(--on-pill);
 }
-.side-ic {
-  display: inline-flex;
+.tb-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.tb-nav button.active .tb-count {
+  color: var(--on-pill);
+  background: color-mix(in srgb, var(--warn) 70%, transparent);
+}
+.tb-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex: none;
 }
-.side-ic svg {
-  width: 17px;
-  height: 17px;
-}
-.side-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.side-count {
-  margin-left: auto;
-  min-width: 20px;
-  text-align: center;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 15%, transparent);
-  border-radius: 999px;
-  padding: 0 7px;
-}
-.side-count.bad {
-  color: var(--block);
-  background: color-mix(in srgb, var(--block) 15%, transparent);
-}
-.sidebar .spacer {
-  flex: 1;
-}
-.side-foot {
-  display: grid;
+.tb-theme {
+  display: flex;
   gap: 2px;
+  height: 48px;
+  padding: 5px;
 }
-.side-account {
+.tb-theme button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tb-theme button:hover {
+  color: var(--text);
+}
+.tb-theme button.on {
+  background: var(--raise);
+  color: var(--text);
+}
+.tb-account {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 6px 0;
-  margin-top: 8px;
-  border-top: 1px solid var(--line);
+  height: 48px;
+  padding: 0 16px 0 7px;
   min-width: 0;
 }
-.side-username {
-  line-height: 1.25;
+.tb-user {
+  display: grid;
+  line-height: 1.2;
   min-width: 0;
 }
-.side-username b {
-  display: block;
-  font-weight: 500;
+.tb-user b {
+  font-weight: 600;
+  font-size: 13px;
+  max-width: 14ch;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.side-username small {
+.tb-user small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11.5px;
 }
-.app.collapsed .side-label,
-.app.collapsed .side-count,
-.app.collapsed .side-username,
-.app.collapsed .brand-text {
+
+/* Phones: a floating tab bar, and a sheet for the tabs it can't hold. */
+.tabbar,
+.tabbar-sheet,
+.tabbar-scrim {
   display: none;
 }
-.app.collapsed .side-nav button,
-.app.collapsed .side-foot button {
-  justify-content: center;
+
+/* Tablets and narrow laptops: navigation gets a row of its own. */
+@media (max-width: 1180px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .tb-tools {
+    margin-left: auto;
+  }
+  .tb-nav {
+    order: 3;
+    flex: 1 1 100%;
+    margin: 0;
+  }
+  .tb-nav button {
+    flex: 1 0 auto;
+    justify-content: center;
+  }
 }
-.app.collapsed .side-brand {
-  justify-content: center;
-  padding-inline: 0;
-}
-.app.collapsed .side-nav button {
-  position: relative;
-}
-.app.collapsed .side-nav button.has-count::after {
-  content: '';
-  position: absolute;
-  top: 6px;
-  right: 10px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--warn);
+
+@media (max-width: 640px) {
+  .app > main {
+    padding: 12px max(16px, env(safe-area-inset-right)) calc(104px + env(safe-area-inset-bottom))
+      max(16px, env(safe-area-inset-left));
+  }
+  .topbar {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: calc(10px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0
+      max(16px, env(safe-area-inset-left));
+  }
+  .tb-nav,
+  .tb-theme,
+  .tb-user,
+  .brand-version {
+    display: none;
+  }
+  .tb-brand,
+  .tb-account {
+    height: 44px;
+  }
+  .tb-account {
+    padding: 0 6px;
+  }
+  .tabbar {
+    position: fixed;
+    z-index: 30;
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    display: flex;
+    gap: 2px;
+    padding: 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+  .tabbar button {
+    position: relative;
+    flex: 1;
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px 2px 6px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .tabbar button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tabbar button.active {
+    background: var(--pill);
+    color: var(--on-pill);
+  }
+  .tabbar button.has-count::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    right: calc(50% - 16px);
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--warn);
+    box-shadow: 0 0 0 2px var(--panel);
+  }
+  .tabbar-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 31;
+    background: var(--scrim);
+  }
+  .tabbar-sheet {
+    position: fixed;
+    z-index: 32;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: calc(86px + env(safe-area-inset-bottom));
+    display: grid;
+    gap: 2px;
+    width: min(260px, calc(100vw - 24px));
+    padding: 8px;
+    border-radius: 20px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+  .tabbar-sheet button {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 12px;
+    border: 0;
+    border-radius: 12px;
+    background: none;
+    color: var(--text);
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+  }
+  .tabbar-sheet button svg {
+    color: var(--muted);
+  }
+  .tabbar-sheet button.active {
+    background: var(--raise);
+  }
+  .tabbar-sheet .tb-count {
+    margin-left: auto;
+  }
 }
 
 /* ---- Page header ---- */
@@ -384,8 +533,9 @@ td,
 }
 .page-head h1 {
   margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.02em;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
 }
 .page-head .spacer {
   flex: 1;
@@ -414,8 +564,9 @@ p.section {
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--text);
-  border-radius: 9px;
-  padding: 7px 13px;
+  border-radius: 999px;
+  min-height: 40px;
+  padding: 7px 16px;
   font-weight: 500;
   font-size: 13px;
   line-height: 1.4;
@@ -469,9 +620,10 @@ p.section {
   color: #fff;
 }
 .btn.sm {
-  padding: 4px 9px;
+  min-height: 30px;
+  padding: 4px 12px;
   font-size: 12.5px;
-  border-radius: 7px;
+  border-radius: 999px;
 }
 .btn.block {
   width: 100%;
@@ -518,7 +670,7 @@ button.linklike {
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 8px;
+  border-radius: 50%;
   border: 1px solid var(--line);
   background: none;
   color: var(--muted);
@@ -529,13 +681,15 @@ button.linklike {
 }
 
 /* Segmented control: a set of mutually exclusive buttons. */
+/* A pill track (the page background's tone) with the chosen option raised
+   on it as a white pill. */
 .seg {
   display: inline-flex;
   flex-wrap: wrap;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 3px;
+  background: var(--sunk);
+  border: 1px solid var(--card-edge);
+  border-radius: 999px;
+  padding: 4px;
   gap: 2px;
 }
 .seg button {
@@ -544,10 +698,11 @@ button.linklike {
   color: var(--muted);
   font-weight: 500;
   font-size: 12.5px;
-  padding: 5px 10px;
-  border-radius: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
 }
 .seg button:hover {
   color: var(--text);
@@ -555,9 +710,14 @@ button.linklike {
 .seg button.on,
 .seg button.active,
 .seg button[aria-pressed='true'] {
-  background: var(--raise);
+  background: var(--panel);
   color: var(--text);
-  box-shadow: 0 0 0 1px var(--line);
+  box-shadow: 0 1px 2px rgba(20, 32, 51, 0.08), 0 0 0 1px var(--line);
+}
+:root[data-theme='dark'] .seg button.on,
+:root[data-theme='dark'] .seg button.active,
+:root[data-theme='dark'] .seg button[aria-pressed='true'] {
+  background: var(--raise);
 }
 
 /* ---- Forms ---- */
@@ -569,8 +729,9 @@ button.linklike {
   min-width: 0;
   background: var(--sunk);
   border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 8px 11px;
+  border-radius: var(--r-ctl);
+  min-height: 40px;
+  padding: 9px 13px;
   color: var(--text);
 }
 input::placeholder,
@@ -681,10 +842,10 @@ label.check {
 .switch {
   position: relative;
   flex: none;
-  width: 34px;
-  height: 20px;
+  width: 38px;
+  height: 22px;
   border-radius: 999px;
-  background: var(--line);
+  background: color-mix(in srgb, var(--muted) 38%, var(--line));
   transition: background 0.15s;
 }
 .thumb,
@@ -692,11 +853,12 @@ label.check {
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--muted);
-  transition: left 0.15s, background 0.15s;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s;
 }
 .switch::after {
   content: '';
@@ -707,8 +869,7 @@ label.check {
 }
 .toggle > input:checked + .track .thumb,
 .switch.on::after {
-  left: 17px;
-  background: #fff;
+  left: 19px;
 }
 .toggle > input:focus-visible + .track {
   outline: 2px solid var(--focus);
@@ -746,9 +907,10 @@ label.check {
 .card,
 .panel {
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 18px 20px;
+  border: 1px solid var(--card-edge);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--r-card);
+  padding: 20px;
   min-width: 0;
 }
 .card.flush,
@@ -803,8 +965,9 @@ label.check {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 14px;
+  border: 1px solid var(--card-edge);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--r-card);
   margin-bottom: 20px;
   overflow: hidden;
 }
@@ -834,35 +997,59 @@ label.check {
 }
 
 /* Tabs (page sections) and the older .subtabs markup. */
+/* Page sections: a pill track, the current section a raised pill — the same
+   language as the top bar and the segmented controls. */
 .tabs,
 .subtabs {
   display: flex;
   gap: 2px;
-  border-bottom: 1px solid var(--line);
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
   margin: 6px 0 22px;
+  border-radius: 999px;
+  background: var(--sunk);
+  border: 1px solid var(--card-edge);
   overflow-x: auto;
   scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar,
+.subtabs::-webkit-scrollbar {
+  display: none;
 }
 .tabs > a,
 .tabs > button,
 .subtabs > button {
-  padding: 9px 14px;
+  flex: none;
+  padding: 7px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
   color: var(--muted);
   text-decoration: none;
   font-weight: 500;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  background: none;
   white-space: nowrap;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tabs > a:hover,
+.tabs > button:hover,
+.subtabs > button:hover {
+  color: var(--text);
 }
 .tabs > .on,
 .tabs > .active,
 .subtabs > .active,
 .tabs > [aria-selected='true'] {
   color: var(--text);
-  border-color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(20, 32, 51, 0.08), 0 0 0 1px var(--line);
+}
+:root[data-theme='dark'] .tabs > .on,
+:root[data-theme='dark'] .tabs > .active,
+:root[data-theme='dark'] .subtabs > .active,
+:root[data-theme='dark'] .tabs > [aria-selected='true'] {
+  background: var(--raise);
 }
 .tabs .n {
   color: var(--faint);
@@ -927,8 +1114,8 @@ button.chip:hover {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
-  padding: 0 8px;
-  border-radius: 6px;
+  padding: 1px 9px;
+  border-radius: 999px;
   white-space: nowrap;
   color: var(--k);
   background: color-mix(in srgb, var(--k) 14%, transparent);
@@ -1128,6 +1315,15 @@ td.actions {
 .pager .spacer {
   flex: 1;
 }
+/* A table with nothing (yet) to show: one roomy, centred, muted line. */
+td.table-empty {
+  padding: 28px 20px !important;
+  text-align: center;
+  color: var(--muted);
+}
+td.table-empty .spinner-wrap {
+  justify-content: center;
+}
 .empty {
   padding: 28px 20px;
   text-align: center;
@@ -1247,22 +1443,25 @@ td.actions {
   background: var(--scrim);
   animation: fade 0.15s ease-out;
 }
+/* Drawers float clear of the window edge, like the cards. */
 .drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
   z-index: 41;
-  width: min(560px, 100vw);
+  width: min(560px, calc(100vw - 24px));
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--panel);
-  border-left: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
   box-shadow: var(--shadow);
   animation: slide-in 0.18s ease-out;
 }
 .drawer.wide {
-  width: min(760px, 100vw);
+  width: min(760px, calc(100vw - 24px));
 }
 .scrim.center {
   display: grid;
@@ -1276,7 +1475,7 @@ td.actions {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-card);
   box-shadow: var(--shadow);
 }
 .panel-head {
@@ -1372,67 +1571,8 @@ td.actions {
   display: none;
 }
 @media (max-width: 900px) {
-  .app,
-  .app.collapsed {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .app > main {
-    padding: 16px 16px 96px;
-  }
-  .sidebar {
-    position: fixed;
-    top: auto;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: auto;
-    z-index: 30;
-    flex-direction: row;
-    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
-    border-right: 0;
-    border-top: 1px solid var(--line);
-    background: var(--panel);
-  }
-  .side-brand,
-  .sidebar .spacer,
-  .side-foot,
-  .side-label,
-  .side-count,
-  .side-username,
-  .side-nav .extra {
-    display: none;
-  }
-  .side-nav {
-    display: flex;
-    flex: 1;
-    justify-content: space-around;
-  }
-  .side-nav button {
-    width: auto;
-    padding: 9px 11px;
-    position: relative;
-  }
-  .side-nav button.active {
-    box-shadow: inset 0 -2px 0 var(--accent);
-    border-radius: 8px 8px 2px 2px;
-  }
-  .side-nav button.has-count::after {
-    content: '';
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--warn);
-  }
-  .side-account {
-    border: 0;
-    margin: 0;
-    padding: 0 6px;
-  }
   .page-head h1 {
-    font-size: 20px;
+    font-size: 24px;
   }
   .cols,
   .cols.even {
@@ -1452,7 +1592,12 @@ td.actions {
   }
   .drawer,
   .drawer.wide {
+    inset: 0;
     width: 100vw;
+    border: 0;
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
   }
   /* Tables marked .stackable become one card per row. Cells opt in to a slot:
      .lead (top-left), .lead-r (top-right), anything else wraps below. */
@@ -1500,6 +1645,9 @@ td.actions {
   table.stackable td[colspan] {
     text-align: center;
   }
+  table.stackable td.table-empty {
+    grid-column: 1 / -1;
+  }
   table.stackable td:empty {
     display: none;
   }
@@ -1511,8 +1659,8 @@ td.actions {
   flex: none;
 }
 .acct-avatar {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   border: 0;
   padding: 0;
@@ -1543,13 +1691,13 @@ td.actions {
 }
 .acct-menu {
   position: absolute;
-  bottom: calc(100% + 10px);
-  left: 0;
+  top: calc(100% + 12px);
+  right: -8px;
   z-index: 51;
   width: 240px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 18px;
   box-shadow: var(--shadow);
   padding: 6px;
 }
@@ -1595,12 +1743,7 @@ td.actions {
   text-align: center;
   color: var(--muted);
 }
-@media (max-width: 900px) {
-  .acct-menu {
-    left: auto;
-    right: 0;
-  }
-}
+
 
 /* Category breakdown (CategoryBars): a ranked list, one meter per category. */
 .cat-bars {

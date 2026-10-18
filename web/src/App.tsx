@@ -20,17 +20,17 @@ import { api, UNAUTHORIZED, type SessionUser, type AuthInfo } from './api'
 type Tab = 'overview' | 'queries' | 'clients' | 'filtering' | 'local-dns' | 'agents' | 'logs' | 'settings' | 'account'
 const ALL_TABS: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'local-dns', 'agents', 'logs', 'settings', 'account']
 
-// Sidebar presentation: icon + human label per tab. `extra` tabs drop out of the
-// mobile bottom bar, which only has room for the everyday ones.
-const TAB_META: Record<Tab, { icon: IconName; label: string; extra?: boolean }> = {
+// Navigation presentation: icon + human label per tab. On phones the bottom
+// bar holds the everyday tabs; the rest (`more`) open from its "More" sheet.
+const TAB_META: Record<Tab, { icon: IconName; label: string; more?: boolean }> = {
   overview: { icon: 'dashboard', label: 'Overview' },
   queries: { icon: 'queries', label: 'Queries' },
   clients: { icon: 'clients', label: 'Clients' },
   filtering: { icon: 'filtering', label: 'Filtering' },
-  'local-dns': { icon: 'local-dns', label: 'Local DNS', extra: true },
-  agents: { icon: 'cluster', label: 'Agents' },
-  logs: { icon: 'logs', label: 'Logs', extra: true },
-  settings: { icon: 'settings', label: 'Settings' },
+  'local-dns': { icon: 'local-dns', label: 'Local DNS', more: true },
+  agents: { icon: 'cluster', label: 'Agents', more: true },
+  logs: { icon: 'logs', label: 'Logs', more: true },
+  settings: { icon: 'settings', label: 'Settings', more: true },
   account: { icon: 'account', label: 'Account' },
 }
 
@@ -57,20 +57,15 @@ export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null)
   const [info, setInfo] = useState<AuthInfo | null>(null)
   const [loading, setLoading] = useState(true)
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('mazedns.sidebar.collapsed') === '1')
+  const [moreOpen, setMoreOpen] = useState(false)
   const { theme, toggle } = useTheme()
-
-  const toggleSidebar = () => {
-    setCollapsed((c) => {
-      localStorage.setItem('mazedns.sidebar.collapsed', c ? '0' : '1')
-      return !c
-    })
-  }
 
   // navigate switches tab and pushes the matching path into history.
   const navigate = (t: Tab) => {
     setTab(t)
+    setMoreOpen(false)
     if (window.location.pathname !== `/${t}`) window.history.pushState({}, '', `/${t}`)
+    window.scrollTo({ top: 0 })
   }
 
   const refresh = async () => {
@@ -107,7 +102,7 @@ export default function App() {
   const clusterOn = !!info?.cluster_enabled
   const badges = useNavBadges({ agents: !!user && clusterOn, filtering: !!user })
 
-  // The running build, shown under the name in the sidebar.
+  // The running build, shown next to the name in the top bar.
   const [appVersion, setAppVersion] = useState('')
   useEffect(() => {
     if (!user) return
@@ -164,62 +159,106 @@ export default function App() {
   const allowed = tabs.includes(tab) || (tab === 'account' && info.auth_enabled)
   const shown: Tab = allowed ? tab : 'overview'
 
+  const phoneTabs = tabs.filter((t) => !TAB_META[t].more)
+  const moreTabs = tabs.filter((t) => TAB_META[t].more)
+  const moreCount = moreTabs.reduce((n, t) => n + (counts[t] ?? 0), 0)
+  const themeLabel = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+
   return (
-    <div className={`app ${collapsed ? 'collapsed' : ''}`}>
-      <aside className="sidebar">
-        <div className="side-brand">
-          <img className="brand-logo" src="/favicon.svg" alt="" width={40} height={40} />
-          <span className="brand-text">
-            <span className="brand-name">MazeDNS</span>
-            {appVersion && <span className="brand-version">{appVersion}</span>}
-          </span>
-        </div>
-        <nav className="side-nav" aria-label="Main">
+    <div className="app">
+      <header className="topbar">
+        <a
+          className="tb-brand"
+          href="/overview"
+          onClick={(e) => {
+            e.preventDefault()
+            navigate('overview')
+          }}
+        >
+          <img className="brand-logo" src="/favicon.svg" alt="" width={32} height={32} />
+          <span className="brand-name">MazeDNS</span>
+          {appVersion && <span className="brand-version">{appVersion}</span>}
+        </a>
+        <nav className="tb-nav" aria-label="Main">
           {tabs.map((t) => (
             <button
               key={t}
-              className={`${shown === t ? 'active' : ''} ${TAB_META[t].extra ? 'extra' : ''} ${counts[t] ? 'has-count' : ''}`}
+              className={shown === t ? 'active' : ''}
               aria-current={shown === t ? 'page' : undefined}
               onClick={() => navigate(t)}
-              title={TAB_META[t].label}
             >
-              <span className="side-ic">
-                <Icon name={TAB_META[t].icon} />
-              </span>
-              <span className="side-label">{TAB_META[t].label}</span>
+              {TAB_META[t].label}
               {!!counts[t] && (
-                <span className="side-count" title="Needs attention">
+                <span className="tb-count" title="Needs attention">
                   {counts[t]}
                 </span>
               )}
             </button>
           ))}
         </nav>
-        <div className="spacer" />
-        <div className="side-foot">
-          <button onClick={toggle} title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}>
-            <span className="side-ic">
-              <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
-            </span>
-            <span className="side-label">{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
-          </button>
-          <button onClick={toggleSidebar} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
-            <span className="side-ic">
-              <Icon name={collapsed ? 'chevrons-right' : 'chevrons-left'} />
-            </span>
-            <span className="side-label">Collapse</span>
-          </button>
-        </div>
-        {user && (
-          <div className="side-account">
-            <AccountMenu user={user} authEnabled={!!info.auth_enabled} onSettings={() => navigate('account')} onLogout={logout} />
-            <span className="side-username">
-              <b>{user.username}</b>
-              <small>{isAdmin ? 'Administrator' : 'Viewer'}</small>
-            </span>
+        <div className="tb-tools">
+          <div className="tb-theme" role="group" aria-label="Theme">
+            <button className={theme === 'light' ? 'on' : ''} onClick={() => theme !== 'light' && toggle()} title="Light theme" aria-pressed={theme === 'light'}>
+              <Icon name="sun" size={16} />
+            </button>
+            <button className={theme === 'dark' ? 'on' : ''} onClick={() => theme !== 'dark' && toggle()} title="Dark theme" aria-pressed={theme === 'dark'}>
+              <Icon name="moon" size={16} />
+            </button>
           </div>
+          {user && (
+            <div className="tb-account">
+              <AccountMenu user={user} authEnabled={!!info.auth_enabled} onSettings={() => navigate('account')} onLogout={logout} />
+              <span className="tb-user">
+                <b>{user.username}</b>
+                <small>{isAdmin ? 'Administrator' : 'Viewer'}</small>
+              </span>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* Phones: the everyday tabs, plus a sheet with the rest. */}
+      <nav className="tabbar" aria-label="Main">
+        {phoneTabs.map((t) => (
+          <button
+            key={t}
+            className={`${shown === t ? 'active' : ''} ${counts[t] ? 'has-count' : ''}`}
+            aria-current={shown === t ? 'page' : undefined}
+            onClick={() => navigate(t)}
+          >
+            <Icon name={TAB_META[t].icon} size={20} />
+            <span>{TAB_META[t].label}</span>
+          </button>
+        ))}
+        {moreTabs.length > 0 && (
+          <button
+            className={`${moreTabs.includes(shown) ? 'active' : ''} ${moreCount ? 'has-count' : ''}`}
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((o) => !o)}
+          >
+            <Icon name="more" size={20} />
+            <span>More</span>
+          </button>
         )}
-      </aside>
+      </nav>
+      {moreOpen && (
+        <>
+          <div className="tabbar-scrim" onClick={() => setMoreOpen(false)} />
+          <div className="tabbar-sheet" role="menu">
+            {moreTabs.map((t) => (
+              <button key={t} role="menuitem" className={shown === t ? 'active' : ''} onClick={() => navigate(t)}>
+                <Icon name={TAB_META[t].icon} size={18} />
+                <span>{TAB_META[t].label}</span>
+                {!!counts[t] && <span className="tb-count">{counts[t]}</span>}
+              </button>
+            ))}
+            <button role="menuitem" onClick={toggle}>
+              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
+              <span>{themeLabel}</span>
+            </button>
+          </div>
+        </>
+      )}
       <main>
         {shown === 'overview' && <Dashboard />}
         {shown === 'queries' && <Queries />}

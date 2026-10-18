@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
@@ -113,5 +114,39 @@ func TestControlPlaneGate(t *testing.T) {
 	cfg.Cluster.CPURL = "http://cp:8080"
 	if cfg.Cluster.ControlPlaneURL() == "" {
 		t.Fatal("cp_url set should be clustered")
+	}
+}
+
+// With the control plane's export on, the agent relays through it (no URL or
+// credentials of its own); without it — or before it can relay — its own
+// export applies.
+func TestEffectiveVMExport(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.SaveVMExport(store.VMExport{Enabled: false, URL: "http://local:8428"}); err != nil {
+		t.Fatal(err)
+	}
+	relayed := 0
+	relay := func(context.Context, []byte) error { relayed++; return nil }
+
+	if v := effectiveVMExport(st, &relay); v.Enabled || v.URL != "http://local:8428" || v.Relay != nil {
+		t.Errorf("no cluster settings: %+v", v)
+	}
+	if err := st.SetClusterSettings(`{"upstreams":["1.1.1.1"],"metrics_export":{"enabled":true,"interval_sec":15}}`); err != nil {
+		t.Fatal(err)
+	}
+	v := effectiveVMExport(st, &relay)
+	if !v.Enabled || v.Relay == nil || v.URL != "" || v.Interval != 15*time.Second {
+		t.Fatalf("cluster export: %+v", v)
+	}
+	_ = v.Relay(context.Background(), nil)
+	if relayed != 1 {
+		t.Error("the relay wasn't the one given")
+	}
+	if v := effectiveVMExport(st, nil); v.Relay != nil || v.URL != "http://local:8428" {
+		t.Errorf("not able to relay yet: %+v", v)
 	}
 }

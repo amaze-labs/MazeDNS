@@ -309,7 +309,6 @@ func startMetricsExport(st *store.Store, cfg config.Config, mx *metrics.Metrics)
 		Enabled: vm.Enabled, URL: vm.URL, IntervalSec: int(vm.Interval.Std().Seconds()),
 		Job: vm.Job, Instance: vm.Instance, Username: vm.Username, Password: vm.Password,
 	})
-	hostname, _ := os.Hostname()
 	get := func() metrics.VMConfig {
 		v := st.LoadVMExport(store.VMExport{})
 		return metrics.VMConfig{
@@ -317,7 +316,11 @@ func startMetricsExport(st *store.Store, cfg config.Config, mx *metrics.Metrics)
 			Job: v.Job, Instance: v.Instance, Username: v.Username, Password: v.Password,
 		}
 	}
-	go metrics.NewVMPusher(get, hostname, mx.Gatherer()).Run(context.Background())
+	// Labelled "control-plane", not the hostname: an agent on the same host
+	// (host networking) labels its push with the host's name, and two pushes
+	// under the same labels overwrite each other — the control plane's
+	// always-zero query counters made the agent's flip to 0 every other push.
+	go metrics.NewVMPusher(get, "control-plane", mx.Gatherer()).Run(context.Background())
 }
 
 // startLogsExport ships the cluster-wide query log to VictoriaLogs for retention

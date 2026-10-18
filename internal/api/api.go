@@ -281,6 +281,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 			mux.HandleFunc("POST /api/cluster/enroll", s.clusterEnroll)    // enrollment-key auth
 			mux.HandleFunc("GET /api/cluster/snapshot", s.clusterSnapshot) // per-node key auth
 			mux.HandleFunc("POST /api/cluster/log", s.clusterLog)          // per-node key auth
+			mux.HandleFunc("POST /api/cluster/metrics", s.clusterMetrics)  // per-node key auth
 			mux.HandleFunc("POST /api/cluster/proclog", s.clusterProcLog)  // per-node key auth
 			mux.HandleFunc("GET /api/cluster/live", s.clusterLiveState)    // per-node key auth
 			mux.HandleFunc("POST /api/cluster/live", s.clusterLivePush)    // per-node key auth
@@ -901,7 +902,19 @@ func (s *Server) replicatedSettings() (json.RawMessage, error) {
 		// settings payload, so its version changes with them and agents re-sync.
 		set.CategoryDomains = s.categorizer.DomainsFor(set.BlockedCategories)
 	}
-	return json.Marshal(set)
+	// The VictoriaMetrics export, so every agent's metrics are exported — the
+	// query counters live on the agents; the control plane answers no queries.
+	// Agents only learn that it's on and how often: they relay their metrics
+	// through POST /api/cluster/metrics, and the URL and credentials never
+	// leave the control plane.
+	out := struct {
+		resolver.Settings
+		MetricsExport *cluster.MetricsRelay `json:"metrics_export,omitempty"`
+	}{Settings: set}
+	if vm := s.store.LoadVMExport(store.VMExport{}); vm.Enabled && strings.TrimSpace(vm.URL) != "" {
+		out.MetricsExport = &cluster.MetricsRelay{Enabled: true, IntervalSec: vm.IntervalSec}
+	}
+	return json.Marshal(out)
 }
 
 // agentHoldsSnapshotState reports whether the polling agent advertised 304

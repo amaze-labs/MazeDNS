@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -516,4 +517,33 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 		return nil, err
 	}
 	return &snap, nil
+}
+
+// RelayMetrics sends this node's Prometheus metrics to the control plane, which
+// forwards them to VictoriaMetrics with its own URL and credentials, labelled
+// with this node's authenticated name.
+func (a *Agent) RelayMetrics(ctx context.Context, body []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.masterURL+"/api/cluster/metrics", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.key())
+	req.Header.Set("Content-Type", "text/plain")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return statusError(resp)
+	}
+	return nil
+}
+
+// MetricsRelay is the cluster-wide VictoriaMetrics export as agents see it in
+// the replicated settings: whether to relay metrics through the control plane,
+// and how often. No URL or credentials — those stay on the control plane.
+type MetricsRelay struct {
+	Enabled     bool `json:"enabled"`
+	IntervalSec int  `json:"interval_sec"`
 }

@@ -1,12 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/auth"
+	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -134,4 +138,44 @@ func (s *Server) putLogsExport(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Password = ""
 	writeJSON(w, http.StatusOK, in)
+}
+
+// vmRelayClient forwards agents' relayed metrics to VictoriaMetrics.
+var vmRelayClient = &http.Client{Timeout: 10 * time.Second}
+
+// maxRelayedMetrics bounds one relayed push (an agent's whole registry is tens of KB).
+const maxRelayedMetrics = 8 << 20
+
+// clusterMetrics forwards an agent's Prometheus metrics to VictoriaMetrics with
+// the control plane's export settings, labelled instance=<the node's name>.
+// The name comes from the authenticated node key, so an agent can't push
+// under another's name; and the VictoriaMetrics URL and credentials never
+// leave the control plane.
+func (s *Server) clusterMetrics(w http.ResponseWriter, r *http.Request) {
+	node := s.nodeFromKey(r)
+	if node == nil {
+		writeError(w, http.StatusUnauthorized, "invalid node key")
+		return
+	}
+	if !node.Approved {
+		writeError(w, http.StatusForbidden, "node pending approval")
+		return
+	}
+	vm := s.store.LoadVMExport(store.VMExport{})
+	if !vm.Enabled || strings.TrimSpace(vm.URL) == "" {
+		writeError(w, http.StatusConflict, "metrics export is off")
+		return
+	}
+	// Read it whole (bounded) so it is forwarded with a length, not chunked.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRelayedMetrics))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "metrics too large")
+		return
+	}
+	cfg := metrics.VMConfig{URL: vm.URL, Job: vm.Job, Username: vm.Username, Password: vm.Password}
+	if err := metrics.Import(r.Context(), vmRelayClient, cfg, node.Name, bytes.NewReader(body)); err != nil {
+		writeError(w, http.StatusBadGateway, "victoriametrics: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

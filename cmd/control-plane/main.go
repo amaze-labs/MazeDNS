@@ -97,7 +97,9 @@ func main() {
 		slog.Info("auth enabled", "oidc", authMgr.OIDCEnabled())
 	}
 
-	mx := metrics.New()
+	// The control plane's own metrics (agents, ingest, classifier, …), not DNS
+	// ones: it answers no queries.
+	mx := metrics.NewControlPlane()
 
 	// The control plane keeps a headless resolver purely so the API can apply
 	// operational settings, the block-pause deadline, and report per-process stats.
@@ -105,7 +107,6 @@ func main() {
 	res := resolver.New(resolver.Options{
 		Timeout: 5 * time.Second,
 		Zones:   boot.ToZoneSpecs(cfg.Zones),
-		Metrics: mx,
 	})
 	res.ApplySettings(boot.LoadOrSeedSettings(st, cfg))
 	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {
@@ -134,8 +135,9 @@ func main() {
 	// UT1 category database (all categories, refreshed daily), the classifier
 	// and the language model. Off with MAZEDNS_CATEGORY_DB=off.
 	var categorizer *classifier.Categorizer
+	var catDB *categories.Holder
 	if !strings.EqualFold(os.Getenv("MAZEDNS_CATEGORY_DB"), "off") {
-		catDB := categories.NewHolder(&categories.Source{Dir: dataDir(cfg)}, true)
+		catDB = categories.NewHolder(&categories.Source{Dir: dataDir(cfg)}, true)
 		go catDB.Run(context.Background())
 		clsWorker.SetCategoryDB(catDB)
 		categorizer = classifier.NewCategorizer(st, catDB)
@@ -215,6 +217,7 @@ func main() {
 	if categorizer != nil {
 		apiSrv.SetCategorizer(categorizer)
 	}
+	registerControlPlaneMetrics(mx, st, apiSrv, catDB)
 	// SSO settings change live: rebuild and swap the OIDC provider without a restart.
 	apiSrv.SetRebuildOIDC(func(o store.OIDCSettings) error {
 		if err := oidcLoad.Apply(o); err != nil {
@@ -507,4 +510,48 @@ func dataDir(cfg config.Config) string {
 		return filepath.Join(d, "mazedns")
 	}
 	return os.TempDir()
+}
+
+// agentOnlineWindow matches the UI: an agent seen within it is online.
+const agentOnlineWindow = 120 * time.Second
+
+// registerControlPlaneMetrics exposes what the control plane itself does: the
+// agents it serves, the query log they ship, the category database and the
+// classifier's verdicts. (Query counts are the agents' — see their metrics.)
+func registerControlPlaneMetrics(mx *metrics.Metrics, st *store.Store, apiSrv *api.Server, catDB *categories.Holder) {
+	mx.RegisterLabeledGauge("agents", "Enrolled agents by state: online (seen in the last 2 minutes), offline, or pending approval.", "state",
+		func() map[string]float64 {
+			out := map[string]float64{"online": 0, "offline": 0, "pending": 0}
+			nodes, err := st.ListNodes()
+			if err != nil {
+				return out
+			}
+			now := time.Now()
+			for _, n := range nodes {
+				switch {
+				case !n.Approved:
+					out["pending"]++
+				case n.LastSeen > 0 && now.Sub(time.Unix(n.LastSeen, 0)) < agentOnlineWindow:
+					out["online"]++
+				default:
+					out["offline"]++
+				}
+			}
+			return out
+		})
+	mx.RegisterCounter("querylog_ingested_total", "Query-log entries received from agents.",
+		func() float64 { return float64(apiSrv.QueryLogIngested()) })
+	mx.RegisterLabeledGauge("classifications", "Classifier verdicts by status (suggested, auto, approved, rejected, clean).", "status",
+		func() map[string]float64 {
+			out := map[string]float64{}
+			counts, err := st.ClassificationCounts()
+			if err != nil {
+				return out
+			}
+			for k, v := range counts {
+				out[k] = float64(v)
+			}
+			return out
+		})
+	mx.RegisterCategoryDB(catDB)
 }

@@ -116,6 +116,7 @@ func main() {
 		catDB := categories.NewHolder(&categories.Source{Dir: filepath.Dir(cfg.Database.Path)}, false)
 		go catDB.Run(context.Background())
 		res.SetCategoryDB(catDB) // before ApplySettings, which sets what it loads
+		mx.RegisterCategoryDB(catDB)
 	}
 	res.ApplySettings(boot.EffectiveSettings(st, cfg))
 	go res.MaintainUpstreams(context.Background())

@@ -233,11 +233,37 @@ plane.
 
 ### Metrics — VictoriaMetrics (`metrics.victoria_metrics`)
 
-Each component **pushes** its own Prometheus metrics to a VictoriaMetrics instance
-(`/api/v1/import/prometheus`), labelled by `instance`, so a cluster aggregates in VM
-without VM scraping every node. Fields: `enabled`, `url`, `interval` (`15s`), `job`
-(`mazedns`), `instance` (empty → hostname), `username`/`password`. Also editable
-live in the UI.
+Every component's Prometheus metrics are **pushed** to a VictoriaMetrics instance
+(`/api/v1/import/prometheus`), so a cluster aggregates in VM without VM scraping
+every node. Fields: `enabled`, `url`, `interval` (`15s`), `job` (`mazedns`),
+`instance`, `username`/`password`. Also editable live in the UI.
+
+Only the control plane talks to VictoriaMetrics. Agents learn that the export is on
+(and its interval) from the replicated settings and post their metrics to the
+control plane (`POST /api/cluster/metrics`, authenticated with the node key), which
+forwards them with its own credentials — the VM URL and password never leave the
+control plane. Series are labelled `instance="control-plane"` for the control plane
+and `instance="<node name>"` for each agent; `instance` overrides the control
+plane's label. An agent not joined to a cluster pushes directly, using the export
+settings in its own database.
+
+What each component exposes (all prefixed `mazedns_`, plus the standard `go_*` and
+`process_*` runtime metrics):
+
+| Metric | Where | Meaning |
+|---|---|---|
+| `queries_total{action}` | agent | Queries answered, by action (forward, cache, blocked, …) |
+| `upstream_duration_seconds` | agent | Upstream round-trip time (histogram) |
+| `upstream_tcp_fallback_total` | agent | Truncated UDP answers retried over TCP |
+| `querylog_dropped_total` | agent | Query-log entries dropped because the buffer was full |
+| `last_query_timestamp_seconds`, `last_forward_{success,error}_timestamp_seconds`, `cluster_last_sync_{success,error}_timestamp_seconds` | agent | Liveness timestamps (see troubleshooting) |
+| `agents{state}` | control plane | Agents online (seen in the last 2 minutes), offline, or pending approval |
+| `querylog_ingested_total` | control plane | Query-log entries received from agents |
+| `classifications{status}` | control plane | Classifier verdicts by status |
+| `category_db_domains`, `category_db_updated_timestamp_seconds` | both | Size and age of the loaded category database (the whole database on the control plane, the blocked categories on an agent) |
+
+The DNS counters live only on the agents: sum them across `instance` for
+cluster-wide totals.
 
 ### Scraping `/metrics` (Prometheus)
 
@@ -266,6 +292,13 @@ is pending, `/metrics` is blocked entirely (only `/healthz` is public). The agen
 The **control plane** ships the cluster-wide query log (its own plus agents' shipped
 entries) to VictoriaLogs (`/insert/jsonline`) for retention beyond the local window.
 Fields: `enabled`, `url`, `interval` (`15s`), `username`/`password`.
+
+Each query becomes one log line with the fields `node`, `client`, `name`, `qtype`,
+`action`, `category` (the block reason), `content_category` (what the domain is:
+social, streaming, …), `rcode` and `elapsed_ms`; `node` and `action` are the stream
+fields. For example, `content_category:social | stats by (node) count()` counts
+social-media lookups per agent. The export resumes where it stopped after a restart
+or a VictoriaLogs outage, and catches up a backlog in back-to-back batches.
 
 ### PostgreSQL notes
 

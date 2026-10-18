@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/IPMaze/MazeDNS/internal/categories"
 )
 
 // Metrics holds the MazeDNS Prometheus collectors.
@@ -30,9 +33,25 @@ var queryActions = []string{
 	"authoritative", "rewrite", "blocked", "cache", "forward", "error", "refused",
 }
 
-// New creates and registers the collectors.
-func New() *Metrics {
+// newRegistry is a registry with the standard Go runtime and process metrics
+// (go_memstats_*, go_goroutines, process_resident_memory_bytes, …), so a node's
+// memory — e.g. an agent holding a category database on a Raspberry Pi — and
+// CPU can be watched alongside its own metrics.
+func newRegistry() *prometheus.Registry {
 	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	return reg
+}
+
+// NewControlPlane returns the control plane's metrics: the runtime metrics,
+// plus whatever it registers (agents, ingest, classifier, …). It has no DNS
+// metrics — it answers no queries, and always-zero query counters there only
+// misled (and, pushed under an agent's labels, overwrote the agent's).
+func NewControlPlane() *Metrics { return &Metrics{reg: newRegistry()} }
+
+// New creates a DNS node's metrics: the runtime metrics and the DNS collectors.
+func New() *Metrics {
+	reg := newRegistry()
 	m := &Metrics{
 		reg: reg,
 		Queries: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -81,6 +100,39 @@ func (m *Metrics) RegisterQueryLogDropped(fn func() float64) {
 	}, fn))
 }
 
+// RegisterGauge registers a gauge mazedns_<name> reporting fn on each scrape.
+func (m *Metrics) RegisterGauge(name, help string, fn func() float64) {
+	m.reg.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "mazedns", Name: name, Help: help}, fn))
+}
+
+// RegisterCounter registers a counter mazedns_<name> reporting fn (which must
+// only grow) on each scrape.
+func (m *Metrics) RegisterCounter(name, help string, fn func() float64) {
+	m.reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{Namespace: "mazedns", Name: name, Help: help}, fn))
+}
+
+// RegisterLabeledGauge registers a gauge mazedns_<name>{<label>=…} whose
+// series come from fn on each scrape (one per map key).
+func (m *Metrics) RegisterLabeledGauge(name, help, label string, fn func() map[string]float64) {
+	m.reg.MustRegister(&labeledGauge{
+		desc: prometheus.NewDesc("mazedns_"+name, help, []string{label}, nil),
+		fn:   fn,
+	})
+}
+
+type labeledGauge struct {
+	desc *prometheus.Desc
+	fn   func() map[string]float64
+}
+
+func (g *labeledGauge) Describe(ch chan<- *prometheus.Desc) { ch <- g.desc }
+
+func (g *labeledGauge) Collect(ch chan<- prometheus.Metric) {
+	for k, v := range g.fn() {
+		ch <- prometheus.MustNewConstMetric(g.desc, prometheus.GaugeValue, v, k)
+	}
+}
+
 // RegisterTimestamp registers a gauge mazedns_<name> reporting fn's time as unix
 // seconds (0 = never). fn is polled on each scrape.
 func (m *Metrics) RegisterTimestamp(name, help string, fn func() time.Time) {
@@ -105,3 +157,21 @@ func (m *Metrics) Handler() http.Handler {
 // Gatherer exposes the underlying registry so collectors can be gathered for
 // pushing to an external sink (e.g. the VictoriaMetrics exporter).
 func (m *Metrics) Gatherer() prometheus.Gatherer { return m.reg }
+
+// RegisterCategoryDB exposes the category database's size and freshness — all
+// of it on the control plane, the blocked categories on an agent (nothing when
+// categories are off).
+func (m *Metrics) RegisterCategoryDB(h *categories.Holder) {
+	if h == nil {
+		return
+	}
+	m.RegisterGauge("category_db_domains", "Domains in the loaded category database.",
+		func() float64 { return float64(h.Status().Domains) })
+	m.RegisterTimestamp("category_db_updated_timestamp_seconds", "When the category database last loaded.",
+		func() time.Time {
+			if u := h.Status().UpdatedAt; u > 0 {
+				return time.Unix(u, 0)
+			}
+			return time.Time{}
+		})
+}

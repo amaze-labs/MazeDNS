@@ -57,6 +57,7 @@ type Server struct {
 	enqueue             func(string) // feed classifier from ingested agent logs (may be nil)
 	enricher            *clientname.Enricher
 	categorizer         *classifier.Categorizer // nil = domain categories off
+	ingested            atomic.Int64            // query-log entries received from agents
 	requireApproval     bool                    // hold self-enrolled agents until an admin approves
 	keyMaxAge           time.Duration           // rotate a node's key once it exceeds this age (0 = disabled)
 	keyGrace            time.Duration           // overlap window a rotated-out node key stays valid
@@ -114,6 +115,9 @@ type classifierStatus interface {
 	ThreatSearch(q string, limit int) []string
 	Whois(ctx context.Context, domain string) (classifier.WhoisInfo, error)
 }
+
+// QueryLogIngested is how many query-log entries agents have shipped since start.
+func (s *Server) QueryLogIngested() int64 { return s.ingested.Load() }
 
 // SetClassifierStatus wires the running classifier worker into the API.
 func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
@@ -1030,6 +1034,7 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.ingested.Add(int64(len(entries)))
 	if s.enqueue != nil {
 		for _, e := range entries {
 			s.enqueue(e.Name)

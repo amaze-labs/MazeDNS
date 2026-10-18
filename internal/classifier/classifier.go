@@ -412,6 +412,22 @@ func IsReservedName(name string) bool {
 	return false
 }
 
+// IsLocalName reports whether name only exists inside a network: a reserved
+// or private-use name (reverse lookups under .arpa included) or a single-label
+// hostname ("nas", "printer"). The RFC 2606 example domains are reserved but
+// public, so they aren't local.
+func IsLocalName(name string) bool {
+	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+	if name == "" {
+		return false
+	}
+	if !strings.Contains(name, ".") {
+		return true
+	}
+	tld := name[strings.LastIndexByte(name, '.')+1:]
+	return reservedTLDs[tld] && tld != "example" && tld != "test" && tld != "invalid"
+}
+
 // HostingPlatform returns the platform suffix when name is a customer subdomain
 // on a shared hosting / tunnel platform listed in the private section of the
 // Public Suffix List (workers.dev, github.io, netlify.app, ngrok-free.app, …),

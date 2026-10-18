@@ -14,6 +14,8 @@ const rollupCursorKey = "rollup_cursor_id"
 // whether more rows remain, so the caller can loop to backfill then idle. Runs on
 // the master, whose query_log is cluster-wide.
 func (s *Store) RollupAdvance(batch int) (more bool, err error) {
+	s.rollupMu.Lock()
+	defer s.rollupMu.Unlock()
 	if batch <= 0 {
 		batch = 50000
 	}

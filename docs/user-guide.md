@@ -190,10 +190,10 @@ doesn't match; the 409 body names the row in the way (`id`) and its owner
 This guards against mistakes, not against a hostile caller: who may write at
 all is decided by the token's role ([API tokens](#api-tokens)).
 
-**Console.** An owned record shows its source as a chip next to the name, and a
-filter above the table (All · Manual · one entry per source) appears once any
-record is owned. An owned record can only be switched on or off: instead of
-Edit and Delete it shows which integration manages it and a **Detach** button.
+**Console.** **Local records** lists only the manual records. Each integration
+that owns records gets its own section below it, **Synced from <source>**. There
+a record can only be switched on or off: instead of Edit and Delete it has a
+**Detach** button, which moves it to the local records.
 
 ## Client names
 

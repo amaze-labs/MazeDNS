@@ -150,3 +150,54 @@ func TestPublicOnlyRefusesInternalAddresses(t *testing.T) {
 		}
 	}
 }
+
+// EURid (.eu): values grouped under section headers; no creation date at all.
+const sampleWhoisEURid = `% The WHOIS service offered by EURid is for informational purposes only.
+Domain: campaign-image.eu
+Script: LATIN
+
+Registrant:
+        NOT DISCLOSED!
+        Visit www.eurid.eu for the web-based WHOIS.
+
+Registrar:
+        Name: MarkMonitor International Limited
+        Website: https://www.markmonitor.com/
+
+Name servers:
+        ns11.zns-53.com
+        pdns90.ultradns.biz
+
+Please visit www.eurid.eu for more info.
+`
+
+// Nominet (.uk): indented headers, CRLF line endings, glue after nameservers.
+const sampleWhoisNominet = "\r\n    Domain name:\r\n        bbc.co.uk\r\n\r\n" +
+	"    Registrar:\r\n        British Broadcasting Corporation [Tag = BBC]\r\n        URL: https://www.bbc.co.uk\r\n\r\n" +
+	"    Relevant dates:\r\n        Registered on: 05-Aug-1996\r\n        Expiry date:  13-Dec-2034\r\n\r\n" +
+	"    Name servers:\r\n        ddns0.bbc.co.uk           148.163.199.1  2607:f740:e04e::1\r\n        ddns0.bbc.com\r\n\r\n" +
+	"    WHOIS lookup made at 08:41:49 18-Oct-2026\r\n"
+
+func TestParseWhois43Sections(t *testing.T) {
+	eu := parseWhois43("campaign-image.eu", sampleWhoisEURid)
+	if eu.Registrar != "MarkMonitor International Limited" {
+		t.Errorf(".eu registrar = %q", eu.Registrar)
+	}
+	if want := []string{"ns11.zns-53.com", "pdns90.ultradns.biz"}; !reflect.DeepEqual(eu.Nameservers, want) {
+		t.Errorf(".eu nameservers = %v, want %v", eu.Nameservers, want)
+	}
+	if eu.Registrant != "" || eu.AgeDays != 0 {
+		t.Errorf(".eu registrant = %q, age = %d; want neither", eu.Registrant, eu.AgeDays)
+	}
+
+	uk := parseWhois43("bbc.co.uk", sampleWhoisNominet)
+	if uk.Registrar != "British Broadcasting Corporation" {
+		t.Errorf(".uk registrar = %q", uk.Registrar)
+	}
+	if want := []string{"ddns0.bbc.co.uk", "ddns0.bbc.com"}; !reflect.DeepEqual(uk.Nameservers, want) {
+		t.Errorf(".uk nameservers = %v, want %v", uk.Nameservers, want)
+	}
+	if uk.Created != "05-Aug-1996" || uk.AgeDays <= 0 || uk.Expires != "13-Dec-2034" {
+		t.Errorf(".uk created = %q (age %d), expires = %q", uk.Created, uk.AgeDays, uk.Expires)
+	}
+}

@@ -187,6 +187,9 @@ func whoisField(line string) (string, string, bool) {
 
 // parseWhois43 reads the fields registries commonly use (ICANN-style "Creation
 // Date:", RIPE-style "created:", DENIC "Changed:", …). The first value wins.
+// Some registries (EURid for .eu, Nominet for .uk) group values under a section
+// header instead: "Registrar:" with an indented "Name: …", and "Name servers:"
+// followed by indented bare hostnames.
 func parseWhois43(domain, text string) WhoisInfo {
 	info := WhoisInfo{Domain: domain, Source: "whois"}
 	set := func(dst *string, v string) {
@@ -194,9 +197,27 @@ func parseWhois43(domain, text string) WhoisInfo {
 			*dst = v
 		}
 	}
+	section, sectionIndent := "", 0 // the current "Header:" with no value of its own
 	sc := bufio.NewScanner(strings.NewReader(text))
 	for sc.Scan() {
-		k, v, ok := whoisField(sc.Text())
+		line := strings.TrimRight(sc.Text(), "\r")
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if section != "" && indent > sectionIndent {
+			if sectionField(&info, section, trimmed) {
+				continue
+			}
+		} else {
+			section = ""
+			if k, v, found := strings.Cut(trimmed, ":"); found && v == "" {
+				section, sectionIndent = strings.ToLower(strings.TrimSpace(k)), indent
+				continue
+			}
+		}
+		k, v, ok := whoisField(line)
 		if !ok {
 			continue
 		}
@@ -224,9 +245,45 @@ func parseWhois43(domain, text string) WhoisInfo {
 			info.DNSSEC = strings.HasPrefix(v, "signed") || v == "yes"
 		}
 	}
-	if strings.Contains(strings.ToLower(info.Registrant), "redacted") {
+	if r := strings.ToLower(info.Registrant); strings.Contains(r, "redacted") || strings.Contains(r, "not disclosed") {
 		info.Registrant = ""
 	}
 	info.AgeDays = ageDays(info.Created)
 	return info
+}
+
+// sectionField reads one indented line under a section header (see
+// parseWhois43) and reports whether it consumed it.
+func sectionField(info *WhoisInfo, section, line string) bool {
+	switch section {
+	case "registrar":
+		k, v, ok := whoisField(line)
+		if !ok && info.Registrar == "" { // Nominet: the name itself, "Name [Tag = X]"
+			name, _, _ := strings.Cut(line, " [Tag")
+			info.Registrar = strings.TrimSpace(name)
+			return true
+		}
+		if ok && k == "name" {
+			if info.Registrar == "" {
+				info.Registrar = v
+			}
+			return true
+		}
+	case "name servers", "nameservers", "name server":
+		// A bare hostname, possibly followed by its glue addresses.
+		if f := strings.Fields(line); len(f) > 0 && !strings.Contains(f[0], ":") {
+			if ns := strings.ToLower(strings.TrimSuffix(f[0], ".")); strings.Contains(ns, ".") {
+				info.Nameservers = append(info.Nameservers, ns)
+				return true
+			}
+		}
+	case "registrant":
+		if k, v, ok := whoisField(line); ok && (k == "organisation" || k == "organization") {
+			if info.Registrant == "" {
+				info.Registrant = v
+			}
+			return true
+		}
+	}
+	return false
 }

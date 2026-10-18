@@ -28,6 +28,7 @@ import {
 } from '../api'
 import { RANGES, RangeNodeBar, OVERALL_COLOR, makeNodeColor, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
+import { useCountUp, useFirstPaint } from '../motion'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import { CategoryBars, useCategories } from '../categories'
@@ -200,8 +201,16 @@ function topKey(row: Record<string, unknown>, stack: { key: string }[]): string 
   return ''
 }
 
+// CountUp shows a number that counts to each new value (see useCountUp).
+function CountUp({ value, className, as = 'span' }: { value: number | null; className?: string; as?: 'span' | 'div' }) {
+  const shown = useCountUp(value)
+  const Tag = as
+  return <Tag className={className}>{shown == null ? '—' : shown.toLocaleString()}</Tag>
+}
+
 function Donut({ title, data }: { title: string; data: { name: string; value: number; fill: string }[] }) {
   const total = data.reduce((s, d) => s + d.value, 0)
+  const anim = useFirstPaint(total > 0)
   return (
     <div className="ov-donut">
       <h3>{title}</h3>
@@ -221,7 +230,8 @@ function Donut({ title, data }: { title: string; data: { name: string; value: nu
                   paddingAngle={data.length > 1 ? 3 : 0}
                   cornerRadius={data.length > 1 ? 5 : 0}
                   stroke="none"
-                  isAnimationActive={false}
+                  isAnimationActive={anim}
+                  animationDuration={700}
                 >
                   {data.map((d) => (
                     <Cell key={d.name} fill={d.fill} />
@@ -454,6 +464,11 @@ export default function Dashboard() {
   }
   const bySite = agents.some((n) => n.site)
 
+  // Charts draw themselves in once when their data first arrives; polling
+  // refreshes afterwards update them in place.
+  const animBars = useFirstPaint(traffic.length > 0)
+  const animLat = useFirstPaint(latData.length > 0)
+
   // ---- flow hints ----
   const flowHint: Record<string, string> = {
     cached: 'answered locally',
@@ -493,7 +508,7 @@ export default function Dashboard() {
       {/* Hero: how the window's queries were answered. */}
       <section className="ov-flow" aria-label="How queries were answered">
         <div className="ov-flow-head">
-          <span className="ov-total">{totals ? total.toLocaleString() : '—'}</span>
+          <CountUp className="ov-total" value={totals ? total : null} />
           <span className="ov-what">queries in {windowPhrase(hours)}</span>
           <span className="ov-meta">
             {ins ? (
@@ -539,7 +554,7 @@ export default function Dashboard() {
             const v = totals?.[f.key]
             return (
               <div key={f.key} style={{ ['--k' as any]: `var(--${f.k})` }}>
-                <div className="n">{fmt(v)}</div>
+                <CountUp className="n" value={v ?? null} as="div" />
                 <div className="l">
                   <b>{f.label}</b>
                   {v != null && <> · {fmtPct(pct(v, total))}%</>} · {flowHint[f.key]}
@@ -619,7 +634,16 @@ export default function Dashboard() {
                   {/* Each column's top segment gets rounded corners; a hairline
                       in the card's colour separates the stacked segments. */}
                   {stack.map((s) => (
-                    <Bar key={s.key} dataKey={s.key} stackId="q" isAnimationActive={false} stroke="var(--panel)" strokeWidth={1}>
+                    <Bar
+                      key={s.key}
+                      dataKey={s.key}
+                      stackId="q"
+                      isAnimationActive={animBars}
+                      animationDuration={650}
+                      animationEasing="ease-out"
+                      stroke="var(--panel)"
+                      strokeWidth={1}
+                    >
                       {traffic.map((r) => (
                         <Cell
                           key={r.ts}
@@ -928,7 +952,8 @@ export default function Dashboard() {
                         strokeWidth={1.5}
                         dot={loneDot(n, nodeColor(n))}
                         activeDot={{ r: 3.5 }}
-                        isAnimationActive={false}
+                        isAnimationActive={animLat}
+                        animationDuration={800}
                       />
                     ))}
                   <Area
@@ -939,7 +964,8 @@ export default function Dashboard() {
                     fill="url(#ov-lat-fill)"
                     dot={loneDot('overall', OVERALL_COLOR)}
                     activeDot={{ r: 4, stroke: 'var(--panel)', strokeWidth: 2 }}
-                    isAnimationActive={false}
+                    isAnimationActive={animLat}
+                    animationDuration={800}
                   />
                 </ComposedChart>
               </ResponsiveContainer>

@@ -79,6 +79,10 @@
   --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
   --r-card: 22px;
   --r-ctl: 12px;
+  /* Motion: one easing (fast out, gentle settle) and a few durations. */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 0.15s;
+  --t-med: 0.28s;
 }
 
 /* ---- Base ---- */
@@ -268,6 +272,7 @@ td,
   text-transform: uppercase;
 }
 .tb-nav {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -303,6 +308,26 @@ td,
 .tb-nav button.active {
   background: var(--pill);
   color: var(--on-pill);
+}
+/* Once measured, one pill slides under the current tab instead of each tab
+   painting its own. */
+.tb-ind {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 0;
+  border-radius: 999px;
+  background: var(--pill);
+  transition:
+    transform 0.38s var(--ease),
+    width 0.38s var(--ease);
+}
+.tb-nav button {
+  position: relative;
+  z-index: 1;
+}
+.tb-nav.has-ind button.active {
+  background: transparent;
 }
 .tb-count {
   min-width: 18px;
@@ -1526,9 +1551,164 @@ td.table-empty .spinner-wrap {
 }
 @keyframes slide-in {
   from {
-    transform: translateX(24px);
+    transform: translateX(40px);
     opacity: 0;
   }
+}
+
+/* ---- Motion ----
+   Entrances only (nothing animates on the polling refreshes), and with
+   fill-mode "backwards": once an animation ends the element keeps no
+   transform, so fixed popups inside it still position against the page. The
+   prefers-reduced-motion rule above turns all of it off. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(12px);
+  }
+}
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes reveal {
+  from {
+    clip-path: inset(0 100% 0 0 round 14px);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 14px);
+  }
+}
+@keyframes ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--k) 45%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--k) 0%, transparent);
+  }
+}
+
+/* A page enters with a short rise, its blocks one after another. */
+.page-in > * > :not(.scrim):not(.drawer) {
+  animation: rise 0.36s var(--ease) backwards;
+}
+.page-in > * > :nth-child(2) {
+  animation-delay: 30ms;
+}
+.page-in > * > :nth-child(3) {
+  animation-delay: 60ms;
+}
+.page-in > * > :nth-child(4) {
+  animation-delay: 90ms;
+}
+.page-in > * > :nth-child(5) {
+  animation-delay: 120ms;
+}
+.page-in > * > :nth-child(n + 6) {
+  animation-delay: 150ms;
+}
+
+/* Dialogs scale up out of their scrim; menus and sheets pop from their
+   anchor. */
+.scrim.center > .dialog {
+  animation: dialog-in var(--t-med) var(--ease);
+}
+.drawer {
+  animation-duration: var(--t-med);
+  animation-timing-function: var(--ease);
+}
+.acct-menu {
+  transform-origin: top right;
+  animation: pop var(--t-fast) var(--ease);
+}
+.tabbar-sheet {
+  transform-origin: bottom right;
+  animation: sheet-in 0.2s var(--ease);
+}
+.tabbar-scrim {
+  animation: fade var(--t-fast) ease-out;
+}
+
+/* Meters fill from the left when they appear, and glide when they change. */
+.meter > i,
+.mini > i,
+.mini > span {
+  transform-origin: left center;
+  animation: grow-x 0.7s var(--ease) backwards;
+  transition: width 0.4s var(--ease);
+}
+
+/* A dot that needs attention breathes. */
+.dot.pulse {
+  animation: ring 1.8s ease-out infinite;
+}
+
+/* Interactive controls ease between states and give a little on press. */
+.btn,
+.seg button,
+.tabs > a,
+.tabs > button,
+.subtabs > button,
+.tb-theme button,
+.tabbar button,
+.close,
+button.del {
+  transition:
+    background-color var(--t-fast) ease,
+    border-color var(--t-fast) ease,
+    color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease,
+    transform var(--t-fast) ease,
+    filter var(--t-fast) ease;
+}
+.btn:active:not(:disabled),
+.tabbar button:active,
+.tb-theme button:active {
+  transform: scale(0.97);
+}
+tbody tr {
+  transition: background-color 0.12s ease;
+}
+:where(input, select, textarea) {
+  transition:
+    border-color var(--t-fast) ease,
+    box-shadow var(--t-fast) ease,
+    background-color var(--t-fast) ease;
+}
+.thumb,
+.switch::after {
+  transition: left 0.22s var(--ease);
+}
+.track,
+.switch {
+  transition: background-color 0.22s ease;
+}
+
+/* The theme switch cross-fades the page (View Transitions, where supported). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.32s;
+  animation-timing-function: ease;
 }
 
 /* ---- Spinner ---- */

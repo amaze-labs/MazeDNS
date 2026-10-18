@@ -169,12 +169,37 @@
 }
 
 /* Hero: resolution flow band. */
+/* The hero: a gradient card in the accent's teal. Inside it the four
+   outcome hues keep their meaning in lighter tints, so they read on teal. */
 .pg-overview .ov-flow {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 22px 26px 20px;
-  margin: 10px 0 20px;
+  --text: #ffffff;
+  --muted: rgba(255, 255, 255, 0.74);
+  --cache: #a6f0e2;
+  --fwd: #b9c8ff;
+  --block: #ffaaa3;
+  --rewrite: #ffd98e;
+  --soft: rgba(255, 255, 255, 0.16);
+  position: relative;
+  overflow: hidden;
+  color: var(--text);
+  background:
+    radial-gradient(90% 120% at 88% -10%, rgba(255, 255, 255, 0.22), transparent 55%),
+    radial-gradient(60% 90% at 0% 110%, rgba(6, 34, 29, 0.35), transparent 60%),
+    linear-gradient(135deg, #17a08c 0%, #0e7a6c 55%, #0b5e55 100%);
+  border-radius: var(--r-card);
+  box-shadow: 0 22px 44px -22px rgba(14, 122, 108, 0.65);
+  padding: 26px 28px 24px;
+  margin: 10px 0 22px;
+}
+:root[data-theme='dark'] .pg-overview .ov-flow {
+  background:
+    radial-gradient(90% 120% at 88% -10%, rgba(255, 255, 255, 0.14), transparent 55%),
+    radial-gradient(60% 90% at 0% 110%, rgba(4, 20, 18, 0.45), transparent 60%),
+    linear-gradient(135deg, #168a79 0%, #0f6157 55%, #0b4741 100%);
+  box-shadow: 0 22px 44px -26px rgba(0, 0, 0, 0.8);
+}
+.pg-overview .ov-flow .warn-text {
+  color: var(--rewrite);
 }
 .pg-overview .ov-flow-head {
   display: flex;
@@ -216,8 +241,8 @@
   display: flex;
   gap: 3px;
   height: 52px;
-  margin: 20px 0 14px;
-  border-radius: 10px;
+  margin: 22px 0 18px;
+  border-radius: 14px;
   overflow: hidden;
 }
 .pg-overview .ov-band > div {
@@ -226,7 +251,7 @@
   min-width: 6px;
   padding: 0 14px;
   overflow: hidden;
-  color: #fff;
+  color: #08302a;
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
@@ -235,7 +260,6 @@
 .pg-overview .ov-band > div span {
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
 }
 .pg-overview .ov-band > .empty-band {
   flex: 1;
@@ -581,5 +605,17 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: 40px;
+  }
+}
+
+/* Phones: the time window spans the width, every option the same size, so
+   all of them fit down to a 375px screen. */
+@media (max-width: 640px) {
+  .range-bar > .seg {
+    width: 100%;
+  }
+  .range-bar > .seg button {
+    flex: 1;
+    padding-inline: 4px;
   }
 }

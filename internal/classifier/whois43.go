@@ -27,6 +27,7 @@ const whois43Timeout = 5 * time.Second
 // with less data (DENIC returns only the status without "-T dn").
 var whois43QueryFormat = map[string]string{
 	"whois.denic.de": "-T dn %s",
+	"whois.jprs.jp":  "%s/e", // English field names; Japanese ones otherwise
 }
 
 // The IANA referral arrives over plain TCP, so it is untrusted input: the named
@@ -217,28 +218,32 @@ func parseWhois43(domain, text string) WhoisInfo {
 				continue
 			}
 		}
-		k, v, ok := whoisField(line)
+		k, v, ok := bracketField(trimmed)
+		if !ok {
+			k, v, ok = whoisField(line)
+		}
 		if !ok {
 			continue
 		}
 		switch k {
 		case "creation date", "created", "created on", "registered", "registered on",
-			"registration date", "registration time", "domain registration date", "domain record activated":
+			"registration date", "registration time", "domain registration date", "domain record activated",
+			"registered date", "connected date": // JPRS: co.jp names often have only the latter
 			set(&info.Created, v)
 		case "registry expiry date", "registrar registration expiration date", "expiry date",
 			"expiration date", "expires", "expires on", "paid-till", "renewal date":
 			set(&info.Expires, v)
-		case "updated date", "last updated", "last-update", "changed", "last modified":
+		case "updated date", "last updated", "last update", "last-update", "changed", "last modified":
 			set(&info.Updated, v)
 		case "registrar", "sponsoring registrar":
 			set(&info.Registrar, v)
-		case "registrant organization", "registrant", "org":
+		case "registrant organization", "registrant", "org", "organization":
 			set(&info.Registrant, v)
 		case "name server", "nserver", "nameserver", "nameservers":
 			if ns := strings.ToLower(strings.TrimSuffix(strings.Fields(v)[0], ".")); ns != "" {
 				info.Nameservers = append(info.Nameservers, ns)
 			}
-		case "domain status", "status":
+		case "domain status", "status", "state":
 			info.Status = append(info.Status, strings.Fields(v)[0])
 		case "dnssec":
 			v = strings.ToLower(v)
@@ -250,6 +255,26 @@ func parseWhois43(domain, text string) WhoisInfo {
 	}
 	info.AgeDays = ageDays(info.Created)
 	return info
+}
+
+// bracketField splits JPRS's "[Key]   value" lines (.jp), optionally prefixed
+// with an item letter ("p. [Name Server]   ns1.example.jp"), into a lower-cased
+// key and its value. Their values hold colons ("01:05:03 (JST)"), so they
+// can't go through whoisField.
+func bracketField(line string) (string, string, bool) {
+	if len(line) > 3 && line[1] == '.' && line[2] == ' ' && line[0] >= 'a' && line[0] <= 'z' {
+		line = line[3:]
+	}
+	if !strings.HasPrefix(line, "[") {
+		return "", "", false
+	}
+	k, v, ok := strings.Cut(line[1:], "]")
+	if !ok {
+		return "", "", false
+	}
+	k = strings.ToLower(strings.TrimSpace(k))
+	v = strings.TrimSpace(v)
+	return k, v, k != "" && v != ""
 }
 
 // sectionField reads one indented line under a section header (see

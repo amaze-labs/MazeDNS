@@ -231,3 +231,21 @@ func TestLogRequestsBadNodeKeySnapshot(t *testing.T) {
 		t.Errorf("warn line leaks the node key: %s", text)
 	}
 }
+
+// The UI's session probe answers 401 whenever nobody is signed in: that's not
+// a failure, so it stays at debug. Any other 401 is still a warning.
+func TestLogRequestsSessionProbe(t *testing.T) {
+	logs := captureLogs(t)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+	})
+	logRequests(h).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/auth/me", nil))
+	if len(logs.atLevel(slog.LevelWarn)) != 0 || len(logs.records) != 1 {
+		t.Errorf("/api/auth/me 401: %d records, %d warnings; want one debug line", len(logs.records), len(logs.atLevel(slog.LevelWarn)))
+	}
+	logs.reset()
+	logRequests(h).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if len(logs.atLevel(slog.LevelWarn)) != 1 {
+		t.Error("a 401 elsewhere must still warn")
+	}
+}

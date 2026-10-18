@@ -67,7 +67,9 @@ func logRequests(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK // handler wrote nothing: net/http sends 200
 		}
-		if status < 400 {
+		// The UI asks /api/auth/me on every load to learn whether someone is
+		// signed in; "no" (401) is the expected answer on the sign-in page.
+		if status < 400 || status == http.StatusUnauthorized && r.URL.Path == "/api/auth/me" {
 			slog.Debug("http", "method", r.Method, "path", r.URL.Path, "status", status)
 			return
 		}

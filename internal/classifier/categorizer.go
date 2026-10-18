@@ -131,3 +131,39 @@ func (c *Categorizer) Status() categories.Status {
 func isLegacyContent(cat string) bool {
 	return IsContentCategory(cat) && cat != categories.Other
 }
+
+// DomainsFor returns the per-domain corrections agents need to block the given
+// categories exactly as the control plane labels them: every operator override
+// (one moving a domain out of a blocked category exempts it), and the model's
+// labels in blocked categories for domains the database doesn't know (where it
+// does, its category is what the control plane shows, so it is what counts).
+func (c *Categorizer) DomainsFor(blocked []string) map[string]string {
+	if len(blocked) == 0 {
+		return nil
+	}
+	want := make(map[string]bool, len(blocked))
+	for _, b := range blocked {
+		want[b] = true
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]string, len(c.overrides))
+	for d, o := range c.overrides {
+		out[d] = o.Category
+	}
+	for d, cat := range c.verdicts.Content {
+		if !want[cat] {
+			continue
+		}
+		if _, overridden := out[d]; overridden {
+			continue
+		}
+		if c.db != nil {
+			if _, known := c.db.Lookup(d); known {
+				continue
+			}
+		}
+		out[d] = cat
+	}
+	return out
+}

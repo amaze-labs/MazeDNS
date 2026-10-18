@@ -113,3 +113,48 @@ func TestCategoryOverrideAPI(t *testing.T) {
 		t.Errorf("after delete: %v", got)
 	}
 }
+
+// Agents get the per-domain corrections for the blocked categories with the
+// replicated settings: every override, and model labels in blocked categories
+// for domains the database doesn't know. They are never stored.
+func TestReplicatedSettingsCarryCategoryDomains(t *testing.T) {
+	s, st := newCategoryServer(t) // the database knows facebook.com (social)
+	if err := st.SaveSettings(`{"upstreams":["192.0.2.1:53"],"blocked_categories":["gambling"]}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []store.Classification{
+		{Domain: "bet.example", Category: "other", Status: store.ClassClean, ContentCategory: "gambling", ContentChecked: true},
+		{Domain: "news.example", Category: "other", Status: store.ClassClean, ContentCategory: "news", ContentChecked: true},
+		{Domain: "facebook.com", Category: "other", Status: store.ClassClean, ContentCategory: "gambling", ContentChecked: true},
+	} {
+		if _, err := st.InsertClassification(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.SetCategoryOverride("casino-blog.example", "news", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.categorizer.Refresh()
+
+	raw, err := s.replicatedSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var set resolver.Settings
+	if err := json.Unmarshal(raw, &set); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"bet.example": "gambling", "casino-blog.example": "news"}
+	if len(set.CategoryDomains) != len(want) {
+		t.Fatalf("category_domains = %v, want %v", set.CategoryDomains, want)
+	}
+	for d, c := range want {
+		if set.CategoryDomains[d] != c {
+			t.Errorf("%s = %q, want %q", d, set.CategoryDomains[d], c)
+		}
+	}
+	stored, _ := st.GetSettings()
+	if strings.Contains(stored, "category_domains") {
+		t.Errorf("category_domains was stored: %s", stored)
+	}
+}

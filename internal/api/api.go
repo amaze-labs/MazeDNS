@@ -891,6 +891,12 @@ func (s *Server) replicatedSettings() (json.RawMessage, error) {
 	}
 	set.NormalizeUpstreams()
 	set.Forwarders = nil
+	set.CategoryDomains = nil
+	if s.categorizer != nil {
+		// Per-domain corrections for the blocked categories. Part of the
+		// settings payload, so its version changes with them and agents re-sync.
+		set.CategoryDomains = s.categorizer.DomainsFor(set.BlockedCategories)
+	}
 	return json.Marshal(set)
 }
 
@@ -1653,6 +1659,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	in.CategoryDomains = nil // computed when replicating, never stored
 	if len(in.Upstreams) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one upstream is required")
 		return

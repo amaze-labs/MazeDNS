@@ -192,6 +192,7 @@ func (s *Server) putBlockedCategories(w http.ResponseWriter, r *http.Request) {
 	}
 	before := strings.Join(set.BlockedCategories, ", ")
 	set.BlockedCategories = cats
+	set.CategoryDomains = nil // computed when replicating, never stored
 	b, err := json.Marshal(set)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

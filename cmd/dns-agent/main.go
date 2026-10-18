@@ -14,13 +14,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/miekg/dns"
 
 	"github.com/IPMaze/MazeDNS/internal/boot"
+	"github.com/IPMaze/MazeDNS/internal/categories"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
 	"github.com/IPMaze/MazeDNS/internal/config"
 	"github.com/IPMaze/MazeDNS/internal/logbuf"
@@ -104,6 +107,14 @@ func main() {
 			liveTap.Write(e)
 		},
 	})
+	// Categories blocked network-wide (adult, gambling, …): the category database
+	// for just those, next to the agent's database, refreshed daily. Nothing is
+	// loaded while no category is blocked. Off with MAZEDNS_CATEGORY_DB=off.
+	if !strings.EqualFold(os.Getenv("MAZEDNS_CATEGORY_DB"), "off") {
+		catDB := categories.NewHolder(&categories.Source{Dir: filepath.Dir(cfg.Database.Path)}, false)
+		go catDB.Run(context.Background())
+		res.SetCategoryDB(catDB) // before ApplySettings, which sets what it loads
+	}
 	res.ApplySettings(boot.EffectiveSettings(st, cfg))
 	go res.MaintainUpstreams(context.Background())
 	if ts, _ := st.GetBlockPausedUntil(); ts > 0 {

@@ -230,3 +230,41 @@ func TestCategorizerLocalAnswersAndBuiltin(t *testing.T) {
 		t.Errorf("relabel moved %d, err %v; want 2", n, err)
 	}
 }
+
+// A customer's site on a shared hosting platform doesn't inherit the
+// platform's built-in label: the model's verdict on it stands, and reaches
+// the agents when its category is blocked. A security verdict the classifier
+// enforces is never hidden behind "local".
+func TestCategorizerBuiltinSafety(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	for _, cl := range []store.Classification{
+		{Domain: "naughty.github.io", Category: "other", Status: store.ClassClean, ContentCategory: "adult", ContentChecked: true},
+		{Domain: "phish-login.com", Category: "phishing", Block: true, Status: store.ClassAuto},
+	} {
+		if _, err := st.InsertClassification(cl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := NewCategorizer(st, nil)
+	if err := c.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if cat, src := c.Category("naughty.github.io"); cat != "adult" || src != SourceModel {
+		t.Errorf("naughty.github.io = %s (%s), want the model's adult", cat, src)
+	}
+	if cat, _ := c.Category("github.io"); cat != "technology" {
+		t.Errorf("github.io itself = %s, want technology", cat)
+	}
+	if got := c.DomainsFor([]string{"adult"}); got["naughty.github.io"] != "adult" {
+		t.Errorf("DomainsFor(adult) = %v, want naughty.github.io blocked", got)
+	}
+	e := []store.QueryLogEntry{{Name: "phish-login.com.", Action: "rewrite"}}
+	c.Label(e)
+	if e[0].ContentCategory != "phishing" {
+		t.Errorf("rewritten phishing domain labelled %q, want phishing", e[0].ContentCategory)
+	}
+}

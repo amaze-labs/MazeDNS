@@ -247,9 +247,12 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/tokens", s.requireSession(roleAdmin, s.createAPIToken))
 		mux.HandleFunc("DELETE /api/tokens/{id}", s.requireSession(roleAdmin, s.deleteAPIToken))
 
+		// Build version: the console shows it under the name, and the cluster
+		// view compares each agent's app_version against it.
+		mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
+
 		// Cluster control plane (master only).
 		if clusterEnabled {
-			mux.HandleFunc("GET /api/version", s.requireRole(roleReadonly, s.serverVersion))
 			mux.HandleFunc("GET /api/cluster/nodes", s.requireRole(roleReadonly, s.clusterNodes))
 			mux.HandleFunc("POST /api/cluster/nodes", s.requireSession(roleAdmin, s.addNode))
 			mux.HandleFunc("POST /api/cluster/nodes/{id}/key", s.requireSession(roleAdmin, s.renewNodeKey))

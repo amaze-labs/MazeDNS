@@ -107,6 +107,16 @@ export default function App() {
   const clusterOn = !!info?.cluster_enabled
   const badges = useNavBadges({ agents: !!user && clusterOn, filtering: !!user })
 
+  // The running build, shown under the name in the sidebar.
+  const [appVersion, setAppVersion] = useState('')
+  useEffect(() => {
+    if (!user) return
+    api
+      .serverVersion()
+      .then((v) => setAppVersion(v.version))
+      .catch(() => {})
+  }, [user])
+
   const logout = async () => {
     // Prevent auto-login from immediately bouncing back into SSO on the next render.
     sessionStorage.setItem(SKIP_AUTOLOGIN_KEY, '1')
@@ -158,10 +168,11 @@ export default function App() {
     <div className={`app ${collapsed ? 'collapsed' : ''}`}>
       <aside className="sidebar">
         <div className="side-brand">
-          <span className="brand-logo">
-            <img src="/favicon.svg" alt="" width={22} height={22} />
+          <img className="brand-logo" src="/favicon.svg" alt="" width={40} height={40} />
+          <span className="brand-text">
+            <span className="brand-name">MazeDNS</span>
+            {appVersion && <span className="brand-version">{appVersion}</span>}
           </span>
-          <span className="brand-name">MazeDNS</span>
         </div>
         <nav className="side-nav" aria-label="Main">
           {tabs.map((t) => (

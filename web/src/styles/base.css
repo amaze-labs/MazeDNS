@@ -221,18 +221,43 @@ td,
   border-right: 1px solid var(--line);
   min-width: 0;
 }
+/* Brand: same proportions as the IPMaze sidebar (40px tile, name over version). */
 .side-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 10px 22px;
-  font-weight: 700;
-  font-size: 16px;
-  letter-spacing: -0.01em;
+  gap: 12px;
+  padding: 4px 8px;
+  margin-bottom: 36px;
   white-space: nowrap;
 }
 .brand-logo {
-  display: inline-flex;
+  flex: none;
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+}
+.brand-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.25;
+}
+.brand-name {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.4;
+}
+.brand-version {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 .side-nav {
   display: grid;
@@ -323,7 +348,7 @@ td,
 .app.collapsed .side-label,
 .app.collapsed .side-count,
 .app.collapsed .side-username,
-.app.collapsed .brand-name {
+.app.collapsed .brand-text {
   display: none;
 }
 .app.collapsed .side-nav button,

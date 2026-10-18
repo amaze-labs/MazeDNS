@@ -26,7 +26,18 @@ remaining wins concentrate.
 
 ## Already applied (verified in code)
 
-- **Upstream connection reuse** — `dotUpstream` keeps a warm TLS pool, and
+- **Pipelined stream upstreams** — DoT and plain-TCP upstreams carry several
+  queries at once per connection, matched by message ID (`pipeline.go`, RFC 7766
+  §6.2.1.1 / RFC 7858 §3.3), so a burst of misses rides warm sessions instead of
+  paying a handshake each. How much a server lets share a connection varies
+  (Cloudflare: 30+; Quad9 drops the connection at 2–3), so each upstream learns
+  its limit (double while it keeps up, halve on a drop with several in flight,
+  stay below the failing level for 10 min) and scales its connection count to
+  ~64 queries in flight, opening at most 8 at once. A query on a dropped
+  connection gets up to 3 tries. Measured live, 10 bursts of 30 misses (median /
+  p90 / failures of 300): Cloudflare 16/77ms/0 → 14/17ms/0, Quad9 31/127ms/5 →
+  32/96ms/1. This replaces the earlier one-query-per-connection pool below.
+- **Upstream connection reuse** *(superseded by pipelining)* — `dotUpstream` kept a warm TLS pool, and
   `plainUpstream` (TCP mode) keeps a warm plain-TCP pool sharing the same
   `getPooledConn`/`putPooledConn` bounded-pool code (`upstream.go`); both are kept
   alive by `MaintainUpstreams` (`resolver.go:259`) via a `warmer` interface. UDP

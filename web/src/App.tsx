@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Dashboard from './components/Dashboard'
 import Queries from './components/Queries'
 import Clients from './components/Clients'
@@ -14,6 +14,7 @@ import Setup from './components/Setup'
 import Spinner from './components/Spinner'
 import { Icon, type IconName } from './components/icons'
 import { useTheme } from './theme'
+import { withViewTransition } from './motion'
 import { useNavBadges } from './useNavBadges'
 import { api, UNAUTHORIZED, type SessionUser, type AuthInfo } from './api'
 
@@ -58,7 +59,13 @@ export default function App() {
   const [info, setInfo] = useState<AuthInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [moreOpen, setMoreOpen] = useState(false)
-  const { theme, toggle } = useTheme()
+  const { theme, toggle: flipTheme } = useTheme()
+  // The theme switch cross-fades the whole page where the browser can.
+  const toggle = () => withViewTransition(flipTheme)
+  // The active-tab pill slides between tabs: its offset and width follow the
+  // current tab's button.
+  const navRef = useRef<HTMLElement>(null)
+  const [ind, setInd] = useState<{ x: number; w: number } | null>(null)
 
   // navigate switches tab and pushes the matching path into history.
   const navigate = (t: Tab) => {
@@ -111,6 +118,22 @@ export default function App() {
       .then((v) => setAppVersion(v.version))
       .catch(() => {})
   }, [user])
+
+  // Re-measure the active-tab pill whenever the tab, the tab set or a count
+  // badge (which changes a button's width) changes, and on resize.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const btn = navRef.current?.querySelector<HTMLElement>('button.active')
+      setInd((cur) => {
+        const next = btn ? { x: btn.offsetLeft, w: btn.offsetWidth } : null
+        return cur && next && cur.x === next.x && cur.w === next.w ? cur : next
+      })
+    }
+    measure()
+    document.fonts?.ready.then(measure)
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [tab, user, info, badges.agents, badges.filtering, appVersion])
 
   const logout = async () => {
     // Prevent auto-login from immediately bouncing back into SSO on the next render.
@@ -179,7 +202,8 @@ export default function App() {
           <span className="brand-name">MazeDNS</span>
           {appVersion && <span className="brand-version">{appVersion}</span>}
         </a>
-        <nav className="tb-nav" aria-label="Main">
+        <nav className={`tb-nav${ind ? ' has-ind' : ''}`} aria-label="Main" ref={navRef}>
+          {ind && <span className="tb-ind" style={{ transform: `translateX(${ind.x}px)`, width: ind.w }} aria-hidden="true" />}
           {tabs.map((t) => (
             <button
               key={t}
@@ -259,7 +283,7 @@ export default function App() {
           </div>
         </>
       )}
-      <main>
+      <main key={shown} className="page-in">
         {shown === 'overview' && <Dashboard />}
         {shown === 'queries' && <Queries />}
         {shown === 'clients' && <Clients />}

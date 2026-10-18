@@ -237,7 +237,9 @@
 .pg-overview .ov-meta .spinner-wrap {
   padding: 0;
 }
+/* The hero bar sweeps in from the left on load. */
 .pg-overview .ov-band {
+  animation: reveal 0.9s var(--ease) 0.1s backwards;
   display: flex;
   gap: 3px;
   height: 52px;

@@ -264,6 +264,7 @@ func filterRewritesForNode(all []Rewrite, nodeName, nodeSite string) []Rewrite {
 		if effectiveRank > rank[k] {
 			rank[k] = effectiveRank
 			rw.ScopeType, rw.ScopeValues = "", nil
+			rw.Source, rw.ExternalID = "", ""
 			best[k] = rw
 		}
 	}

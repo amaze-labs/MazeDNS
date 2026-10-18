@@ -121,7 +121,11 @@ func (h *Holder) load(ctx context.Context) time.Duration {
 	}
 	h.idx.Store(idx)
 	h.status = Status{Categories: cats, Domains: idx.Len(), Counts: idx.Counts(), UpdatedAt: time.Now().Unix()}
-	slog.Info("category database loaded", "categories", cats, "domains", idx.Len(), "took", time.Since(start).Round(time.Millisecond))
+	which := any(cats)
+	if h.all {
+		which = "all"
+	}
+	slog.Info("category database loaded", "categories", which, "domains", idx.Len(), "took", time.Since(start).Round(time.Millisecond))
 	return refreshEvery
 }
 

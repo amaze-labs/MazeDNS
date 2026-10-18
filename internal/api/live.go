@@ -113,12 +113,13 @@ func liveFilterFromQuery(q url.Values) cluster.LiveFilter {
 	return cluster.LiveFilter{
 		Client: get("client"), Domain: strings.ToLower(get("domain")), QType: get("qtype"),
 		Action: get("action"), Category: get("category"), Rcode: get("rcode"),
+		Content: get("content"),
 	}
 }
 
 // streamQueryLog serves the Live view as server-sent events: one "data:" event
 // per query (JSON QueryLogEntry) from the agents in ?nodes= (all when empty),
-// filtered by ?client= ?domain= ?qtype= ?action= ?category= ?rcode=.
+// filtered by ?client= ?domain= ?qtype= ?action= ?category= ?rcode= ?content=.
 func (s *Server) streamQueryLog(w http.ResponseWriter, r *http.Request) {
 	sub := s.live.add(parseNodes(r), liveFilterFromQuery(r.URL.Query()))
 	defer s.live.remove(sub)

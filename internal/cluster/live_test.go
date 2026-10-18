@@ -58,3 +58,18 @@ func TestShipLogsDrainsBacklog(t *testing.T) {
 		t.Fatalf("shipped up to %d of %d in %d posts, want everything in 3", ag.lastShipped, max, len(cp.headers))
 	}
 }
+
+// The content filter can only be applied once an entry is labelled (on the
+// control plane): an agent passes unlabelled entries through.
+func TestLiveFilterContent(t *testing.T) {
+	f := LiveFilter{Content: "social"}
+	if !f.Match(store.QueryLogEntry{Name: "facebook.com."}) {
+		t.Error("an unlabelled entry (on the agent) must pass")
+	}
+	if !f.Match(store.QueryLogEntry{Name: "facebook.com.", ContentCategory: "social"}) {
+		t.Error("a matching labelled entry must pass")
+	}
+	if f.Match(store.QueryLogEntry{Name: "amazon.com.", ContentCategory: "shopping"}) {
+		t.Error("a labelled entry in another category must not pass")
+	}
+}

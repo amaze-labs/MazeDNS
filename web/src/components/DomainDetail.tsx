@@ -3,6 +3,7 @@ import { DomainCategoryEditor } from '../categories'
 import { api, type Classification, type DomainClient, type WhoisInfo } from '../api'
 import Modal from './Modal'
 import Spinner from './Spinner'
+import { SkelList } from './Skeleton'
 import { DecisionActions, DecisionFields, useDecision, type Decision } from './DecisionModal'
 
 // Shared with the review table (Classifier).
@@ -293,7 +294,7 @@ export default function DomainDetail({
         {clientsErr ? (
           <p className="muted nomargin">Clients unavailable: {clientsErr}</p>
         ) : clients === null ? (
-          <Spinner label="Loading…" />
+          <SkelList rows={3} />
         ) : clients.length === 0 ? (
           <p className="muted nomargin">No queries for this domain in the last 7 days.</p>
         ) : (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type Classification, type ClassifierStatus } from '../api'
 import Spinner from './Spinner'
+import { SkelList } from './Skeleton'
 import ClassifierHelp from './ClassifierHelp'
 import DomainDetail, { catTag, scoreTone, statusLabel } from './DomainDetail'
 import DecisionModal, { type Decision } from './DecisionModal'
@@ -506,7 +507,7 @@ export default function Classifier({
             {listErr ? (
               <span className="bad-text">{listErr}</span>
             ) : !listLoaded ? (
-              <Spinner label="Loading…" />
+              <SkelList rows={4} />
             ) : listRows.length === 0 ? (
               <span className="muted">No matches.</span>
             ) : (

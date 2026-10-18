@@ -1711,6 +1711,202 @@ tbody tr {
   animation-timing-function: ease;
 }
 
+/* ---- Loading placeholders (Skeleton.tsx) ----
+   A soft band of light sweeps across each placeholder. */
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.skel {
+  --skel: var(--soft);
+  --skel-hi: color-mix(in srgb, var(--soft) 55%, var(--panel));
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--skel) 30%, var(--skel-hi) 50%, var(--skel) 70%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+:root[data-theme='dark'] .skel {
+  --skel-hi: color-mix(in srgb, var(--soft) 60%, var(--line));
+}
+/* On the teal hero: translucent white. */
+.skel.on-dark {
+  --skel: rgba(255, 255, 255, 0.16);
+  --skel-hi: rgba(255, 255, 255, 0.3);
+}
+.skel-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.4%;
+  padding: 6px 4px 28px 42px;
+  box-sizing: border-box;
+  background-image: repeating-linear-gradient(to top, transparent 0 calc(25% - 1px), var(--soft) calc(25% - 1px) 25%);
+  background-size: 100% calc(100% - 28px);
+  background-repeat: no-repeat;
+  background-position: 0 6px;
+}
+.skel-bars > .skel {
+  flex: 1;
+  border-radius: 4px 4px 0 0;
+}
+.skel-line {
+  position: relative;
+  box-sizing: border-box;
+  padding: 6px 4px 28px 58px;
+  background-image: repeating-linear-gradient(to top, transparent 0 calc(33.3% - 1px), var(--soft) calc(33.3% - 1px) 33.3%);
+  background-size: 100% calc(100% - 28px);
+  background-repeat: no-repeat;
+  background-position: 0 6px;
+}
+.skel-line svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.skel-line path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  animation: skel-pulse 1.4s ease-in-out infinite;
+}
+@keyframes skel-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+.skel-donut {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 6px 0;
+}
+.skel-donut .ring {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  -webkit-mask: radial-gradient(circle, transparent 47px, #000 48px);
+  mask: radial-gradient(circle, transparent 47px, #000 48px);
+}
+.skel-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+.skel-rank {
+  display: grid;
+  gap: 14px 28px;
+  padding: 4px 0;
+}
+.skel-rank > div {
+  display: grid;
+  gap: 8px;
+}
+.skel-rank-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.skel-stack {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.skel-list {
+  display: grid;
+  padding: 4px 0;
+}
+.skel-list-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.skel-group {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  padding: 22px 0;
+  border-top: 1px solid var(--line);
+}
+.skel-group:first-child {
+  border-top: 0;
+  padding-top: 8px;
+}
+.skel-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.skel-figures > div {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.skel-toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0 28px;
+}
+.skel-toggles > div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--soft);
+}
+@media (max-width: 900px) {
+  .skel-group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+}
+tr.skel-row td {
+  padding-top: 13px;
+  padding-bottom: 13px;
+}
+tr.skel-row:hover {
+  background: none;
+}
+
+/* A page-wide "updating" bar along the top edge of the window: a short
+   accent streak that runs across while a refresh is in flight. */
+@keyframes progress-run {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+.page-progress {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  animation: fade 0.2s ease-out;
+}
+.page-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 25%;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(90deg, transparent, var(--accent));
+  animation: progress-run 1.1s var(--ease) infinite;
+}
+
 /* ---- Spinner ---- */
 .spinner-wrap {
   display: inline-flex;

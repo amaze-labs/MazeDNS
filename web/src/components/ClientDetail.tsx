@@ -3,7 +3,7 @@ import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recha
 import { api, type ClientDetail as Detail, type ClientIdentity } from '../api'
 import { invalidateClientName } from '../useClientNames'
 import Modal from './Modal'
-import Spinner from './Spinner'
+import { SkelDetail } from './Skeleton'
 import { SOURCE_LABEL } from './ClientLabel'
 import { fmtMs, timeAgo, windowLabel } from './tableKit'
 import { CategoryBars, useCategories } from '../categories'
@@ -169,7 +169,7 @@ export default function ClientDetail({
       {saveMsg && <div className="ok-msg" style={{ margin: 0 }}>{saveMsg}</div>}
 
       {err && <div className="error" style={{ margin: 0 }}>{err}</div>}
-      {!d && !err && <Spinner label="Loading…" />}
+      {!d && !err && <SkelDetail />}
       {d && t && (
         <>
           <div className="cd-split">

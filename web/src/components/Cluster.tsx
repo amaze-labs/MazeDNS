@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { api, type EnrollKey, type Node, type RevokedNode, type Site } from '../api'
 import { pollWhileVisible } from '../poll'
 import Modal from './Modal'
-import Spinner from './Spinner'
+import { Skel, SkelList } from './Skeleton'
 import { useIsAdmin } from './ScopePicker'
 import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
 import '../styles/agents.css'
@@ -416,25 +416,25 @@ export default function Cluster() {
         </div>
       )}
 
-      {/* "—" until loaded: a zero "serving DNS" figure would raise a false alarm. */}
+      {/* A placeholder until loaded: a zero "serving DNS" figure would raise a false alarm. */}
       <div className="strip ag-strip">
         <div>
           <b className={loaded && nodes.length > 0 && serving === 0 ? 'bad' : ''}>
-            {loaded ? serving : '—'}
+            {loaded ? serving : <Skel w={36} h={24} />}
             {loaded && <small> of {nodes.length}</small>}
           </b>
           <span>agents serving DNS</span>
         </div>
         <div>
-          <b>{loaded ? sitesInUse.length : '—'}</b>
+          <b>{loaded ? sitesInUse.length : <Skel w={36} h={24} />}</b>
           <span>{sitesInUse.length === 1 ? 'site' : 'sites'}</span>
         </div>
         <div>
-          <b className={behind > 0 ? 'warn' : ''}>{loaded ? behind : '—'}</b>
+          <b className={behind > 0 ? 'warn' : ''}>{loaded ? behind : <Skel w={36} h={24} />}</b>
           <span>{behind === 1 ? 'agent' : 'agents'} behind on config</span>
         </div>
         <div>
-          <b className="ag-ver">{cpVer?.version || '—'}</b>
+          <b className="ag-ver">{cpVer?.version || <Skel w={84} h={24} />}</b>
           <span>
             control plane
             {cpVer?.config_version && (
@@ -501,7 +501,18 @@ export default function Cluster() {
       ))}
 
       {!loaded ? (
-        !err && <Spinner label="Loading…" />
+        !err && (
+          <div className="ag-sites" aria-busy="true">
+            {[0, 1].map((i) => (
+              <section key={i} className="card ag-site">
+                <SkelList rows={1} />
+                <div style={{ marginTop: 18 }}>
+                  <SkelList rows={2} gap={20} />
+                </div>
+              </section>
+            ))}
+          </div>
+        )
       ) : nodes.length === 0 && sitesInUse.length === 0 ? (
         <section className="card ag-empty">
           <h2>No agents yet</h2>

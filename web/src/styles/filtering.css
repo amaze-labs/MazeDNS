@@ -736,3 +736,18 @@
     margin-bottom: 10px;
   }
 }
+
+/* Block by category. */
+.pg-filtering .cat-block {
+  display: grid;
+  gap: 14px;
+}
+.pg-filtering .cat-group h3 {
+  margin: 0 0 2px;
+}
+.pg-filtering .cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0 24px;
+  margin-top: 6px;
+}

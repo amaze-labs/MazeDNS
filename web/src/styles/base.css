@@ -1576,3 +1576,49 @@ td.actions {
     right: 0;
   }
 }
+
+/* Category breakdown (CategoryBars): a ranked list, one meter per category. */
+.cat-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cat-bars .cat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cat-bars .cat-row:hover .nm,
+.cat-bars .cat-row:focus-visible .nm {
+  text-decoration: underline;
+}
+.cat-bars .nm {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cat-bars .v {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cat-bars .meter {
+  grid-column: 1 / -1;
+  height: 5px;
+}
+.cat-bars .cat-more {
+  padding-top: 6px;
+}
+.cat-edit {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}

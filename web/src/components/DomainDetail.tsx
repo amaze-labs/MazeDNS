@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { DomainCategoryEditor } from '../categories'
 import { api, type Classification, type DomainClient, type WhoisInfo } from '../api'
 import Modal from './Modal'
 import Spinner from './Spinner'
@@ -214,6 +215,11 @@ export default function DomainDetail({
             {c.trusted && <span className="tag ok">Trusted</span>}
           </div>
         </div>
+      </div>
+
+      <div>
+        <h3>What it is</h3>
+        <DomainCategoryEditor domain={c.domain} canEdit={canEdit} />
       </div>
 
       <div>

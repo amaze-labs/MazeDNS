@@ -133,6 +133,7 @@ never the secret values), viewable at `GET /api/settings/audit`.
 | `MAZEDNS_DB_DSN` | For Postgres | *(empty)* | PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/mazedns?sslmode=disable`. Setting only the DSN implies the `postgres` driver. |
 | `MAZEDNS_BLOCKLIST_FILES` | No | *(empty)* | Local blocklist file path(s), comma/space separated (absolute paths). Replaces `filter.blocklist_files`. Loaded locally per component (not replicated). |
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error`. |
+| `MAZEDNS_CATEGORY_DB` | No | on | `off` turns domain categories off: the control plane stops labelling queries, an agent stops blocking categories. Otherwise both download the UT1 category database from `dsi.ut-capitole.fr` next to their database — all of it on the control plane (~48 MB in memory), only the blocked categories on an agent (see [Domain categories](user-guide.md#domain-categories)). |
 
 > **Never share one database between the control plane and an agent.** Each writes
 > its own tables; pointing an agent at the control plane's database would overwrite

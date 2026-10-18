@@ -542,3 +542,12 @@
     display: none;
   }
 }
+
+/* By category: full width, the ranked list in two columns on wide screens. */
+@media (min-width: 900px) {
+  .pg-overview .ov-cats .cat-bars {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 40px;
+  }
+}

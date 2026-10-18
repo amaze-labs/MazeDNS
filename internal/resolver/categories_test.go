@@ -94,11 +94,31 @@ func TestApplySettingsReusesCacheAndUpstreams(t *testing.T) {
 		t.Error("upstreams rebuilt although they didn't change")
 	}
 
+	// Anything a cached answer depends on empties the cache: answers from an
+	// upstream just replaced (perhaps for serving bad answers) must not outlive it.
+	prev := rt2.cache
+	for _, change := range []func(*Settings){
+		func(s *Settings) { s.Upstreams = []string{"tls://192.0.2.1:853", "192.0.2.4:53"} },
+		func(s *Settings) { s.DNSSEC = true },
+		func(s *Settings) {
+			s.Forwarders = []ForwardGroup{{Suffix: "corp", Upstreams: []string{"192.0.2.5:53"}}}
+		},
+		func(s *Settings) { s.Cache.MaxEntries = 300 },
+	} {
+		change(&s)
+		r.ApplySettings(s)
+		if r.rt.Load().cache == prev {
+			t.Errorf("cache kept after a change answers depend on: %+v", s)
+		}
+		prev = r.rt.Load().cache
+	}
+
+	s.Forwarders = nil
 	s.Cache.MaxEntries = 200
 	s.Upstreams = []string{"tls://192.0.2.1:853", "192.0.2.3:53"}
 	r.ApplySettings(s)
 	rt3 := r.rt.Load()
-	if rt3.cache == rt2.cache {
+	if rt3.cache == prev {
 		t.Error("cache kept although its size changed")
 	}
 	if rt3.defaultUpstreams[0] != rt2.defaultUpstreams[0] {
@@ -110,4 +130,5 @@ func TestApplySettingsReusesCacheAndUpstreams(t *testing.T) {
 	if len(r.upstreams) != 2 {
 		t.Errorf("kept %d upstreams, want only the 2 in use", len(r.upstreams))
 	}
+	_ = rt1
 }

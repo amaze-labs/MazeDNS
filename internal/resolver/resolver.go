@@ -6,6 +6,7 @@ package resolver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -164,9 +165,9 @@ type runtime struct {
 	// upstreamTimeout is the ordered strategy's per-upstream failover timeout
 	// (<= 0 = DefaultUpstreamTimeoutMs).
 	upstreamTimeout time.Duration
-	// cacheCfg is what cache was built from, so an unchanged cache survives a
-	// settings apply.
-	cacheCfg CacheSettings
+	// cacheKey identifies everything a cached answer depends on (see
+	// answerKey), so the cache survives a settings apply only when none changed.
+	cacheKey string
 	// blockedCats are the categories blocked network-wide; catDomains are the
 	// per-domain corrections to the category database (Settings.CategoryDomains).
 	blockedCats map[string]bool
@@ -207,6 +208,21 @@ type Resolver struct {
 	// and timeout, so an unchanged upstream keeps its warm connections.
 	upMu      sync.Mutex
 	upstreams map[string]Upstream
+}
+
+// answerKey identifies the settings a cached answer depends on: where queries
+// are forwarded, DNSSEC, and the cache's own bounds. Any change empties the
+// cache — answers from an upstream just replaced (perhaps for serving bad
+// answers) must not outlive it. Everything else (blocking, categories, rate
+// limit) is decided before the cache and keeps it.
+func answerKey(s Settings) string {
+	b, _ := json.Marshal(struct {
+		Upstreams  []string
+		Forwarders []ForwardGroup
+		DNSSEC     bool
+		Cache      CacheSettings
+	}{s.Upstreams, s.Forwarders, s.DNSSEC, s.Cache})
+	return string(b)
 }
 
 // SetCategoryDB attaches the category database the agent blocks categories
@@ -350,9 +366,9 @@ func (r *Resolver) ApplySettings(s Settings) {
 		rt.rate = newRateLimiter(s.RateLimitQPM)
 	}
 	if s.Cache.Enabled {
-		rt.cacheCfg = s.Cache
-		if prev := r.rt.Load(); prev != nil && prev.cache != nil && prev.cacheCfg == s.Cache {
-			rt.cache = prev.cache // unchanged: keep what it holds
+		rt.cacheKey = answerKey(s)
+		if prev := r.rt.Load(); prev != nil && prev.cache != nil && prev.cacheKey == rt.cacheKey {
+			rt.cache = prev.cache // nothing an answer depends on changed: keep what it holds
 		} else {
 			rt.cache = cache.New(s.Cache.MaxEntries,
 				time.Duration(s.Cache.MinTTLSec)*time.Second, time.Duration(s.Cache.MaxTTLSec)*time.Second)

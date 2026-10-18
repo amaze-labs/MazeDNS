@@ -19,6 +19,49 @@ export interface QueryLogEntry {
   rcode: string
   elapsed_ms: number
   node: string
+  // What the domain is (social, shopping, …); '' for entries logged before
+  // categories existed. `category` is the block reason.
+  content_category: string
+}
+
+// A domain category (see /api/categories): the taxonomy entry, how many domains
+// the category database lists for it, and whether it is blocked network-wide.
+export interface CategoryInfo {
+  id: string
+  label: string
+  security: boolean
+  domains: number
+  blocked: boolean
+}
+
+export interface CategoryDBStatus {
+  domains: number
+  updated_at: number // unix secs, 0 = never loaded
+  loading: boolean
+  error?: string
+}
+
+export interface CategoryList {
+  categories: CategoryInfo[]
+  database: CategoryDBStatus
+  enabled: boolean
+}
+
+// Where a domain's category came from.
+export type CategorySource = 'override' | 'classifier' | 'database' | 'model' | ''
+
+export interface DomainCategory {
+  domain: string
+  category: string
+  source: CategorySource
+  override?: { domain: string; category: string; set_by: string; updated_at: number }
+}
+
+// Query volume for one content category.
+export interface ContentCount {
+  category: string
+  count: number
+  blocked: number
 }
 
 export interface Rule {
@@ -375,6 +418,8 @@ export interface ClientDetail {
   avg_latency_ms: number
   actions: CategoryCount[]
   categories: CategoryCount[]
+  // All traffic by what the domains are (social, shopping, …).
+  content: CategoryCount[]
   top_domains: DomainStat[]
   top_blocked: DomainStat[]
 }
@@ -566,7 +611,20 @@ export const api = {
   categories: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/categories?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
   categoryTraffic: (hours = 24, nodes?: string[]) =>
-    fetch(`/api/stats/category-traffic?hours=${hours}${nodesParam(nodes)}`).then(j<CategoryCount[]>),
+    fetch(`/api/stats/category-traffic?hours=${hours}${nodesParam(nodes)}`).then(j<ContentCount[]>),
+  categoryList: () => fetch('/api/categories').then(j<CategoryList>),
+  domainCategory: (domain: string) =>
+    fetch(`/api/categories/domain?domain=${encodeURIComponent(domain)}`).then(j<DomainCategory>),
+  setCategoryOverride: (domain: string, category: string) =>
+    fetch('/api/categories/override', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ domain, category }) }).then(
+      j<DomainCategory>,
+    ),
+  clearCategoryOverride: (domain: string) =>
+    fetch(`/api/categories/override?domain=${encodeURIComponent(domain)}`, { method: 'DELETE' }).then(ok),
+  setBlockedCategories: (categories: string[]) =>
+    fetch('/api/categories/blocked', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ categories }) }).then(
+      j<{ categories: string[] }>,
+    ),
   insights: (hours = 24, nodes?: string[]) =>
     fetch(`/api/stats/insights?hours=${hours}${nodesParam(nodes)}`).then(j<Insights>),
   topDomains: (hours = 24, nodes?: string[]) =>
@@ -594,6 +652,7 @@ export const api = {
       action?: string
       qtype?: string
       category?: string
+      content?: string
       sort?: string
       desc?: boolean
       hours?: number
@@ -605,6 +664,7 @@ export const api = {
     if (opts.action) p.set('action', opts.action)
     if (opts.qtype) p.set('qtype', opts.qtype)
     if (opts.category) p.set('category', opts.category)
+    if (opts.content) p.set('content', opts.content)
     if (opts.sort) p.set('sort', opts.sort)
     if (opts.desc) p.set('desc', 'true')
     if (opts.nodes && opts.nodes.length) p.set('nodes', opts.nodes.join(','))

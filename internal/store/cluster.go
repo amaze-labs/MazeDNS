@@ -681,6 +681,19 @@ func (s *Store) RenameNode(id, newName string) error {
 		_ = tx.Rollback()
 		return err
 	}
+	if _, err := tx.Exec(
+		`INSERT INTO category_rollup(hour, node, category, cnt, blocked)
+		 SELECT hour, ?, category, cnt, blocked FROM category_rollup WHERE node=?
+		 ON CONFLICT(hour, node, category) DO UPDATE SET
+		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+		newName, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM category_rollup WHERE node=?`, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	return tx.Commit()
 }
 

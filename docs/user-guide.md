@@ -7,6 +7,7 @@ replicate it automatically. You never edit files on an agent.
 - [Dashboard](#dashboard)
 - [Upstreams, cache, and DNS behavior](#upstreams-cache-and-dns-behavior)
 - [Blocklists and allow/deny rules](#blocklists-and-allowdeny-rules)
+- [Domain categories](#domain-categories)
 - [Local DNS: local records](#local-dns-local-records)
 - [Client names](#client-names)
 - [Pause blocking](#pause-blocking)
@@ -93,6 +94,50 @@ Agents pick up changes automatically on their next sync.
 File-based blocklists mounted into an agent (`MAZEDNS_BLOCKLIST_FILES`) are loaded
 **locally** on that agent and are not replicated — mount them on every agent that
 should use them.
+
+## Domain categories
+
+Every query is labelled with what its domain is — social, streaming, shopping,
+news, gambling, adult, ads and about twenty more — independently of which
+blocklists you use. A domain's category comes from the first source that knows
+it:
+
+1. **Your override** — set it from a query's details or a domain's review drawer
+   (**Change**, for the whole registered domain); **Use automatic** removes it.
+2. **The classifier**, when it is blocking the domain (phishing, malware, …).
+3. **The category database**: [UT1](https://dsi.ut-capitole.fr/blacklists/),
+   published by Université Toulouse Capitole (CC BY-SA 4.0), about 5 million
+   domains. The control plane downloads it next to its database and refreshes it
+   daily.
+4. **The language model**, if one is configured, for domains the database doesn't
+   know (including trusted ones, which skip scoring). Domains scored before
+   categories existed are labelled gradually in the background.
+5. **Other**, when nothing knows the domain.
+
+Where you see them:
+
+- **Queries** — a Category column and filter (the filter matches what the domain
+  was when the query was logged; queries logged before categories have none).
+- **Overview → By category** — query volume per category for the window. Pick
+  one to open its queries.
+- **Clients** — what each device uses, per category.
+
+### Block by category
+
+**Filtering → Categories** blocks whole categories on every agent (parental
+control, a focus policy). Each agent downloads the category database for just
+the categories you block — Adult is the largest at about 45 MB of memory, most
+are under 1 MB — and nothing while none is blocked. Your allow rules still win,
+and pausing protection pauses category blocks too. Your overrides and the
+language model's labels apply on the agents as well: overriding a domain out of
+a blocked category exempts it.
+
+Categories the database doesn't cover (search, productivity, technology, CDN,
+trackers) block only what the language model and your overrides put there.
+
+`MAZEDNS_CATEGORY_DB=off` turns categories off (on the control plane: no
+labels; on an agent: no category blocking) — for example on a host that can't
+reach `dsi.ut-capitole.fr`.
 
 ## Local DNS: local records
 

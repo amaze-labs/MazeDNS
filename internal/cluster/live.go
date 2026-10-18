@@ -49,6 +49,10 @@ type LiveFilter struct {
 	Action   string `json:"action,omitempty"`
 	Category string `json:"category,omitempty"`
 	Rcode    string `json:"rcode,omitempty"`
+	// Content is the content category (social, …). Agents can't apply it —
+	// entries are labelled on the control plane — so an unlabelled entry passes
+	// and the control plane filters it after labelling.
+	Content string `json:"content,omitempty"`
 }
 
 // Match reports whether e passes the filter.
@@ -58,7 +62,8 @@ func (f LiveFilter) Match(e store.QueryLogEntry) bool {
 		(f.QType == "" || e.QType == f.QType) &&
 		(f.Action == "" || e.Action == f.Action) &&
 		(f.Category == "" || e.Category == f.Category) &&
-		(f.Rcode == "" || e.Rcode == f.Rcode)
+		(f.Rcode == "" || e.Rcode == f.Rcode) &&
+		(f.Content == "" || e.ContentCategory == "" || e.ContentCategory == f.Content)
 }
 
 // LiveState is the long-poll answer: the filters of the viewers watching the

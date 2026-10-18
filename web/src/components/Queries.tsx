@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type QueryLogEntry, type Node, type CategoryCount, type Rule, type DomainClient, type ClientIdentity } from '../api'
+import { api, type QueryLogEntry, type Node, type Rule, type DomainClient, type ClientIdentity, type CategoryList } from '../api'
+import { CategoryTag, DomainCategoryEditor, categoryLabel, useCategories } from '../categories'
 import { NodeFilter, makeNodeColor, VALID_HOURS, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
@@ -17,16 +18,6 @@ const ACTIONS = ['blocked', 'forward', 'cache', 'rewrite', 'authoritative', 'err
 const MAIN_ACTIONS = ACTIONS.slice(0, 4)
 const QTYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'PTR', 'SOA', 'SRV', 'HTTPS', 'SVCB', 'CAA', 'ANY']
 const RCODES = ['NOERROR', 'NXDOMAIN', 'SERVFAIL', 'REFUSED']
-// The full classification taxonomy (security + content), so the filter offers
-// every category — not only the ones seen in the current window.
-const BLOCK_CATS = ['ads', 'trackers', 'malware', 'phishing']
-const CONTENT_CATS = [
-  'social', 'streaming', 'shopping', 'news', 'gaming', 'productivity',
-  'search', 'email', 'finance', 'technology', 'cdn', 'adult', 'other',
-]
-const ALL_CATS = [...BLOCK_CATS, ...CONTENT_CATS]
-// Security categories are coral, "other" neutral, content categories blue.
-const catTag = (c: string) => (BLOCK_CATS.includes(c) ? 'block' : c === 'other' ? '' : 'info')
 
 // The query log stores names fully qualified ("example.com."): show them bare.
 const bare = (name: string) => name.replace(/\.$/, '')
@@ -46,6 +37,8 @@ const loadFocus = (): string[] => {
   }
 }
 const clientFromURL = () => new URLSearchParams(window.location.search).get('client') || ''
+// ?content= opens the page filtered to a category (from the Dashboard, a client).
+const contentFromURL = () => new URLSearchParams(window.location.search).get('content') || ''
 
 type Row = QueryLogEntry & { key: number | string }
 
@@ -64,9 +57,10 @@ export default function Queries() {
   const [search, setSearch] = useState(clientFromURL)
   const [action, setActionRaw] = useState('')
   const [qtype, setQtypeRaw] = useState('')
-  const [category, setCategoryRaw] = useState('')
+  // The content category filter (what the domains are: social, shopping, …).
+  const [category, setCategoryRaw] = useState(contentFromURL)
   const [rcode, setRcode] = useState('') // live only: the history API has no rcode filter
-  const [cats, setCats] = useState<CategoryCount[]>([])
+  const catList = useCategories()
 
   const [log, setLog] = useState<QueryLogEntry[]>([])
   const [total, setTotal] = useState(0)
@@ -128,6 +122,12 @@ export default function Queries() {
   // A deep link (?client=) arriving while the page is already open.
   useEffect(() => {
     const onPop = () => {
+      const content = contentFromURL()
+      if (content) {
+        setCategoryRaw(content)
+        setLive(false)
+        setPage(0)
+      }
       const c = clientFromURL()
       if (c) {
         setInput(c)
@@ -139,11 +139,6 @@ export default function Queries() {
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
-
-  // Classification options also include categories seen in the window.
-  useEffect(() => {
-    api.categories(hours, focus).then(setCats).catch(() => setCats([]))
-  }, [hours, focus])
 
   // Debounce the search box.
   useEffect(() => {
@@ -161,7 +156,7 @@ export default function Queries() {
     setLoading(true)
     const fetchLog = () =>
       api
-        .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, category, sort, desc, hours })
+        .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, content: category, sort, desc, hours })
         .then((r) => {
           if (!alive) return
           setLog(r.entries)
@@ -186,7 +181,7 @@ export default function Queries() {
   useEffect(() => {
     if (live) return
     let alive = true
-    const base = { limit: 1, search, nodes: focus, qtype, category, hours }
+    const base = { limit: 1, search, nodes: focus, qtype, content: category, hours }
     const fetchCounts = () =>
       Promise.all([api.queryLog(base), ...ACTIONS.map((a) => api.queryLog({ ...base, action: a }))])
         .then(([all, ...per]) => {
@@ -264,7 +259,6 @@ export default function Queries() {
 
   const lastPage = Math.max(0, Math.ceil(total / PAGE) - 1)
   const timeDesc = sort === 'time' && desc
-  const catOptions = [...ALL_CATS, ...cats.map((c) => c.category).filter((c) => c && !ALL_CATS.includes(c))]
 
   return (
     <div className="pg-queries">
@@ -350,11 +344,12 @@ export default function Queries() {
         </select>
         <select className="q-filter" aria-label="Category" value={category} onChange={(e) => setCategory(e.target.value)}>
           <option value="">Category: any</option>
-          {catOptions.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          {(catList?.categories ?? []).map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
             </option>
           ))}
+          {category && !catList?.categories.some((c) => c.id === category) && <option value={category}>{category}</option>}
         </select>
         {live && (
           <select className="q-filter" aria-label="Response code" value={rcode} onChange={(e) => setRcode(e.target.value)}>
@@ -378,6 +373,7 @@ export default function Queries() {
                   <th>Domain</th>
                   <th>Type</th>
                   <th>Result</th>
+                  <th className="hide-sm">Category</th>
                   <th>Client</th>
                   <th>Agent</th>
                   <th className="num">Latency</th>
@@ -388,6 +384,9 @@ export default function Queries() {
                   <Th table={sorter} col="name">Domain</Th>
                   <Th table={sorter} col="qtype">Type</Th>
                   <Th table={sorter} col="action">Result</Th>
+                  <Th table={sorter} col="content" className="hide-sm">
+                    Category
+                  </Th>
                   <Th table={sorter} col="client">Client</Th>
                   <Th table={sorter} col="node">Agent</Th>
                   <Th table={sorter} col="ms" className="num">Latency</Th>
@@ -396,14 +395,14 @@ export default function Queries() {
             </thead>
             <tbody>
               {rows.map((e) => (
-                <QueryRow key={e.key} e={e} names={names} selected={selected?.key === e.key} onClick={() => setSelected(e)} />
+                <QueryRow key={e.key} e={e} names={names} cats={catList} selected={selected?.key === e.key} onClick={() => setSelected(e)} />
               ))}
               {live ? (
-                <TableStatusRow loading={false} empty={rows.length === 0} colSpan={7}>
+                <TableStatusRow loading={false} empty={rows.length === 0} colSpan={8}>
                   {stream.state === 'paused' ? 'The stream is paused.' : stream.rows.length > 0 ? 'No query on screen matches the search.' : 'Waiting for queries…'}
                 </TableStatusRow>
               ) : (
-                <TableStatusRow loading={loading} error={err} empty={rows.length === 0} colSpan={7}>
+                <TableStatusRow loading={loading} error={err} empty={rows.length === 0} colSpan={8}>
                   No queries match these filters in the last {hours < 1 ? `${hours * 60} minutes` : hours === 1 ? 'hour' : `${hours} hours`}.
                 </TableStatusRow>
               )}
@@ -452,7 +451,19 @@ function ResultTag({ e }: { e: QueryLogEntry }) {
   )
 }
 
-function QueryRow({ e, names, selected, onClick }: { e: QueryLogEntry; names: Map<string, ClientIdentity>; selected: boolean; onClick: () => void }) {
+function QueryRow({
+  e,
+  names,
+  cats,
+  selected,
+  onClick,
+}: {
+  e: QueryLogEntry
+  names: Map<string, ClientIdentity>
+  cats: CategoryList | null
+  selected: boolean
+  onClick: () => void
+}) {
   const when = fmtWhen(e.ts)
   const who = clientName(e.client, names)
   return (
@@ -473,6 +484,9 @@ function QueryRow({ e, names, selected, onClick }: { e: QueryLogEntry; names: Ma
       <td className="res">
         <ResultTag e={e} />
         <span className="show-sm"> · {who || <span className="mono">{e.client}</span>}</span>
+      </td>
+      <td className="hide-sm">
+        <CategoryTag id={e.content_category} list={cats} />
       </td>
       <td className="hide-sm">
         <ClientLabel ip={e.client} names={names} showIp={false} />
@@ -534,7 +548,7 @@ function useLiveStream({
     if (!enabled || paused || hidden) return
     const p = new URLSearchParams()
     if (focusKey) p.set('nodes', focusKey)
-    for (const [k, v] of [['client', client], ['action', action], ['qtype', qtype], ['category', category], ['rcode', rcode]]) {
+    for (const [k, v] of [['client', client], ['action', action], ['qtype', qtype], ['content', category], ['rcode', rcode]]) {
       if (v) p.set(k, v)
     }
     setStatus('connecting')
@@ -589,19 +603,24 @@ function useLiveStream({
 // explain says, in plain words, why a query got the answer it got. It only
 // states what the log records: the log doesn't say which list or rule blocked a
 // query, so neither does this.
-function explain(e: QueryLogEntry, rule: Rule | undefined): { kind: string; title: string; text: string } {
+function explain(e: QueryLogEntry, rule: Rule | undefined, cats: CategoryList | null): { kind: string; title: string; text: string } {
   const answered = `Answered ${e.rcode || 'without a response code'} in ${fmtMs(e.elapsed_ms)}.`
   switch (e.action) {
-    case 'blocked':
+    case 'blocked': {
+      // A category block records the category itself as the reason.
+      const byCategory = cats?.categories.find((c) => c.id === e.category && c.blocked)
       return {
         kind: 'bad',
         title: 'Blocked',
         text:
           (rule?.action === 'deny'
             ? 'Your block rule for this domain matches it. '
-            : `The domain matched one of your blocklists or block rules${e.category ? ` (category “${e.category}”)` : ''}; the query log doesn’t record which one. `) +
+            : byCategory
+              ? `It’s in the ${byCategory.label} category, which is blocked network-wide (Filtering → Block by category). `
+              : `The domain matched one of your blocklists or block rules${e.category ? ` (category “${e.category}”)` : ''}; the query log doesn’t record which one. `) +
           answered,
       }
+    }
     case 'forward':
       return { kind: '', title: 'Forwarded upstream', text: `It wasn’t blocked, rewritten or cached, so the agent asked an upstream resolver. ${answered}` }
     case 'cache':
@@ -637,6 +656,7 @@ function QueryDrawer({
   onSearchDomain: (domain: string) => void
 }) {
   const domain = bare(e.name).toLowerCase()
+  const catList = useCategories()
   const [rules, setRules] = useState<Rule[] | null>(null)
   // null while loading; 'none' when the domain can't be looked up (no registered
   // domain, e.g. a PTR name) — the section is hidden then.
@@ -668,7 +688,7 @@ function QueryDrawer({
   }, [domain])
 
   const rule = rules?.find((r) => r.domain.toLowerCase() === domain)
-  const why = explain(e, rule)
+  const why = explain(e, rule, catList)
   const when = fmtWhen(e.ts)
   const node = nodes.find((n) => n.name === e.node)
 
@@ -765,7 +785,18 @@ function QueryDrawer({
             {node?.site ? <span className="muted"> ({node.site})</span> : null}
           </dd>
           <dt>Category</dt>
-          <dd>{e.category ? <span className={`tag ${e.action === 'blocked' ? 'block' : catTag(e.category)}`}>{e.category}</span> : <span className="muted">Not classified</span>}</dd>
+          <dd>
+            {/* The domain's category now (editable); the log keeps the label it had then. */}
+            <DomainCategoryEditor domain={domain} canEdit={canEdit} />
+          </dd>
+          {e.action === 'blocked' && e.category && (
+            <>
+              <dt>Blocked as</dt>
+              <dd>
+                <span className="tag block">{categoryLabel(catList, e.category)}</span>
+              </dd>
+            </>
+          )}
           <dt>Time</dt>
           <dd>{when.full}</dd>
           {rule && (

@@ -9,10 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,10 +56,11 @@ type Server struct {
 	cls                 classifierStatus
 	enqueue             func(string) // feed classifier from ingested agent logs (may be nil)
 	enricher            *clientname.Enricher
-	requireApproval     bool          // hold self-enrolled agents until an admin approves
-	keyMaxAge           time.Duration // rotate a node's key once it exceeds this age (0 = disabled)
-	keyGrace            time.Duration // overlap window a rotated-out node key stays valid
-	joinTokenHash       string        // hash of the configured deprecated join_token ("" = none); see SetJoinToken
+	categorizer         *classifier.Categorizer // nil = domain categories off
+	requireApproval     bool                    // hold self-enrolled agents until an admin approves
+	keyMaxAge           time.Duration           // rotate a node's key once it exceeds this age (0 = disabled)
+	keyGrace            time.Duration           // overlap window a rotated-out node key stays valid
+	joinTokenHash       string                  // hash of the configured deprecated join_token ("" = none); see SetJoinToken
 	// Login rate limiting (finding #2). loginRate keys fixed windows by IP and by
 	// username; the limits are live-applied from CPSettings via applyCPSettings.
 	loginRate     *keyedLimiter
@@ -163,7 +164,15 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		// polling and multiple widgets don't recompute the same query_log slice.
 		mux.HandleFunc("GET /api/stats/timeseries", s.requireRole(roleReadonly, s.cached(s.getTimeSeries)))
 		mux.HandleFunc("GET /api/stats/categories", s.requireRole(roleReadonly, s.cached(s.getCategories)))
-		mux.HandleFunc("GET /api/stats/category-traffic", s.requireRole(roleReadonly, s.cached(s.getCategoryTraffic)))
+		// Query volume by what the domains are (social, shopping, …).
+		mux.HandleFunc("GET /api/stats/category-traffic", s.requireRole(roleReadonly, s.cached(s.getContentTraffic)))
+		// Domain categories: the taxonomy and database status, a domain's
+		// category, operator overrides, and the categories blocked network-wide.
+		mux.HandleFunc("GET /api/categories", s.requireRole(roleReadonly, s.getCategoryList))
+		mux.HandleFunc("GET /api/categories/domain", s.requireRole(roleReadonly, s.getDomainCategory))
+		mux.HandleFunc("PUT /api/categories/override", s.requireRole(roleAdmin, s.putCategoryOverride))
+		mux.HandleFunc("DELETE /api/categories/override", s.requireRole(roleAdmin, s.deleteCategoryOverride))
+		mux.HandleFunc("PUT /api/categories/blocked", s.requireRole(roleAdmin, s.putBlockedCategories))
 		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.cached(s.getInsights)))
 		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.cached(s.getLatency)))
 		mux.HandleFunc("GET /api/stats/top-domains", s.requireRole(roleReadonly, s.cached(s.getTopDomains)))
@@ -886,6 +895,12 @@ func (s *Server) replicatedSettings() (json.RawMessage, error) {
 	}
 	set.NormalizeUpstreams()
 	set.Forwarders = nil
+	set.CategoryDomains = nil
+	if s.categorizer != nil {
+		// Per-domain corrections for the blocked categories. Part of the
+		// settings payload, so its version changes with them and agents re-sync.
+		set.CategoryDomains = s.categorizer.DomainsFor(set.BlockedCategories)
+	}
 	return json.Marshal(set)
 }
 
@@ -997,6 +1012,7 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	s.labelEntries(entries)
 	if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1472,39 +1488,6 @@ func (s *Server) getLatency(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"step": step, "nodes": names, "points": points})
 }
 
-// getCategoryTraffic returns query volume folded into the AI content/security
-// categories (social, streaming, ads, …) for the dashboard donut. Names are
-// mapped to their registered domain and matched against the classifications;
-// unmatched volume is reported as "uncategorized".
-func (s *Server) getCategoryTraffic(w http.ResponseWriter, r *http.Request) {
-	hours := clampHours(r.URL.Query().Get("hours"))
-	since := time.Now().Add(-windowDur(hours)).UnixMilli()
-	names, err := s.store.TopQueryNames(since, parseNodes(r), 10000)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	catMap, err := s.store.ClassificationCategoryMap()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	totals := map[string]int64{}
-	for _, n := range names {
-		cat := catMap[classifier.RegisteredDomain(n.Name)]
-		if cat == "" {
-			cat = "uncategorized"
-		}
-		totals[cat] += n.Count
-	}
-	out := make([]store.CategoryCount, 0, len(totals))
-	for cat, c := range totals {
-		out = append(out, store.CategoryCount{Category: cat, Count: c})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
-	writeJSON(w, http.StatusOK, out)
-}
-
 func (s *Server) getCategories(w http.ResponseWriter, r *http.Request) {
 	hours := clampHours(r.URL.Query().Get("hours"))
 	since := time.Now().Add(-windowDur(hours)).UnixMilli()
@@ -1656,11 +1639,31 @@ func (s *Server) getSettings(w http.ResponseWriter, _ *http.Request) {
 
 // putSettings validates, persists, and applies new operational settings live.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
-	var in resolver.Settings
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	var in resolver.Settings
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// Blocked categories have their own endpoint; a settings save that doesn't
+	// mention them (an older UI, a script) keeps them as they are.
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(body, &keys) == nil {
+		if _, sent := keys["blocked_categories"]; !sent {
+			if cur, err := s.loadSettings(); err == nil {
+				in.BlockedCategories = cur.BlockedCategories
+			}
+		}
+	}
+	if in.BlockedCategories, err = cleanBlockedCategories(in.BlockedCategories); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	in.CategoryDomains = nil // computed when replicating, never stored
 	if len(in.Upstreams) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one upstream is required")
 		return
@@ -1707,6 +1710,7 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 		Action:   strings.TrimSpace(q.Get("action")),
 		QType:    strings.TrimSpace(q.Get("qtype")),
 		Category: strings.TrimSpace(q.Get("category")),
+		Content:  strings.TrimSpace(q.Get("content")),
 		Nodes:    parseNodes(r),
 		SinceMs:  sinceMs,
 		Sort:     strings.TrimSpace(q.Get("sort")),

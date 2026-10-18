@@ -4,9 +4,11 @@ import { pollWhileVisible } from '../poll'
 import Lists from './Lists'
 import Rules from './Rules'
 import Classifier from './Classifier'
+import CategoryBlocking from './CategoryBlocking'
+import { useCategories } from '../categories'
 import '../styles/filtering.css'
 
-type Sub = 'review' | 'lists' | 'rules'
+type Sub = 'review' | 'lists' | 'categories' | 'rules'
 
 // Pause presets for the global block switch (seconds; 0 = until resumed).
 const PAUSE_PRESETS = [
@@ -44,6 +46,9 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
       .then((u) => setCanEdit(u?.role === 'admin'))
       .catch(() => setCanEdit(false))
   }, [])
+
+  const catList = useCategories()
+  const blockedCats = catList?.categories.filter((c) => c.blocked).length ?? 0
 
   // ---- Shared data ----
   const [lists, setLists] = useState<List[]>([])
@@ -252,6 +257,9 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
         <button role="tab" aria-selected={active === 'lists'} className={active === 'lists' ? 'on' : ''} onClick={() => setSub('lists')}>
           Blocklists {listsLoaded && <span className="n">{lists.length.toLocaleString()}</span>}
         </button>
+        <button role="tab" aria-selected={active === 'categories'} className={active === 'categories' ? 'on' : ''} onClick={() => setSub('categories')}>
+          Categories {blockedCats > 0 && <span className="n">{blockedCats} blocked</span>}
+        </button>
         <button role="tab" aria-selected={active === 'rules'} className={active === 'rules' ? 'on' : ''} onClick={() => setSub('rules')}>
           Your rules {rulesLoaded && <span className="n">{rules.length.toLocaleString()}</span>}
         </button>
@@ -265,6 +273,7 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
       {active === 'lists' && (
         <Lists lists={lists} loaded={listsLoaded} loadErr={listsErr} reload={loadLists} canEdit={canEdit} />
       )}
+      {active === 'categories' && <CategoryBlocking canEdit={canEdit} />}
       {active === 'rules' && (
         <Rules rules={rules} loaded={rulesLoaded} loadErr={rulesErr} reload={loadRules} canEdit={canEdit} />
       )}

@@ -20,6 +20,9 @@ type QueryLogEntry struct {
 	Rcode     string  `json:"rcode"`
 	ElapsedMS float64 `json:"elapsed_ms"` // milliseconds, sub-ms precision
 	Node      string  `json:"node"`
+	// ContentCategory is what the domain is (social, shopping, …), labelled on
+	// the control plane as the entry arrives; Category is the block reason.
+	ContentCategory string `json:"content_category"`
 }
 
 // InsertQueryLogBatch writes multiple entries in a single transaction.
@@ -58,15 +61,15 @@ func (s *Store) InsertNodeQueryLog(node string, entries []QueryLogEntry) error {
 		return err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, node)
-		 VALUES(?,?,?,?,?,?,?,?,?)`)
+		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, node); err != nil {
+		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, node, e.ContentCategory); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -132,7 +135,8 @@ type QueryLogQuery struct {
 	Search   string   // substring match on name or client
 	Action   string   // exact action filter ("" = all)
 	QType    string   // exact query-type filter ("" = all)
-	Category string   // exact classification/category filter ("" = all)
+	Category string   // exact block-reason category filter ("" = all)
+	Content  string   // exact content-category filter ("" = all)
 	Nodes    []string // node filter (empty = all)
 	SinceMs  int64    // only entries with ts >= SinceMs (0 = no lower bound)
 	Sort     string   // column key (see queryLogSortColumns); default newest-first
@@ -150,6 +154,7 @@ var queryLogSortColumns = map[string]string{
 	"qtype":    "qtype",
 	"action":   "action",
 	"category": "category",
+	"content":  "content_category",
 	"rcode":    "rcode",
 	"ms":       "elapsed_ms",
 	"node":     "node",
@@ -187,6 +192,10 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 		conds = append(conds, "category = ?")
 		args = append(args, q.Category)
 	}
+	if q.Content != "" {
+		conds = append(conds, "content_category = ?")
+		args = append(args, q.Content)
+	}
 	if len(q.Nodes) > 0 {
 		ph := make([]string, len(q.Nodes))
 		for i, n := range q.Nodes {
@@ -219,7 +228,7 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 		return nil, 0, err
 	}
 	rows, err := s.read.Query(
-		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category
 		 FROM query_log`+where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, q.Limit, q.Offset)...)
 	if err != nil {
@@ -229,7 +238,7 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 	var out []QueryLogEntry
 	for rows.Next() {
 		var e QueryLogEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node, &e.ContentCategory); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, e)

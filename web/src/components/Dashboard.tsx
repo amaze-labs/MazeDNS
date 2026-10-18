@@ -23,11 +23,13 @@ import {
   type LatencyPoint,
   type DomainStat,
   type Protection,
+  type ContentCount,
 } from '../api'
 import { RANGES, RangeNodeBar, OVERALL_COLOR, makeNodeColor, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
+import { CategoryBars, useCategories } from '../categories'
 import '../styles/overview.css'
 
 const ONLINE_WINDOW = 120
@@ -283,6 +285,8 @@ export default function Dashboard() {
   const [topKind, setTopKind] = useState<'blocked' | 'queried'>('blocked')
   const [topDom, setTopDom] = useState<{ top_queried: DomainStat[]; top_blocked: DomainStat[] } | null>(null)
   const [topErr, setTopErr] = useState('')
+  const [catTraffic, setCatTraffic] = useState<ContentCount[] | null>(null)
+  const catList = useCategories()
 
   useEffect(() => {
     localStorage.setItem('mazedns.hours', String(hours))
@@ -314,6 +318,7 @@ export default function Dashboard() {
         req('series', api.timeseries(hours, focus), setSeries),
         req('insights', api.insights(hours, focus), setIns),
         req('latency', api.latency(hours, focus), setLat),
+        req('cats', api.categoryTraffic(hours, focus), setCatTraffic),
         // Cluster and protection status are context: a failure here (cluster
         // off, viewer role) just hides their parts instead of raising an error.
         api.clusterNodes().then((n) => alive && setNodes(n), () => alive && setNodes((cur) => cur ?? [])),
@@ -935,6 +940,26 @@ export default function Dashboard() {
               {byNodeData.length > 1 && <Donut title="By agent" data={byNodeData} />}
               <Donut title="By answer" data={sourceData} />
             </div>
+          )}
+        </section>
+
+        <section className="card ov-cats ov-span">
+          <div className="card-head">
+            <div>
+              <h2>By category</h2>
+              <p className="sub">What the queried domains are. Pick one to see its queries.</p>
+            </div>
+          </div>
+          {catList && !catList.enabled ? (
+            <p className="muted small">Domain categories are turned off on this control plane.</p>
+          ) : !catTraffic ? (
+            <Load error={errs.cats} what="the categories" />
+          ) : catTraffic.length === 0 ? (
+            <p className="muted small">
+              No categorised queries in this window yet. Queries are labelled as they arrive, so older traffic isn’t counted.
+            </p>
+          ) : (
+            <CategoryBars rows={catTraffic} list={catList} />
           )}
         </section>
       </div>

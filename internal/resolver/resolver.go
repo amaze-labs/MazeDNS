@@ -6,6 +6,7 @@ package resolver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/IPMaze/MazeDNS/internal/cache"
+	"github.com/IPMaze/MazeDNS/internal/categories"
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 )
@@ -110,6 +112,15 @@ type Settings struct {
 	// UpstreamTimeoutMs is the ordered strategy's per-upstream failover timeout:
 	// how long one upstream may take before the next one is tried. 0 = default.
 	UpstreamTimeoutMs int `json:"upstream_timeout_ms"`
+	// BlockedCategories are the domain categories (internal/categories) blocked
+	// network-wide: each agent loads the category database for just these and
+	// blocks what it lists, unless an allow rule says otherwise.
+	BlockedCategories []string `json:"blocked_categories,omitempty"`
+	// CategoryDomains corrects the category database per domain (registered
+	// domain -> category): operator overrides, and the language model's labels
+	// in blocked categories. Filled in by the control plane when it replicates
+	// the settings; never stored.
+	CategoryDomains map[string]string `json:"category_domains,omitempty"`
 }
 
 // Options holds the static (non-UI-editable) resolver configuration.
@@ -154,6 +165,13 @@ type runtime struct {
 	// upstreamTimeout is the ordered strategy's per-upstream failover timeout
 	// (<= 0 = DefaultUpstreamTimeoutMs).
 	upstreamTimeout time.Duration
+	// cacheKey identifies everything a cached answer depends on (see
+	// answerKey), so the cache survives a settings apply only when none changed.
+	cacheKey string
+	// blockedCats are the categories blocked network-wide; catDomains are the
+	// per-domain corrections to the category database (Settings.CategoryDomains).
+	blockedCats map[string]bool
+	catDomains  map[string]string
 }
 
 // Resolver answers DNS queries.
@@ -183,6 +201,60 @@ type Resolver struct {
 	// health records when queries were last answered and forwards last
 	// succeeded/failed (see Health).
 	health healthState
+	// catDB is the category database for blocked categories (nil = none:
+	// category blocking only uses Settings.CategoryDomains).
+	catDB atomic.Pointer[categories.Holder]
+	// upstreams keeps parsed upstreams across settings applies, keyed by spec
+	// and timeout, so an unchanged upstream keeps its warm connections.
+	upMu      sync.Mutex
+	upstreams map[string]Upstream
+}
+
+// answerKey identifies the settings a cached answer depends on: where queries
+// are forwarded, DNSSEC, and the cache's own bounds. Any change empties the
+// cache — answers from an upstream just replaced (perhaps for serving bad
+// answers) must not outlive it. Everything else (blocking, categories, rate
+// limit) is decided before the cache and keeps it.
+func answerKey(s Settings) string {
+	b, _ := json.Marshal(struct {
+		Upstreams  []string
+		Forwarders []ForwardGroup
+		DNSSEC     bool
+		Cache      CacheSettings
+	}{s.Upstreams, s.Forwarders, s.DNSSEC, s.Cache})
+	return string(b)
+}
+
+// SetCategoryDB attaches the category database the agent blocks categories
+// from; ApplySettings keeps it loaded with just the blocked categories.
+func (r *Resolver) SetCategoryDB(h *categories.Holder) { r.catDB.Store(h) }
+
+// blockedCategory reports whether name is in a category blocked network-wide,
+// and which. A per-domain correction (an operator override, a model label)
+// decides first — an override out of a blocked category exempts the domain —
+// then the category database.
+func (r *Resolver) blockedCategory(rt *runtime, name string) (string, bool) {
+	if len(rt.blockedCats) == 0 {
+		return "", false
+	}
+	if len(rt.catDomains) > 0 {
+		for rest := name; ; {
+			if cat, ok := rt.catDomains[rest]; ok {
+				return cat, rt.blockedCats[cat]
+			}
+			i := strings.IndexByte(rest, '.')
+			if i < 0 {
+				break
+			}
+			rest = rest[i+1:]
+		}
+	}
+	if db := r.catDB.Load(); db != nil {
+		if cat, ok := db.Lookup(name); ok && rt.blockedCats[cat] {
+			return cat, true
+		}
+	}
+	return "", false
 }
 
 // SetMaintenance toggles maintenance (drain) mode for this node. While on, every
@@ -232,12 +304,18 @@ func New(opts Options) *Resolver {
 // a socket open for the whole query budget; the last one — with nothing left to
 // fail over to — keeps the full budget. Hedged lists (per == 0) use the full
 // budget for every upstream, as before.
-func (r *Resolver) parseUpstreams(specs []string, per time.Duration) []Upstream {
+func (r *Resolver) parseUpstreams(specs []string, per time.Duration, used map[string]Upstream) []Upstream {
 	out := make([]Upstream, 0, len(specs))
 	for i, s := range specs {
 		timeout := r.timeout
 		if per > 0 && per < timeout && i < len(specs)-1 {
 			timeout = per
+		}
+		key := s + "|" + timeout.String()
+		if u, ok := r.upstreams[key]; ok { // unchanged: keep its warm connections
+			used[key] = u
+			out = append(out, u)
+			continue
 		}
 		u, err := ParseUpstream(s, timeout)
 		if err != nil {
@@ -248,6 +326,7 @@ func (r *Resolver) parseUpstreams(specs []string, per time.Duration) []Upstream 
 		if pu, ok := u.(*plainUpstream); ok {
 			pu.metrics = r.metrics
 		}
+		used[key] = u
 		out = append(out, u)
 	}
 	return out
@@ -270,21 +349,43 @@ func (r *Resolver) ApplySettings(s Settings) {
 		rt.upstreamTimeout = time.Duration(NormalizeUpstreamTimeoutMs(s.UpstreamTimeoutMs)) * time.Millisecond
 		per = rt.upstreamTimeout
 	}
-	rt.defaultUpstreams = r.parseUpstreams(s.Upstreams, per)
+	r.upMu.Lock()
+	used := map[string]Upstream{}
+	rt.defaultUpstreams = r.parseUpstreams(s.Upstreams, per, used)
 	for _, f := range s.Forwarders {
 		suffix := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(f.Suffix), "."))
 		if suffix == "" {
 			continue
 		}
-		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: r.parseUpstreams(f.Upstreams, per)})
+		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: r.parseUpstreams(f.Upstreams, per, used)})
 	}
+	r.upstreams = used // upstreams no longer listed are dropped (and garbage-collected)
+	r.upMu.Unlock()
 	sort.Slice(rt.conditional, func(i, j int) bool { return len(rt.conditional[i].suffix) > len(rt.conditional[j].suffix) })
 	if s.RateLimitQPM > 0 {
 		rt.rate = newRateLimiter(s.RateLimitQPM)
 	}
 	if s.Cache.Enabled {
-		rt.cache = cache.New(s.Cache.MaxEntries,
-			time.Duration(s.Cache.MinTTLSec)*time.Second, time.Duration(s.Cache.MaxTTLSec)*time.Second)
+		rt.cacheKey = answerKey(s)
+		if prev := r.rt.Load(); prev != nil && prev.cache != nil && prev.cacheKey == rt.cacheKey {
+			rt.cache = prev.cache // nothing an answer depends on changed: keep what it holds
+		} else {
+			rt.cache = cache.New(s.Cache.MaxEntries,
+				time.Duration(s.Cache.MinTTLSec)*time.Second, time.Duration(s.Cache.MaxTTLSec)*time.Second)
+		}
+	}
+	if len(s.BlockedCategories) > 0 {
+		rt.blockedCats = make(map[string]bool, len(s.BlockedCategories))
+		for _, c := range s.BlockedCategories {
+			rt.blockedCats[c] = true
+		}
+		rt.catDomains = make(map[string]string, len(s.CategoryDomains))
+		for d, c := range s.CategoryDomains {
+			rt.catDomains[strings.ToLower(strings.TrimSuffix(d, "."))] = c
+		}
+	}
+	if db := r.catDB.Load(); db != nil {
+		db.SetWanted(s.BlockedCategories)
 	}
 	r.rt.Store(rt)
 	slog.Info("settings applied", "upstreams", len(rt.defaultUpstreams), "forwarders", len(rt.conditional),
@@ -475,6 +576,11 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	// already-normalized name so the matcher doesn't re-lowercase q.Name twice.
 	if !r.BlockPaused() {
 		if cat, blocked := pol.Block.MatchNormalized(name); blocked && !pol.Allow.IsBlockedNormalized(name) {
+			r.stats.Blocked.Add(1)
+			return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
+		}
+		// 3b. A category blocked network-wide (adult, gambling, …).
+		if cat, blocked := r.blockedCategory(rt, name); blocked && !pol.Allow.IsBlockedNormalized(name) {
 			r.stats.Blocked.Add(1)
 			return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
 		}

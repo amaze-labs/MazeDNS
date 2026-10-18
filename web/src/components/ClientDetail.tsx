@@ -6,6 +6,7 @@ import Modal from './Modal'
 import Spinner from './Spinner'
 import { SOURCE_LABEL } from './ClientLabel'
 import { fmtMs, timeAgo, windowLabel } from './tableKit'
+import { CategoryBars, useCategories } from '../categories'
 import '../styles/queries.css'
 
 // How a query was answered: the label, tag variant and chart colour of each
@@ -49,6 +50,7 @@ export default function ClientDetail({
   onShowQueries?: (client: string) => void
 }) {
   const [d, setD] = useState<Detail | null>(null)
+  const catList = useCategories()
   const [err, setErr] = useState('')
   const id = names.get(client)
   // Prefill with the existing static name; otherwise the field is empty and the
@@ -226,6 +228,17 @@ export default function ClientDetail({
             <dt>Last query</dt>
             <dd title={fmtAbs(d.last_seen)}>{timeAgo(d.last_seen)}</dd>
           </dl>
+
+          <div>
+            <h3>What it uses</h3>
+            {(d.content ?? []).length === 0 ? (
+              <p className="muted small" style={{ margin: 0 }}>
+                No categorised queries in this window yet.
+              </p>
+            ) : (
+              <CategoryBars rows={d.content} list={catList} limit={8} client={client} />
+            )}
+          </div>
 
           <TopList title="Most blocked for this client" rows={d.top_blocked} color="var(--block)" empty="Nothing blocked in this window." />
           <TopList title="Most queried" rows={d.top_domains} color="var(--fwd)" empty="No queries in this window." />

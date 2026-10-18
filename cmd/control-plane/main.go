@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +26,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/api"
 	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/boot"
+	"github.com/IPMaze/MazeDNS/internal/categories"
 	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/clientname"
 	"github.com/IPMaze/MazeDNS/internal/config"
@@ -127,8 +129,23 @@ func main() {
 	// comes from agents' shipped query logs (wired into the API below), not from a
 	// local resolver.
 	clsWorker := newClassifier(st, cfg, reload)
+
+	// Domain categories: what every domain is (social, shopping, …), from the
+	// UT1 category database (all categories, refreshed daily), the classifier
+	// and the language model. Off with MAZEDNS_CATEGORY_DB=off.
+	var categorizer *classifier.Categorizer
+	if !strings.EqualFold(os.Getenv("MAZEDNS_CATEGORY_DB"), "off") {
+		catDB := categories.NewHolder(&categories.Source{Dir: dataDir(cfg)}, true)
+		go catDB.Run(context.Background())
+		clsWorker.SetCategoryDB(catDB)
+		categorizer = classifier.NewCategorizer(st, catDB)
+		if err := categorizer.Refresh(); err != nil {
+			slog.Warn("categorizer: initial load failed", "err", err)
+		}
+		go categorizer.Run(context.Background())
+	}
 	go clsWorker.Run(context.Background())
-	slog.Info("classifier ready")
+	slog.Info("classifier ready", "categories", categorizer != nil)
 
 	warnRemovedBootstrapNodes(os.Getenv("MAZEDNS_CLUSTER_BOOTSTRAP_NODES"))
 
@@ -195,6 +212,9 @@ func main() {
 	apiSrv.SetClassifierStatus(clsWorker)
 	apiSrv.SetClassifierEnqueue(clsWorker.Enqueue)
 	apiSrv.SetEnricher(enricher)
+	if categorizer != nil {
+		apiSrv.SetCategorizer(categorizer)
+	}
 	// SSO settings change live: rebuild and swap the OIDC provider without a restart.
 	apiSrv.SetRebuildOIDC(func(o store.OIDCSettings) error {
 		if err := oidcLoad.Apply(o); err != nil {
@@ -471,4 +491,17 @@ func importDeprecatedJoinToken(st *store.Store, token string) {
 	}
 	slog.Warn("cluster.join_token / MAZEDNS_JOIN_TOKEN is deprecated: imported as a never-expiring enrollment key " +
 		"(manage and revoke it under Agents → Enrollment keys in the UI)")
+}
+
+// dataDir is where the control plane keeps downloaded data (the category
+// database): next to the SQLite file, or the user cache directory with an
+// external database.
+func dataDir(cfg config.Config) string {
+	if cfg.Database.Driver == "" || cfg.Database.Driver == "sqlite" {
+		return filepath.Dir(cfg.Database.Path)
+	}
+	if d, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(d, "mazedns")
+	}
+	return os.TempDir()
 }

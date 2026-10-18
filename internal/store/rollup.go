@@ -57,6 +57,17 @@ func (s *Store) RollupAdvance(batch int) (more bool, err error) {
 		return false, err
 	}
 	if _, err = tx.Exec(
+		`INSERT INTO category_rollup(hour, node, category, cnt, blocked)
+		 SELECT ts/3600000, node, content_category, COUNT(*), COALESCE(SUM(action='blocked'), 0)
+		 FROM query_log WHERE id > ? AND id <= ? AND content_category <> ''
+		 GROUP BY ts/3600000, node, content_category
+		 ON CONFLICT(hour, node, category) DO UPDATE SET
+		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+		cursor, upto); err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if _, err = tx.Exec(
 		`INSERT INTO meta(key, value) VALUES(?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, rollupCursorKey, upto); err != nil {
 		_ = tx.Rollback()
@@ -71,6 +82,9 @@ func (s *Store) RollupAdvance(batch int) (more bool, err error) {
 // PruneRollups drops rollup buckets older than beforeMs.
 func (s *Store) PruneRollups(beforeMs int64) error {
 	if _, err := s.db.Exec(`DELETE FROM query_rollup WHERE bucket < ?`, beforeMs/60000); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM category_rollup WHERE hour < ?`, beforeMs/3600000); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM client_rollup WHERE hour < ?`, beforeMs/3600000)

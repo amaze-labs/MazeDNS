@@ -386,6 +386,37 @@
 .pg-overview .ov-agent-num .muted {
   font-size: 12px;
 }
+/* Agents grouped by site: a header band with the site's totals. */
+.pg-overview .ov-site + .ov-site {
+  border-top: 1px solid var(--line);
+}
+.pg-overview .ov-site-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 20px;
+  background: color-mix(in srgb, var(--raise) 55%, transparent);
+  font-size: 13px;
+}
+.pg-overview .ov-site-head b {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.pg-overview .ov-site-head .muted {
+  margin-left: 10px;
+  font-size: 12px;
+}
+.pg-overview .ov-site-head .ov-agent-num {
+  font-weight: 600;
+}
+.pg-overview .ov-site-head .ov-agent-num .muted {
+  margin-left: 0;
+  font-weight: 400;
+}
+.pg-overview .ov-site .rowitem:first-of-type {
+  border-top: 0;
+}
 
 /* Top clients. */
 .pg-overview .ov-clients {

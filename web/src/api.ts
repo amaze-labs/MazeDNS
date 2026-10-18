@@ -61,7 +61,7 @@ export type UpdateStatus = {
   releases: Release[] // newest first: what an update brings, or the latest few
 }
 
-export type CategorySource = 'override' | 'classifier' | 'database' | 'model' | 'local' | ''
+export type CategorySource = 'override' | 'classifier' | 'database' | 'builtin' | 'model' | 'local' | ''
 
 export interface DomainCategory {
   domain: string

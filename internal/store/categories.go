@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -163,4 +164,141 @@ func (s *Store) moveVerdictContentCategories() error {
 		     category = 'other'
 		 WHERE category IN (`+strings.Join(ids, ",")+`)`, args...)
 	return err
+}
+
+// UnlabelledQuery is a query-log row still labelled "other" (OtherQueries).
+type UnlabelledQuery struct {
+	ID   int64
+	Name string
+}
+
+// OtherQueries returns up to limit query-log rows labelled "other" since
+// sinceMs with an id below beforeID (0 = no bound), newest first — a page of
+// the rows RelabelContent may move once their domain gets a category.
+func (s *Store) OtherQueries(sinceMs, beforeID int64, limit int) ([]UnlabelledQuery, error) {
+	q := `SELECT id, name FROM query_log WHERE content_category = ? AND ts >= ?`
+	args := []any{categories.Other, sinceMs}
+	if beforeID > 0 {
+		q += ` AND id < ?`
+		args = append(args, beforeID)
+	}
+	rows, err := s.read.Query(q+` ORDER BY id DESC LIMIT ?`, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UnlabelledQuery
+	for rows.Next() {
+		var u UnlabelledQuery
+		if err := rows.Scan(&u.ID, &u.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// relabelChunk bounds the ids in one IN (…) list.
+const relabelChunk = 500
+
+// RelabelContent moves query-log rows from "other" to the category each now
+// has (id -> category), and the per-hour category rollup with them for rows
+// already folded into it, so the dashboard's breakdown changes along with the
+// rows. Rows no longer labelled "other" are left alone. Returns how many rows
+// moved.
+func (s *Store) RelabelContent(labels map[int64]string) (int, error) {
+	if len(labels) == 0 {
+		return 0, nil
+	}
+	s.rollupMu.Lock()
+	defer s.rollupMu.Unlock()
+	cursor, _ := s.GetMetaInt(rollupCursorKey)
+
+	byCat := map[string][]int64{}
+	for id, cat := range labels {
+		if cat != "" && cat != categories.Other {
+			byCat[cat] = append(byCat[cat], id)
+		}
+	}
+	type key struct {
+		hour int64
+		node string
+		cat  string
+	}
+	type delta struct{ cnt, blocked int64 }
+	deltas := map[key]*delta{}
+	add := func(k key, cnt, blocked int64) {
+		d := deltas[k]
+		if d == nil {
+			d = &delta{}
+			deltas[k] = d
+		}
+		d.cnt += cnt
+		d.blocked += blocked
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	fail := func(err error) (int, error) { _ = tx.Rollback(); return 0, err }
+	moved := 0
+	for cat, ids := range byCat {
+		for len(ids) > 0 {
+			n := min(len(ids), relabelChunk)
+			chunk := ids[:n]
+			ids = ids[n:]
+			in := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+			args := make([]any, 0, len(chunk)+2)
+			args = append(args, categories.Other)
+			for _, id := range chunk {
+				args = append(args, id)
+			}
+			// What the rollup already counts as "other" for these rows.
+			rows, err := tx.Query(
+				`SELECT ts/3600000, node, COUNT(*), COALESCE(SUM(action='blocked'), 0) FROM query_log
+				 WHERE content_category = ? AND id IN (`+in+`) AND id <= ? GROUP BY ts/3600000, node`,
+				append(args, cursor)...)
+			if err != nil {
+				return fail(err)
+			}
+			for rows.Next() {
+				var hour, cnt, blocked int64
+				var node string
+				if err := rows.Scan(&hour, &node, &cnt, &blocked); err != nil {
+					rows.Close()
+					return fail(err)
+				}
+				add(key{hour, node, categories.Other}, -cnt, -blocked)
+				add(key{hour, node, cat}, cnt, blocked)
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return fail(err)
+			}
+			res, err := tx.Exec(`UPDATE query_log SET content_category = ? WHERE content_category = ? AND id IN (`+in+`)`,
+				append([]any{cat}, args...)...)
+			if err != nil {
+				return fail(err)
+			}
+			n64, _ := res.RowsAffected()
+			moved += int(n64)
+		}
+	}
+	for k, d := range deltas {
+		if d.cnt == 0 {
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO category_rollup(hour, node, category, cnt, blocked) VALUES(?,?,?,?,?)
+			 ON CONFLICT(hour, node, category) DO UPDATE SET
+			   cnt = category_rollup.cnt + excluded.cnt, blocked = category_rollup.blocked + excluded.blocked`,
+			k.hour, k.node, k.cat, d.cnt, d.blocked); err != nil {
+			return fail(fmt.Errorf("move rollup counts: %w", err))
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM category_rollup WHERE category = ? AND cnt <= 0`, categories.Other); err != nil {
+		return fail(err)
+	}
+	return moved, tx.Commit()
 }

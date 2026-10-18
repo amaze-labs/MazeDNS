@@ -41,7 +41,7 @@ export default function CategoryBlocking({ canEdit }: { canEdit: boolean }) {
   }
   const db = list.database
   const groups: [string, string, CategoryInfo[]][] = [
-    ['Content', 'Legitimate traffic, blocked only if you choose to (parental control, focus, policy).', list.categories.filter((c) => !c.security && c.id !== 'other')],
+    ['Content', 'Legitimate traffic, blocked only if you choose to (parental control, focus, policy).', list.categories.filter((c) => !c.security && c.id !== 'other' && c.id !== 'local')],
     ['Security', 'The classifier already blocks these on its own judgement; blocking the category also blocks everything the database lists for it.', list.categories.filter((c) => c.security)],
   ]
 

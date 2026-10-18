@@ -41,11 +41,18 @@ var All = []Category{
 	{"vpn", "VPN & proxies", false},
 	{"filesharing", "File sharing", false},
 	{"cdn", "CDN", false},
+	{"local", "Local network", false},
 	{"other", "Other", false},
 }
 
 // Other is the label for a domain nothing knows.
 const Other = "other"
+
+// Local labels names that only exist inside a network: reverse lookups
+// (in-addr.arpa), private-use TLDs (.lan, .home.arpa, .internal, …) and
+// single-label hostnames. It comes from the name itself, never from the
+// database or the model, and can't be blocked.
+const Local = "local"
 
 // precedence decides a domain listed in several categories (first wins): the
 // more specific category first (a messaging app UT1 lists under both chat and
@@ -57,7 +64,7 @@ var precedence = []string{
 	"adult", "gambling", "dating", "chat", "social", "streaming", "gaming", "shopping",
 	"news", "sports", "finance", "jobs", "education", "email", "search", "productivity",
 	"technology", "ai", "vpn", "filesharing", "cdn",
-	"ads", "trackers", "malware", "phishing", "other",
+	"ads", "trackers", "malware", "phishing", "local", "other",
 }
 
 // byID indexes All; rank is a category's position in precedence (lower wins),
@@ -97,11 +104,12 @@ func Label(id string) string {
 }
 
 // Content returns the IDs of the non-security categories, "other" last — the
-// labels the language model may choose from for legitimate traffic.
+// labels the language model may choose from for legitimate traffic ("local"
+// isn't one: only the name decides it).
 func Content() []string {
 	var out []string
 	for _, c := range All {
-		if !c.Security {
+		if !c.Security && c.ID != Local {
 			out = append(out, c.ID)
 		}
 	}

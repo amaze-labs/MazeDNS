@@ -214,12 +214,13 @@ func (s *Server) putBlockedCategories(w http.ResponseWriter, r *http.Request) {
 }
 
 // cleanBlockedCategories validates and de-duplicates a blocked-category list,
-// in taxonomy order. "other" can't be blocked: it is everything unknown.
+// in taxonomy order. "other" can't be blocked: it is everything unknown; nor
+// "local": those names never leave the network.
 func cleanBlockedCategories(in []string) ([]string, error) {
 	want := map[string]bool{}
 	for _, c := range in {
 		c = strings.TrimSpace(c)
-		if c == categories.Other || !categories.Valid(c) {
+		if c == categories.Other || c == categories.Local || !categories.Valid(c) {
 			return nil, fmt.Errorf("can't block category %q", c)
 		}
 		want[c] = true

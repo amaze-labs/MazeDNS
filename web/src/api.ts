@@ -48,7 +48,7 @@ export interface CategoryList {
 }
 
 // Where a domain's category came from.
-export type CategorySource = 'override' | 'classifier' | 'database' | 'model' | ''
+export type CategorySource = 'override' | 'classifier' | 'database' | 'model' | 'local' | ''
 
 export interface DomainCategory {
   domain: string

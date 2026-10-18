@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -34,6 +35,11 @@ type Store struct {
 	// keyed to it (configcache.go).
 	configGen atomic.Uint64
 	versions  versionCache
+
+	// rollupMu serialises folding query_log into the rollups with relabelling
+	// rows already folded (RelabelContent), so a row is never counted under
+	// one category and labelled with another.
+	rollupMu sync.Mutex
 }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.

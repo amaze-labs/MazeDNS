@@ -3,6 +3,7 @@ package classifier
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/categories"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -63,5 +64,117 @@ func TestCategorizerPrecedence(t *testing.T) {
 	_ = c2.Refresh()
 	if cat, _ := c2.Category("facebook.com"); cat != "news" {
 		t.Errorf("no database: facebook.com = %q, want the model's news", cat)
+	}
+}
+
+func TestIsLocalName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"1.0.168.192.in-addr.arpa.": true,
+		"b.a.9.8.ip6.arpa":          true,
+		"nas.lan.":                  true,
+		"printer.home.arpa":         true,
+		"db.internal":               true,
+		"macbook.local":             true,
+		"nas":                       true, // single label
+		"www.example.com":           false,
+		"foo.test":                  false, // reserved for testing, not a network's own name
+		"google.com":                false,
+		"":                          false,
+	} {
+		if got := IsLocalName(name); got != want {
+			t.Errorf("IsLocalName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// Local names are labelled "local" (an operator's override still wins); every
+// other name goes through the usual sources.
+func TestCategorizerLocal(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	c := NewCategorizer(st, nil)
+	for _, name := range []string{"10.1.168.192.in-addr.arpa.", "nas.lan.", "printer."} {
+		if cat, src := c.Category(name); cat != categories.Local || src != SourceLocal {
+			t.Errorf("%s = %s (%s), want local", name, cat, src)
+		}
+	}
+	if cat, _ := c.Category("unknown-site.com."); cat != categories.Other {
+		t.Errorf("unknown-site.com = %s", cat)
+	}
+}
+
+// A domain's first queries arrive before the classifier has labelled it, so
+// they land in "other". Relabel moves them — and the dashboard's per-hour
+// counts — once the domain has a category, and leaves the rest alone.
+func TestCategorizerRelabel(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	var b categories.Builder
+	b.Add("facebook.com", "social")
+	c := NewCategorizer(st, categories.NewLoadedHolder(b.Build()))
+
+	now := time.Now().UnixMilli()
+	q := func(name, action string) store.QueryLogEntry {
+		return store.QueryLogEntry{TS: now, Client: "10.0.0.2", Name: name, QType: "A", Action: action, Rcode: "NOERROR"}
+	}
+	// Labelled on arrival, before the model knew newsite.com.
+	first := []store.QueryLogEntry{q("www.newsite.com.", "forward"), q("cdn.newsite.com.", "blocked"),
+		q("x.nobody-knows.org.", "forward"), q("www.facebook.com.", "forward"), q("nas.lan.", "forward")}
+	first[4].ContentCategory = "other" // as an older control plane labelled it
+	c.Label(first[:4])
+	if err := st.InsertNodeQueryLog("agent-a", first); err != nil {
+		t.Fatal(err)
+	}
+	for more := true; more; {
+		if more, err = st.RollupAdvance(0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Not yet folded into the rollup when the relabel runs.
+	if err := st.InsertNodeQueryLog("agent-a", []store.QueryLogEntry{{TS: now, Name: "api.newsite.com.", Action: "forward", ContentCategory: "other"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := st.InsertClassification(store.Classification{Domain: "newsite.com", Category: "other", Status: store.ClassClean,
+		ContentCategory: "shopping", ContentChecked: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	n, err := c.Relabel(time.Now().Add(-time.Hour))
+	if err != nil || n != 4 {
+		t.Fatalf("Relabel moved %d, err %v; want 4 (3 newsite.com queries, 1 local name)", n, err)
+	}
+	for more := true; more; {
+		if more, err = st.RollupAdvance(0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string][2]int64{}
+	rows, err := st.RollupByCategory(now-time.Hour.Milliseconds(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		got[r.Category] = [2]int64{r.Count, r.Blocked}
+	}
+	want := map[string][2]int64{"shopping": {3, 1}, "social": {1, 0}, "local": {1, 0}, "other": {1, 0}}
+	if len(got) != len(want) {
+		t.Errorf("by category = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %v, want %v (all: %v)", k, got[k], v, got)
+		}
+	}
+	if n, _ := c.Relabel(time.Now().Add(-time.Hour)); n != 0 {
+		t.Errorf("a second pass moved %d", n)
 	}
 }

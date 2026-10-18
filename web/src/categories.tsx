@@ -50,11 +50,11 @@ export function categoryLabel(list: CategoryList | null, id: string): string {
 
 const SECURITY = new Set(['ads', 'trackers', 'malware', 'phishing'])
 
-// CategoryTag shows a category: security ones coral, "other" neutral, the rest
+// CategoryTag shows a category: security ones coral, "other" and "local" neutral, the rest
 // blue — the colours the Queries page already uses for classifications.
 export function CategoryTag({ id, list }: { id: string; list: CategoryList | null }) {
   if (!id) return <span className="muted">—</span>
-  const tone = SECURITY.has(id) ? 'block' : id === 'other' ? '' : 'info'
+  const tone = SECURITY.has(id) ? 'block' : id === 'other' || id === 'local' ? '' : 'info'
   return <span className={`tag ${tone}`}>{categoryLabel(list, id)}</span>
 }
 
@@ -63,6 +63,7 @@ export const SOURCE_LABEL: Record<CategorySource, string> = {
   classifier: 'the classifier blocks it',
   database: 'category database (UT1)',
   model: 'the language model',
+  local: 'a name that only exists on your network',
   '': 'nothing knows this domain',
 }
 

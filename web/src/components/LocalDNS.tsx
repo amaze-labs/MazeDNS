@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { api, type Forwarder, type Rewrite } from '../api'
 import Modal from './Modal'
 import ScopePicker, { ALL_SCOPE, scopeBadge, useIsAdmin, type Scope } from './ScopePicker'
-import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
+import { useTable, Th, Pager, SearchBox, TableStatusRow, type SortAccessors } from './tableKit'
 import { invalidateAllClientNames } from '../useClientNames'
 import '../styles/local-dns.css'
 
@@ -26,6 +26,15 @@ const FWD_COLS: SortAccessors<Forwarder> = {
   scope: (f) => `${f.scope_type || 'all'} ${(f.scope_values ?? []).join(',')}`,
 }
 
+// The page's search matches any part of what a row shows: name, type, answer
+// or resolvers, scope targets, and the integration that owns it.
+const rewriteMatches = (r: Rewrite, q: string) =>
+  [r.domain, r.rrtype, r.value, r.source, ...(r.scope_values ?? [])].some((f) => f.toLowerCase().includes(q))
+const forwarderMatches = (f: Forwarder, q: string) =>
+  [f.suffix, ...f.upstreams, ...(f.scope_values ?? [])].some((v) => v.toLowerCase().includes(q))
+
+const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)) || 'Request failed'
 
 export default function LocalDNS() {
@@ -46,6 +55,8 @@ export default function LocalDNS() {
   const [fwdScope, setFwdScope] = useState<Scope>(ALL_SCOPE)
   const [addingFwd, setAddingFwd] = useState(false)
   const [fwdErr, setFwdErr] = useState('')
+
+  const [search, setSearch] = useState('')
 
   const [nodes, setNodes] = useState<string[] | null>(null)
   const [sites, setSites] = useState<string[] | null>(null)
@@ -195,15 +206,28 @@ export default function LocalDNS() {
   }
 
   // Manual records first; each integration that owns records gets its own
-  // section below them.
-  const manual = rows.filter((r) => !r.source)
+  // section below them. The search narrows every list at once.
+  const q = search.trim().toLowerCase()
+  const shown = q ? rows.filter((r) => rewriteMatches(r, q)) : rows
+  const shownFwds = q ? fwds.filter((f) => forwarderMatches(f, q)) : fwds
+  const manualAll = rows.filter((r) => !r.source)
+  const manual = shown.filter((r) => !r.source)
   const sources = [...new Set(rows.map((r) => r.source).filter(Boolean))].sort()
-  const fwdTable = useTable(fwds, FWD_COLS, 'suffix')
+  const fwdTable = useTable(shownFwds, FWD_COLS, 'suffix')
+  const changeSearch = (v: string) => {
+    setSearch(v)
+    fwdTable.setPage(0)
+  }
+  // "3 of 40 records" while searching, "40 records" otherwise.
+  const count = (n: number, of: number, one: string, many: string) =>
+    q ? `${n.toLocaleString()} of ${plural(of, one, many)}` : plural(of, one, many)
+  const matches = shown.length + shownFwds.length
   const known = (t?: string) => (t === 'nodes' ? nodes ?? undefined : t === 'sites' ? sites ?? undefined : undefined)
   const recCols = admin ? 5 : 4
   const recordTable = (rs: Rewrite[], empty: string) => (
     <RecordTable
       rows={rs}
+      query={q}
       loaded={loaded}
       err={err}
       admin={admin}
@@ -237,12 +261,26 @@ export default function LocalDNS() {
         </span>
       </div>
 
+      <div className="toolbar">
+        <SearchBox
+          value={search}
+          onChange={changeSearch}
+          placeholder="Search names, answers, resolvers, agents…"
+          maxWidth={460}
+        />
+        {q && (
+          <span className="muted" role="status">
+            {matches === 0 ? 'Nothing matches' : plural(matches, 'match', 'matches')}
+          </span>
+        )}
+      </div>
+
       <section className="card flush">
         <div className="card-head">
           <div>
             <h2>Local records</h2>
             <p className="sub">
-              {loaded ? `${manual.length} ${manual.length === 1 ? 'record' : 'records'}` : 'Loading…'}
+              {loaded ? count(manual.length, manualAll.length, 'record', 'records') : 'Loading…'}
             </p>
           </div>
         </div>
@@ -290,21 +328,26 @@ export default function LocalDNS() {
         )}
         {recordTable(
           manual,
-          sources.length > 0
-            ? 'No manual records.'
-            : `No records yet.${admin ? ' Add one above to answer a name on your network.' : ''}`,
+          q
+            ? `No local records match “${search.trim()}”.`
+            : sources.length > 0
+              ? 'No manual records.'
+              : `No records yet.${admin ? ' Add one above to answer a name on your network.' : ''}`,
         )}
       </section>
 
       {sources.map((src) => {
-        const owned = rows.filter((r) => r.source === src)
+        const ownedAll = rows.filter((r) => r.source === src)
+        const owned = shown.filter((r) => r.source === src)
+        // While searching, an integration with no match drops out of the page.
+        if (q && owned.length === 0) return null
         return (
           <div key={src}>
             <h2 className="section">
               Synced from <span className="mono">{src}</span>
             </h2>
             <p className="section">
-              {owned.length} {owned.length === 1 ? 'record' : 'records'} pushed and kept up to date by the {src}{' '}
+              {count(owned.length, ownedAll.length, 'record', 'records')} pushed and kept up to date by the {src}{' '}
               integration. Switching one off sticks; to edit or delete one by hand, detach it and it moves to your local
               records.
             </p>
@@ -401,8 +444,10 @@ export default function LocalDNS() {
                   )}
                 </tr>
               ))}
-              <TableStatusRow loading={!fwdsLoaded} error={fwdErr} empty={fwds.length === 0} colSpan={recCols}>
-                No forwarding rules. Every name goes to the normal upstream resolvers.
+              <TableStatusRow loading={!fwdsLoaded} error={fwdErr} empty={shownFwds.length === 0} colSpan={recCols}>
+                {q
+                  ? `No forwarding rules match “${search.trim()}”.`
+                  : 'No forwarding rules. Every name goes to the normal upstream resolvers.'}
               </TableStatusRow>
             </tbody>
           </table>
@@ -456,6 +501,7 @@ export default function LocalDNS() {
 // one an integration owns can only be switched, or detached to make it manual.
 function RecordTable({
   rows,
+  query,
   loaded,
   err,
   admin,
@@ -467,6 +513,7 @@ function RecordTable({
   onDetach,
 }: {
   rows: Rewrite[]
+  query: string
   loaded: boolean
   err: string
   admin: boolean
@@ -478,6 +525,9 @@ function RecordTable({
   onDetach: (r: Rewrite) => void
 }) {
   const table = useTable(rows, COLS, 'domain')
+  // A new search starts from the first page of matches.
+  const { setPage } = table
+  useEffect(() => setPage(0), [query, setPage])
   return (
     <>
       <div className="table-scroll">

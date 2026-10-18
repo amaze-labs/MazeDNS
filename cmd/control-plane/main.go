@@ -35,6 +35,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/metrics"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
+	"github.com/IPMaze/MazeDNS/internal/updates"
 	"github.com/IPMaze/MazeDNS/internal/version"
 	"github.com/IPMaze/MazeDNS/internal/victorialogs"
 )
@@ -202,6 +203,14 @@ func main() {
 	// endpoints (including token self-enrollment) are always available.
 	apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
 	apiSrv := api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled, false, true)
+	// Whether a newer release exists, from the project's public GitHub
+	// releases. Off with MAZEDNS_UPDATE_CHECK=off (air-gapped installs).
+	updateCheckOff := false
+	switch strings.ToLower(os.Getenv("MAZEDNS_UPDATE_CHECK")) {
+	case "off", "false", "0", "no":
+		updateCheckOff = true
+	}
+	apiSrv.SetUpdates(updates.New(version.Short(), updateCheckOff))
 	// Per-node key rotation policy (DB-backed): default to 30d if unset.
 	keyMaxAge := time.Duration(cpset.KeyMaxAgeSec) * time.Second
 	if keyMaxAge == 0 {

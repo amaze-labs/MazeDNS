@@ -66,6 +66,10 @@ export default function App() {
   // current tab's button.
   const navRef = useRef<HTMLElement>(null)
   const [ind, setInd] = useState<{ x: number; w: number } | null>(null)
+  // stacked: the navigation needs a row of its own (it wouldn't fit beside
+  // the brand and the tools), decided from the widths, not a breakpoint.
+  const barRef = useRef<HTMLElement>(null)
+  const [stacked, setStacked] = useState(false)
 
   // navigate switches tab and pushes the matching path into history.
   const navigate = (t: Tab) => {
@@ -119,10 +123,51 @@ export default function App() {
       .catch(() => {})
   }, [user])
 
+  // Whether a newer release is out, for the note next to the version.
+  const [updateTo, setUpdateTo] = useState('')
+  useEffect(() => {
+    if (!user) return
+    const check = () =>
+      api
+        .updates()
+        .then((u) => setUpdateTo(u.update_available && u.latest ? u.latest : ''))
+        .catch(() => {})
+    check()
+    const t = setInterval(check, 6 * 3600 * 1000)
+    return () => clearInterval(t)
+  }, [user])
+
   // Re-measure the active-tab pill whenever the tab, the tab set or a count
   // badge (which changes a button's width) changes, and on resize.
   useLayoutEffect(() => {
     const measure = () => {
+      const bar = barRef.current
+      const nav = navRef.current
+      if (bar && nav) {
+        const cs = getComputedStyle(bar)
+        const inner = bar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+        const gap = parseFloat(cs.columnGap) || 0
+        // The navigation's natural width: its buttons, gaps and padding.
+        const btns = [...nav.querySelectorAll<HTMLElement>(':scope > button')]
+        const ncs = getComputedStyle(nav)
+        // A tab's natural width (its content and padding): when stacked the
+        // tabs stretch to fill the row, so their box width would mislead.
+        const natural = (b: HTMLElement) => {
+          const r = document.createRange()
+          r.selectNodeContents(b)
+          const bcs = getComputedStyle(b)
+          return r.getBoundingClientRect().width + parseFloat(bcs.paddingLeft) + parseFloat(bcs.paddingRight)
+        }
+        const navNeed =
+          btns.reduce((w, b) => w + natural(b), 0) +
+          (btns.length - 1) * (parseFloat(ncs.columnGap) || 0) +
+          parseFloat(ncs.paddingLeft) +
+          parseFloat(ncs.paddingRight)
+        const others = [...bar.children].filter((c) => c !== nav) as HTMLElement[]
+        const othersW = others.reduce((w, c) => w + c.offsetWidth, 0)
+        const need = navNeed + othersW + others.length * gap
+        setStacked(need > inner)
+      }
       const btn = navRef.current?.querySelector<HTMLElement>('button.active')
       setInd((cur) => {
         const next = btn ? { x: btn.offsetLeft, w: btn.offsetWidth } : null
@@ -133,7 +178,7 @@ export default function App() {
     document.fonts?.ready.then(measure)
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [tab, user, info, badges.agents, badges.filtering, appVersion])
+  }, [tab, user, info, badges.agents, badges.filtering, appVersion, updateTo])
 
   const logout = async () => {
     // Prevent auto-login from immediately bouncing back into SSO on the next render.
@@ -189,7 +234,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
+      <header className={`topbar${stacked ? ' stacked' : ''}`} ref={barRef}>
         <a
           className="tb-brand"
           href="/overview"
@@ -202,6 +247,20 @@ export default function App() {
           <span className="brand-name">MazeDNS</span>
           {appVersion && <span className="brand-version">{appVersion}</span>}
         </a>
+        {updateTo && (
+          <a
+            className="tb-update"
+            href="/settings?section=about"
+            title={`MazeDNS ${updateTo} is available — see what changed`}
+            onClick={(e) => {
+              e.preventDefault()
+              window.history.pushState({}, '', '/settings?section=about')
+              window.dispatchEvent(new PopStateEvent('popstate')) // App and Settings follow the URL
+            }}
+          >
+            <span className="dot warn" /> Update to {updateTo}
+          </a>
+        )}
         <nav className={`tb-nav${ind ? ' has-ind' : ''}`} aria-label="Main" ref={navRef}>
           {ind && <span className="tb-ind" style={{ transform: `translateX(${ind.x}px)`, width: ind.w }} aria-hidden="true" />}
           {tabs.map((t) => (

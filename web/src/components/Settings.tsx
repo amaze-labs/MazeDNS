@@ -14,6 +14,7 @@ import {
 import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
 import { SkelGroups, SkelList } from './Skeleton'
+import About from './About'
 import { invalidateAllClientNames } from '../useClientNames'
 import { PASSWORD_RULE } from '../passwordPolicy'
 import '../styles/settings.css'
@@ -130,13 +131,14 @@ const resolverBody = (s: S, upstreamsText: string, fwd: FwdRow[]): S => ({
   forwarders: fromFwdRows(fwd),
 })
 
-type View = 'resolver' | 'access' | 'classification' | 'integrations' | 'backup'
+type View = 'resolver' | 'access' | 'classification' | 'integrations' | 'backup' | 'about'
 const VIEW_LABEL: Record<View, string> = {
   resolver: 'Resolver',
   access: 'Access & sign-in',
   classification: 'Classification',
   integrations: 'Integrations',
   backup: 'Backup & restore',
+  about: 'About & updates',
 }
 
 // The last saved copy of every section, for unsaved-change tracking and Discard.
@@ -287,7 +289,20 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
   const [saved, setSaved] = useState<Saved>({ s: null, cls: null, vm: null, vl: null, cp: null })
 
-  const [view, setView] = useState<View>('resolver')
+  // A section can be linked to: /settings?section=about (the top bar's
+  // "update available" note does).
+  const [view, setView] = useState<View>(() => {
+    const s = new URLSearchParams(window.location.search).get('section')
+    return s && s in VIEW_LABEL ? (s as View) : 'resolver'
+  })
+  useEffect(() => {
+    const onPop = () => {
+      const s = new URLSearchParams(window.location.search).get('section')
+      if (s && s in VIEW_LABEL) setView(s as View)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
 
   // applySettings shows a settings object fetched from (or saved to) the server.
   const applySettings = (cur: S) => {
@@ -428,6 +443,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     classification: dirty.classification,
     integrations: dirty.vm || dirty.vl,
     backup: false,
+    about: false,
   }
   const anyDirty = Object.values(dirtyViews).some(Boolean)
   // Clear the "saved" note as soon as something changes again.
@@ -621,7 +637,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const addFwd = () => setFwd([...fwd, { suffix: '', text: '' }])
   const delFwd = (i: number) => setFwd(fwd.filter((_, j) => j !== i))
 
-  const views: View[] = ['resolver', 'access', ...(cls ? (['classification'] as View[]) : []), 'integrations', 'backup']
+  const views: View[] = ['resolver', 'access', ...(cls ? (['classification'] as View[]) : []), 'integrations', 'backup', 'about']
   const shownView: View = views.includes(view) ? view : 'resolver'
   const otherDirty = views.filter((v) => v !== shownView && dirtyViews[v]).map((v) => VIEW_LABEL[v])
 
@@ -1705,7 +1721,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </nav>
 
         <div className="st-main">
-          {readonly && shownView !== 'access' && shownView !== 'backup' && (
+          {readonly && shownView !== 'access' && shownView !== 'backup' && shownView !== 'about' && (
             <div className="callout">
               <InfoIcon />
               <div>
@@ -1714,11 +1730,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               </div>
             </div>
           )}
-          <fieldset className="st-fs" disabled={readonly}>
-            {body}
-          </fieldset>
+          {shownView === 'about' ? (
+            <About />
+          ) : (
+            <fieldset className="st-fs" disabled={readonly}>
+              {body}
+            </fieldset>
+          )}
 
-          {!readonly && (shownView !== 'backup' || anyDirty) && (
+          {!readonly && ((shownView !== 'backup' && shownView !== 'about') || anyDirty) && (
             <div className={`savebar${anyDirty ? ' dirty' : !savedNote && !saveErr ? ' idle' : ''}`} role="status">
               {saveErr ? (
                 <span className="bad-text grow">Couldn’t save: {saveErr}</span>

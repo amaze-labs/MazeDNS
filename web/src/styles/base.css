@@ -271,6 +271,33 @@ td,
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
+/* "Update to x.y.z": next to the brand, links to Settings → About. */
+.tb-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tb-update:hover {
+  border-color: var(--warn);
+}
+@media (max-width: 640px) {
+  .tb-update {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+}
 .tb-nav {
   position: relative;
   display: flex;
@@ -406,7 +433,23 @@ td,
   display: none;
 }
 
-/* Tablets and narrow laptops: navigation gets a row of its own. */
+/* Navigation gets a row of its own when it wouldn't fit beside the brand and
+   the tools (App measures that: .stacked), and always on tablets. */
+.topbar.stacked {
+  flex-wrap: wrap;
+}
+.topbar.stacked .tb-tools {
+  margin-left: auto;
+}
+.topbar.stacked .tb-nav {
+  order: 3;
+  flex: 1 1 100%;
+  margin: 0;
+}
+.topbar.stacked .tb-nav button {
+  flex: 1 0 auto;
+  justify-content: center;
+}
 @media (max-width: 1180px) {
   .topbar {
     flex-wrap: wrap;

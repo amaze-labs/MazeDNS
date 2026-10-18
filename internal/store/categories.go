@@ -168,15 +168,16 @@ func (s *Store) moveVerdictContentCategories() error {
 
 // UnlabelledQuery is a query-log row still labelled "other" (OtherQueries).
 type UnlabelledQuery struct {
-	ID   int64
-	Name string
+	ID     int64
+	Name   string
+	Action string
 }
 
 // OtherQueries returns up to limit query-log rows labelled "other" since
 // sinceMs with an id below beforeID (0 = no bound), newest first — a page of
 // the rows RelabelContent may move once their domain gets a category.
 func (s *Store) OtherQueries(sinceMs, beforeID int64, limit int) ([]UnlabelledQuery, error) {
-	q := `SELECT id, name FROM query_log WHERE content_category = ? AND ts >= ?`
+	q := `SELECT id, name, action FROM query_log WHERE content_category = ? AND ts >= ?`
 	args := []any{categories.Other, sinceMs}
 	if beforeID > 0 {
 		q += ` AND id < ?`
@@ -190,7 +191,7 @@ func (s *Store) OtherQueries(sinceMs, beforeID int64, limit int) ([]UnlabelledQu
 	var out []UnlabelledQuery
 	for rows.Next() {
 		var u UnlabelledQuery
-		if err := rows.Scan(&u.ID, &u.Name); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.Action); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

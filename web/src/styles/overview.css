@@ -322,6 +322,24 @@
   margin: 4px -4px 0 -6px;
   transition: opacity 0.2s ease;
 }
+/* A chart grows with its card: when the card beside it (the agents list,
+   the distribution) is taller, the chart fills the height instead of
+   leaving an empty band below. */
+.pg-overview .ov-chart-card {
+  display: flex;
+  flex-direction: column;
+}
+.pg-overview .ov-chart-card > .ov-chart {
+  position: relative;
+  flex: 1;
+  min-height: 260px;
+}
+/* Out of the flow, so the chart's own height never props its card up: the
+   card's height comes from the row, and the chart shrinks back with it. */
+.pg-overview .ov-chart-card > .ov-chart > .recharts-responsive-container {
+  position: absolute;
+  inset: 0;
+}
 .pg-overview.is-updating .ov-chart,
 .pg-overview.is-updating .ov-band,
 .pg-overview.is-updating .ov-donuts {

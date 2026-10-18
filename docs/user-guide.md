@@ -104,15 +104,26 @@ it:
 
 1. **Your override** — set it from a query's details or a domain's review drawer
    (**Change**, for the whole registered domain); **Use automatic** removes it.
-2. **The classifier**, when it is blocking the domain (phishing, malware, …).
-3. **The category database**: [UT1](https://dsi.ut-capitole.fr/blacklists/),
+2. **Local network** — a query answered by one of your local records, and names
+   that only exist inside a network (reverse lookups, `.lan`, `.home.arpa`,
+   `.internal`, single-label hostnames).
+3. **The classifier**, when it is blocking the domain (phishing, malware, …).
+4. **The category database**: [UT1](https://dsi.ut-capitole.fr/blacklists/),
    published by Université Toulouse Capitole (CC BY-SA 4.0), about 5 million
    domains. The control plane downloads it next to its database and refreshes it
    daily.
-4. **The language model**, if one is configured, for domains the database doesn't
-   know (including trusted ones, which skip scoring). Domains scored before
+5. **The built-in list** of the platforms behind most everyday traffic that the
+   database doesn't list: operating-system and cloud services (Apple, Microsoft,
+   Google), CDNs, the big streaming, social, messaging and productivity apps.
+6. **The language model**, if one is configured, for domains neither knows
+   (including trusted ones, which skip scoring). Domains scored before
    categories existed are labelled gradually in the background.
-5. **Other**, when nothing knows the domain.
+7. **Other**, when nothing knows the domain.
+
+A query is labelled when it arrives. Queries from the last 7 days still in
+**Other** are labelled again every few minutes, so they move once their domain
+gets a category. Without a language model, what stays in Other is mostly
+smaller sites neither the database nor the built-in list knows.
 
 Where you see them:
 

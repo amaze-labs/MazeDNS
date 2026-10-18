@@ -606,7 +606,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="ov-chart">
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height="100%" minHeight={260}>
                 <BarChart syncId="ov-time" data={traffic} margin={{ top: 6, right: 4, left: 0, bottom: 0 }} barCategoryGap="16%">
                   <defs>
                     {STACK.map((s) => (
@@ -929,7 +929,7 @@ export default function Dashboard() {
             </div>
           ) : (
             <div className="ov-chart">
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height="100%" minHeight={260}>
                 <ComposedChart syncId="ov-time" data={latData} margin={{ top: 6, right: 4, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="ov-lat-fill" x1="0" y1="0" x2="0" y2="1">

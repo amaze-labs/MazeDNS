@@ -15,6 +15,7 @@ const (
 	SourceOverride   = "override"   // an operator set it
 	SourceClassifier = "classifier" // an enforced security verdict
 	SourceDatabase   = "database"   // the category database (UT1)
+	SourceBuiltin    = "builtin"    // the built-in list of common platforms
 	SourceModel      = "model"      // the language model
 	SourceLocal      = "local"      // a name that only exists inside a network
 	SourceNone       = ""           // nothing knows it: "other"
@@ -43,8 +44,12 @@ const (
 //  2. a local name (reverse lookup, private-use TLD, single label): "local";
 //  3. an enforced security verdict (the classifier blocks it as phishing, …);
 //  4. the category database (UT1);
-//  5. the language model's content category, for domains the database lacks;
-//  6. "other".
+//  5. the built-in list of common platforms (Apple, Microsoft, CDNs, …);
+//  6. the language model's content category, for domains neither knows;
+//  7. "other".
+//
+// A query answered by a local record (a rewrite) is "local" whatever its
+// name: see Label.
 type Categorizer struct {
 	st *store.Store
 	db *categories.Holder // nil = no category database
@@ -118,10 +123,14 @@ func (c *Categorizer) Relabel(since time.Time) (int, error) {
 		}
 		labels := map[int64]string{}
 		for _, r := range rows {
-			cat, ok := known[r.Name]
+			key := r.Name
+			if answeredLocally(r.Action) {
+				key = "\x00local\x00" + r.Name
+			}
+			cat, ok := known[key]
 			if !ok {
-				cat, _ = c.Category(r.Name)
-				known[r.Name] = cat
+				cat = c.queryCategory(r.Name, r.Action)
+				known[key] = cat
 			}
 			if cat != categories.Other {
 				labels[r.ID] = cat
@@ -161,8 +170,19 @@ func (c *Categorizer) Category(name string) (category, source string) {
 			return cat, SourceDatabase
 		}
 	}
+	// A customer's name on a shared hosting platform (see builtinCategory)
+	// gets the platform's built-in label only when the model has nothing to
+	// say about it; any other name, before the model.
+	builtin, inList := categories.Builtin(name)
+	onPlatform := HostingPlatform(name) != ""
+	if inList && !onPlatform {
+		return builtin, SourceBuiltin
+	}
 	if model != "" && model != categories.Other {
 		return model, SourceModel
+	}
+	if inList {
+		return builtin, SourceBuiltin
 	}
 	return categories.Other, SourceNone
 }
@@ -178,8 +198,37 @@ func (c *Categorizer) Override(name string) (store.CategoryOverride, bool) {
 // Label sets ContentCategory on each entry (in place).
 func (c *Categorizer) Label(entries []store.QueryLogEntry) {
 	for i := range entries {
-		entries[i].ContentCategory, _ = c.Category(entries[i].Name)
+		entries[i].ContentCategory = c.queryCategory(entries[i].Name, entries[i].Action)
 	}
+}
+
+// builtinCovers reports whether the built-in list decides name's category
+// ahead of the model. Not for a customer's name on a shared hosting platform
+// (evil.github.io, shop.myshopify.com, a bucket on amazonaws.com): anyone can
+// publish there, so the platform's label says little about the site and must
+// not cover up what the model says about it — it is only a fallback there.
+func builtinCovers(name string) bool {
+	if HostingPlatform(name) != "" {
+		return false
+	}
+	_, ok := categories.Builtin(name)
+	return ok
+}
+
+// answeredLocally reports whether a query's answer came from the network's
+// own records (a rewrite, or a name the resolver is authoritative for).
+func answeredLocally(action string) bool { return action == "rewrite" || action == "authoritative" }
+
+// queryCategory is a query's category: "local" when a local record answered
+// it (the network's own names, whatever they look like), otherwise its
+// name's. An operator's override and a security verdict the classifier
+// enforces still win: a local answer never hides that a name is phishing.
+func (c *Categorizer) queryCategory(name, action string) string {
+	cat, src := c.Category(name)
+	if answeredLocally(action) && src != SourceOverride && src != SourceClassifier {
+		return categories.Local
+	}
+	return cat
 }
 
 // Status reports the category database's state (zero if there is none).
@@ -209,17 +258,29 @@ func (c *Categorizer) DomainsFor(blocked []string) map[string]string {
 	for d, o := range c.overrides {
 		out[d] = o.Category
 	}
+	inDB := func(d string) bool {
+		if c.db == nil {
+			return false
+		}
+		_, known := c.db.Lookup(d)
+		return known
+	}
+	// The built-in list in the blocked categories, where the database
+	// doesn't already label the domain.
+	for d, cat := range categories.BuiltinDomains(want) {
+		if _, overridden := out[d]; !overridden && !inDB(d) {
+			out[d] = cat
+		}
+	}
 	for d, cat := range c.verdicts.Content {
 		if !want[cat] {
 			continue
 		}
-		if _, overridden := out[d]; overridden {
+		if _, set := out[d]; set || inDB(d) {
 			continue
 		}
-		if c.db != nil {
-			if _, known := c.db.Lookup(d); known {
-				continue
-			}
+		if builtinCovers(d) {
+			continue // the built-in list labels it (in another category)
 		}
 		out[d] = cat
 	}

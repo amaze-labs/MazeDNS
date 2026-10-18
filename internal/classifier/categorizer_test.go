@@ -10,7 +10,8 @@ import (
 )
 
 // The first source that knows a domain wins: override, enforced security
-// verdict, category database, the model's content category, then "other".
+// verdict, category database, the built-in list, the model's content
+// category, then "other".
 func TestCategorizerPrecedence(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -59,11 +60,15 @@ func TestCategorizerPrecedence(t *testing.T) {
 		t.Errorf("Label = %+v", entries)
 	}
 
-	// Without a category database the model and verdicts still apply.
+	// Without a category database the built-in list and the model still apply
+	// (the built-in list first: facebook.com is a platform it knows).
 	c2 := NewCategorizer(st, nil)
 	_ = c2.Refresh()
-	if cat, _ := c2.Category("facebook.com"); cat != "news" {
-		t.Errorf("no database: facebook.com = %q, want the model's news", cat)
+	if cat, src := c2.Category("facebook.com"); cat != "social" || src != SourceBuiltin {
+		t.Errorf("no database: facebook.com = %q from %q, want the built-in social", cat, src)
+	}
+	if cat, _ := c2.Category("modelled.com"); cat != "gaming" {
+		t.Errorf("no database: modelled.com = %q, want the model's gaming", cat)
 	}
 }
 
@@ -176,5 +181,90 @@ func TestCategorizerRelabel(t *testing.T) {
 	}
 	if n, _ := c.Relabel(time.Now().Add(-time.Hour)); n != 0 {
 		t.Errorf("a second pass moved %d", n)
+	}
+}
+
+// A query a local record answered is "local" whatever its name; a well-known
+// platform the database doesn't list gets its built-in category; an
+// operator's override still wins over both.
+func TestCategorizerLocalAnswersAndBuiltin(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.SetCategoryOverride("example-corp.com", "productivity", "admin"); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCategorizer(st, categories.NewLoadedHolder(new(categories.Builder).Build()))
+	if err := c.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	entries := []store.QueryLogEntry{
+		{Name: "nas.amaze-labs.com.", Action: "rewrite"},        // the network's own name under a public domain
+		{Name: "www.apple.com.", Action: "forward"},             // built-in
+		{Name: "www.apple.com.", Action: "rewrite"},             // pinned locally: still local
+		{Name: "intranet.example-corp.com.", Action: "rewrite"}, // override wins
+		{Name: "unknown-thing.net.", Action: "forward"},
+	}
+	c.Label(entries)
+	want := []string{"local", "technology", "local", "productivity", "other"}
+	for i, e := range entries {
+		if e.ContentCategory != want[i] {
+			t.Errorf("%s (%s) = %q, want %q", e.Name, e.Action, e.ContentCategory, want[i])
+		}
+	}
+	if cat, src := c.Category("e1.akamaiedge.net"); cat != "cdn" || src != SourceBuiltin {
+		t.Errorf("akamaiedge = %s (%s)", cat, src)
+	}
+
+	// Rows labelled "other" before this (older control plane) move too.
+	now := time.Now().UnixMilli()
+	if err := st.InsertNodeQueryLog("a", []store.QueryLogEntry{
+		{TS: now, Name: "nas.amaze-labs.com.", Action: "rewrite", ContentCategory: "other"},
+		{TS: now, Name: "www.netflix.com.", Action: "forward", ContentCategory: "other"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := c.Relabel(time.Now().Add(-time.Hour)); err != nil || n != 2 {
+		t.Errorf("relabel moved %d, err %v; want 2", n, err)
+	}
+}
+
+// A customer's site on a shared hosting platform doesn't inherit the
+// platform's built-in label: the model's verdict on it stands, and reaches
+// the agents when its category is blocked. A security verdict the classifier
+// enforces is never hidden behind "local".
+func TestCategorizerBuiltinSafety(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	for _, cl := range []store.Classification{
+		{Domain: "naughty.github.io", Category: "other", Status: store.ClassClean, ContentCategory: "adult", ContentChecked: true},
+		{Domain: "phish-login.com", Category: "phishing", Block: true, Status: store.ClassAuto},
+	} {
+		if _, err := st.InsertClassification(cl); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := NewCategorizer(st, nil)
+	if err := c.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if cat, src := c.Category("naughty.github.io"); cat != "adult" || src != SourceModel {
+		t.Errorf("naughty.github.io = %s (%s), want the model's adult", cat, src)
+	}
+	if cat, _ := c.Category("github.io"); cat != "technology" {
+		t.Errorf("github.io itself = %s, want technology", cat)
+	}
+	if got := c.DomainsFor([]string{"adult"}); got["naughty.github.io"] != "adult" {
+		t.Errorf("DomainsFor(adult) = %v, want naughty.github.io blocked", got)
+	}
+	e := []store.QueryLogEntry{{Name: "phish-login.com.", Action: "rewrite"}}
+	c.Label(e)
+	if e[0].ContentCategory != "phishing" {
+		t.Errorf("rewritten phishing domain labelled %q, want phishing", e[0].ContentCategory)
 	}
 }

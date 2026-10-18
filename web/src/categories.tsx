@@ -62,6 +62,7 @@ export const SOURCE_LABEL: Record<CategorySource, string> = {
   override: 'set by an administrator',
   classifier: 'the classifier blocks it',
   database: 'category database (UT1)',
+  builtin: 'built-in list of common services',
   model: 'the language model',
   local: 'a name that only exists on your network',
   '': 'nothing knows this domain',

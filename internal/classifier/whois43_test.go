@@ -201,3 +201,59 @@ func TestParseWhois43Sections(t *testing.T) {
 		t.Errorf(".uk created = %q (age %d), expires = %q", uk.Created, uk.AgeDays, uk.Expires)
 	}
 }
+
+// Trimmed real replies from whois.jprs.jp (queried with "/e"): a plain .jp
+// name, and a co.jp name with its item letters and no registered date.
+const sampleWhoisJP = `[ JPRS database provides information on network administration. Its use is    ]
+[ at the end of command, e.g. 'whois -h whois.jprs.jp xxx/e'.                 ]
+Domain Information:
+[Domain Name]                   520.JP
+
+[Registrant]                    . Sakura
+
+[Name Server]                   ajay.ns.cloudflare.com
+[Name Server]                   gina.ns.cloudflare.com
+[Signing Key]                   2371 13 2 (
+                                614A5EB71B4171F819359F5476E712B5 )
+
+[Created on]                    2022/05/23
+[Expires on]                    2027/05/31
+[Status]                        Active
+[Last Updated]                  2026/06/01 01:05:03 (JST)
+
+Contact Information:
+[Name]                          . Sakura
+`
+
+const sampleWhoisCoJP = `Domain Information:
+a. [Domain Name]                SONY.CO.JP
+g. [Organization]               Sony Group Corporation
+l. [Organization Type]          Corporation
+p. [Name Server]                a1-166.akam.net
+p. [Name Server]                a13-66.akam.net
+s. [Signing Key]                
+[State]                         Connected (2027/03/31)
+[Registered Date]                
+[Connected Date]                2011/04/15
+[Last Update]                   2026/04/01 01:03:06 (JST)
+`
+
+func TestParseWhois43JPRS(t *testing.T) {
+	jp := parseWhois43("520.jp", sampleWhoisJP)
+	if jp.Created != "2022/05/23" || jp.Expires != "2027/05/31" || jp.Updated != "2026/06/01 01:05:03 (JST)" ||
+		jp.Registrant != ". Sakura" || jp.AgeDays <= 0 {
+		t.Errorf("520.jp: %+v", jp)
+	}
+	if want := []string{"ajay.ns.cloudflare.com", "gina.ns.cloudflare.com"}; !reflect.DeepEqual(jp.Nameservers, want) {
+		t.Errorf("520.jp nameservers = %v", jp.Nameservers)
+	}
+	if !reflect.DeepEqual(jp.Status, []string{"Active"}) {
+		t.Errorf("520.jp status = %v", jp.Status)
+	}
+
+	co := parseWhois43("sony.co.jp", sampleWhoisCoJP)
+	if co.Created != "2011/04/15" || co.Registrant != "Sony Group Corporation" || len(co.Nameservers) != 2 ||
+		!reflect.DeepEqual(co.Status, []string{"Connected"}) || co.AgeDays < 5000 {
+		t.Errorf("sony.co.jp: %+v", co)
+	}
+}

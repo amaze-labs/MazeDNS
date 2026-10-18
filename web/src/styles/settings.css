@@ -434,15 +434,35 @@
   white-space: pre;
   user-select: all;
 }
-.pg-settings .audit {
+/* Tables inside a settings group sit in their own rounded box. */
+.pg-settings .audit,
+.pg-settings .st-table {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 16px;
   overflow: hidden;
 }
 .pg-settings .audit th,
-.pg-settings .audit td {
-  padding: 8px 12px;
+.pg-settings .audit td,
+.pg-settings .st-table th,
+.pg-settings .st-table td {
+  padding: 10px 14px;
   vertical-align: top;
+}
+
+/* API tokens: name · role · expiry · create, on one line. */
+.pg-settings .tok-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+@media (max-width: 1100px) {
+  .pg-settings .tok-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pg-settings .tok-form .btn {
+    justify-self: start;
+  }
 }
 .pg-settings .audit td:first-child,
 .pg-settings .audit th:first-child {

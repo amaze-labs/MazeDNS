@@ -101,38 +101,31 @@ export default function ApiTokens() {
           revoking it applies on the next request.
         </p>
 
-        <form onSubmit={submit}>
-          <div className="row3">
-            <label className="field">
+        <form className="tok-form" onSubmit={submit}>
+          <label className="field">
               <span>Name</span>
-              <input placeholder="ipam-sync" value={name} maxLength={64} required onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="field">
-              <span>Role</span>
-              <select value={role} onChange={(e) => setRole(e.target.value as 'readonly' | 'admin')}>
-                <option value="readonly">Viewer</option>
-                <option value="admin">Administrator</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Expires</span>
-              <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-                {EXPIRY_OPTIONS.map((o) => (
-                  <option key={o.days} value={o.days}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="row">
-            <button type="submit" className="btn sm" disabled={busy || !name.trim()}>
-              Make a token
-            </button>
-            <span className="hint" style={{ margin: 0 }}>
-              Applies immediately.
-            </span>
-          </div>
+            <input placeholder="ipam-sync" value={name} maxLength={64} required onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Role</span>
+            <select value={role} onChange={(e) => setRole(e.target.value as 'readonly' | 'admin')}>
+              <option value="readonly">Viewer</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Expires</span>
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              {EXPIRY_OPTIONS.map((o) => (
+                <option key={o.days} value={o.days}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="btn primary" disabled={busy || !name.trim()}>
+            Create token
+          </button>
         </form>
 
         {err && <div className="callout bad">{err}</div>}
@@ -154,6 +147,7 @@ export default function ApiTokens() {
           </div>
         )}
 
+        <div className="st-table">
         <table className="stackable">
           <thead>
             <tr>
@@ -206,10 +200,11 @@ export default function ApiTokens() {
               </tr>
             ))}
             <TableStatusRow loading={loading} error={loadErr} empty={tokens.length === 0} colSpan={5}>
-              No API tokens yet
+              No API tokens yet. Create one above; it applies immediately.
             </TableStatusRow>
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   )

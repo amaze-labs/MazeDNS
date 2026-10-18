@@ -339,10 +339,10 @@
 /* Chart tooltip. */
 .ov-tip {
   min-width: 170px;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   box-shadow: var(--shadow);
   color: var(--text);
   font-size: 12.5px;
@@ -465,11 +465,20 @@
 }
 
 /* Top domains. */
+/* Before the ranking loads, its prompt sits in the middle of the card
+   (which shares its row's height) instead of leaving a hole below. */
+.pg-overview .ov-top {
+  display: flex;
+  flex-direction: column;
+}
 .pg-overview .ov-top-off {
+  flex: 1;
   display: grid;
-  justify-items: start;
-  gap: 12px;
-  padding-top: 4px;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 12px 0 20px;
+  text-align: center;
 }
 .pg-overview .ov-top-off p {
   margin: 0;

@@ -381,10 +381,14 @@
   border-bottom: 1px solid var(--soft);
 }
 .ag-member-name {
+  min-width: 0;
   font-weight: 500;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ag-member-name small {
+  display: block;
   font-weight: 400;
 }
 .ag-member select {
@@ -502,4 +506,23 @@
   .ag-drawer-strip span {
     white-space: normal;
   }
+}
+
+/* Numbered steps in the "Add an agent" guide. */
+.ag-step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ag-step-title > span {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--pill);
+  color: var(--on-pill);
+  font-size: 12px;
+  font-weight: 600;
 }

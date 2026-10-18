@@ -1315,6 +1315,15 @@ td.actions {
 .pager .spacer {
   flex: 1;
 }
+/* A table with nothing (yet) to show: one roomy, centred, muted line. */
+td.table-empty {
+  padding: 28px 20px !important;
+  text-align: center;
+  color: var(--muted);
+}
+td.table-empty .spinner-wrap {
+  justify-content: center;
+}
 .empty {
   padding: 28px 20px;
   text-align: center;
@@ -1635,6 +1644,9 @@ td.actions {
   }
   table.stackable td[colspan] {
     text-align: center;
+  }
+  table.stackable td.table-empty {
+    grid-column: 1 / -1;
   }
   table.stackable td:empty {
     display: none;

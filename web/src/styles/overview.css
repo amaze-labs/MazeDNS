@@ -247,21 +247,37 @@
   border-radius: 14px;
   overflow: hidden;
 }
+/* No padding on the segment itself: with `flex: v 1 0` it would be a fixed base
+   every segment starts from, inflating the small ones. Each segment is a size
+   container, so its percentage tightens, then hides, as the segment narrows. */
 .pg-overview .ov-band > div {
+  container-type: inline-size;
   display: flex;
   align-items: center;
   min-width: 6px;
-  padding: 0 14px;
   overflow: hidden;
   color: #08302a;
   font-size: 13px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
   transition: flex-grow 0.3s ease;
 }
 .pg-overview .ov-band > div span {
+  padding: 0 14px;
   overflow: hidden;
-  text-overflow: ellipsis;
+}
+@container (max-width: 76px) {
+  .pg-overview .ov-band > div span {
+    flex: 1;
+    padding: 0;
+    text-align: center;
+  }
+}
+@container (max-width: 42px) {
+  .pg-overview .ov-band > div span {
+    display: none;
+  }
 }
 .pg-overview .ov-band > .empty-band {
   flex: 1;
@@ -602,9 +618,6 @@
   }
   .pg-overview .ov-band {
     height: 40px;
-  }
-  .pg-overview .ov-band > div span {
-    display: none;
   }
   .pg-overview .ov-legend {
     grid-template-columns: repeat(2, minmax(0, 1fr));

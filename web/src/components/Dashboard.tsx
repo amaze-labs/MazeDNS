@@ -551,12 +551,10 @@ export default function Dashboard() {
               const v = totals![f.key]
               const p = pct(v, total)
               return (
+                // Only the share: the legend below names each segment in the same
+                // colour. The CSS hides it in a segment too narrow to hold it.
                 <div key={f.key} style={{ background: `var(--${f.k})`, flex: `${v} 1 0` }} title={`${f.label}: ${v.toLocaleString()} (${fmtPct(p)}%)`}>
-                  {p >= 12 && (
-                    <span>
-                      {f.label} · {Math.round(p)}%
-                    </span>
-                  )}
+                  <span>{fmtPct(p)}%</span>
                 </div>
               )
             })

@@ -123,6 +123,12 @@ suffix → upstream routing with identical scoping. Agents pick changes up on
 their next config poll; the cluster page shows a per-node sync flag (⟳) until
 each node has applied its own expected version.
 
+The search box at the top of the page filters every list on it at once —
+local records, each integration's section, and the conditional forwarders —
+by name, answer or resolver, record type, scope target, or the integration
+that owns a record. Integration sections with no match are hidden while a
+search is active.
+
 ### Reverse lookups (PTR) from rewrites
 
 Exact `A`/`AAAA` rewrites also answer reverse lookups for their address:

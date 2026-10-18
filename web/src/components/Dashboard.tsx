@@ -901,24 +901,26 @@ export default function Dashboard() {
   )
 }
 
-// ProtectionPill: is blocking on, and a way to pause / resume it (the controls
-// live on the Filtering page).
+// ProtectionPill: is blocking on, plus a separate button to pause / resume it
+// (the controls live on the Filtering page). The action sits outside the pill
+// so "Pause" doesn't read as part of the state.
 function ProtectionPill({ prot }: { prot: Protection | null }) {
   if (!prot) return null
-  return prot.paused ? (
-    <span className="ov-shield paused">
-      <span className="dot warn pulse" />
-      Blocking paused{prot.seconds_left > 0 ? ` · ${fmtLeft(prot.seconds_left)} left` : ''}
-      <a href="/filtering" onClick={go('/filtering')}>
-        Resume
-      </a>
-    </span>
-  ) : (
-    <span className="ov-shield">
-      <span className="dot pulse" />
-      Protection on
-      <a href="/filtering" onClick={go('/filtering')}>
-        Pause
+  return (
+    <span className="ov-shield-wrap">
+      {prot.paused ? (
+        <span className="ov-shield paused">
+          <span className="dot warn pulse" />
+          Blocking paused{prot.seconds_left > 0 ? ` · ${fmtLeft(prot.seconds_left)} left` : ''}
+        </span>
+      ) : (
+        <span className="ov-shield">
+          <span className="dot pulse" />
+          Protection on
+        </span>
+      )}
+      <a className="btn sm quiet" href="/filtering" onClick={go('/filtering')}>
+        {prot.paused ? 'Resume protection' : 'Pause protection…'}
       </a>
     </span>
   )

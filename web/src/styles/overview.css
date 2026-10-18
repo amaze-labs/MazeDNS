@@ -162,9 +162,10 @@
 .pg-overview .ov-shield.paused .dot {
   --k: var(--warn);
 }
-.pg-overview .ov-shield a {
-  color: inherit;
-  text-underline-offset: 3px;
+.pg-overview .ov-shield-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Hero: resolution flow band. */

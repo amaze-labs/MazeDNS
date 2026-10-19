@@ -78,8 +78,7 @@ there.
 
 Operational DNS settings live under **Settings** and apply live across the cluster
 (no restart): every agent picks them up on its next config poll, and they override
-the agent's own settings. Only the conditional forwarders listed there stay local to
-the control plane (see below). An agent keeps its local settings until its first
+the agent's own settings. An agent keeps its local settings until its first
 successful sync, and keeps the last synced ones if the control plane is unreachable.
 Agents older than the control plane ignore replicated settings until upgraded.
 
@@ -99,10 +98,14 @@ Agents older than the control plane ignore replicated settings until upgraded.
   several upstreams follow the same strategy. See
   [Upstream strategy](configuration.md#upstream-strategy).
 - **Conditional forwarders** — send a domain suffix to specific upstreams
-  (split-horizon), e.g. `corp.internal` → your internal resolver. Cluster-wide
-  forwarders are managed on the **Local DNS** page, can be scoped to specific
-  nodes or sites, and are pushed to the agents automatically; they override a
-  node's own (YAML-seeded) forwarder for the same suffix.
+  (split-horizon), e.g. `corp.internal` → your internal resolver. Each entry can
+  be scoped to every agent, specific sites or specific agents, can be switched off,
+  and is pushed to the agents automatically, overriding a node's own (YAML-seeded)
+  forwarder for the same suffix. Changes here apply at once, without **Save**.
+  Older versions also kept a separate list of forwarders on the control plane
+  itself; the control plane answers no queries, so those never applied. If any
+  are left, the section offers to move them to the list (a domain the list
+  already forwards keeps its entry) or to remove them.
 - **Cache** — enable/size it and clamp TTLs (`min_ttl`/`max_ttl`).
 - **Rate limit** — per-client queries per minute (`REFUSED` beyond).
 - **DNSSEC** — force the DO bit upstream and surface the AD flag.
@@ -275,15 +278,14 @@ specific wins (node > site > all); creating two entries that would tie at the
 same specificity is rejected. Entries scoped to a node or site that no longer
 exists are kept but match nothing (flagged with ⚠ in the UI).
 
-The **Conditional forwarders (cluster)** section on the same tab manages
-suffix → upstream routing with identical scoping. Agents pick changes up on
-their next config poll; the cluster page shows a per-node sync flag (⟳) until
+Conditional forwarders, which route a whole domain to another resolver with the
+same scoping, are under **Settings → Resolver**. Agents pick changes to either up
+on their next config poll; the cluster page shows a per-node sync flag (⟳) until
 each node has applied its own expected version.
 
 The search box at the top of the page filters every list on it at once —
-local records, each integration's section, and the conditional forwarders —
-by name, answer or resolver, record type, scope target, or the integration
-that owns a record. Integration sections with no match are hidden while a
+local records and each integration's section — by name, answer, record type,
+scope target, or the integration that owns a record. Integration sections with no match are hidden while a
 search is active.
 
 ### Reverse lookups (PTR) from rewrites

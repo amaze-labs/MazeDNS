@@ -2,11 +2,20 @@
    "title + one-line explanation | controls", separated by hairlines. One sticky
    save bar under every section. */
 
+/* The panel fills the main column like every other page's content; line
+   length is kept in check inside it (single fields have a readable width,
+   lists and multi-column rows use the room). */
 .pg-settings .st-layout {
   display: grid;
-  grid-template-columns: 200px minmax(0, 880px);
+  grid-template-columns: 200px minmax(0, 1fr);
   gap: 32px;
   align-items: start;
+}
+.pg-settings .sg-body > .field,
+.pg-settings .sg-body > label.field,
+.pg-settings .sg-body > .hint,
+.pg-settings .sg-body > p {
+  max-width: 760px;
 }
 
 /* Sub-navigation (vertical; a tab strip on mobile). */
@@ -79,7 +88,7 @@
 /* A group: title + explanation | controls. */
 .pg-settings .sg {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: clamp(220px, 24%, 300px) minmax(0, 1fr);
   gap: 24px;
   padding: 22px 0;
   border-top: 1px solid var(--line);

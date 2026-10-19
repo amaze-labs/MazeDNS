@@ -72,8 +72,8 @@ func (w *Worker) backfillContent(ctx context.Context) {
 		return
 	}
 	for _, d := range domains {
-		if w.knownToCategoryDB(d) {
-			_ = w.store.SetContentCategory(d, "")
+		if w.knownToCategoryDB(d) || w.Excluded(d) {
+			_ = w.store.SetContentCategory(d, "") // nothing to ask (or not to be asked)
 			continue
 		}
 		w.categorize(ctx, s, d)

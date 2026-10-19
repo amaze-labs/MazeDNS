@@ -73,6 +73,9 @@ type Settings struct {
 	// Kaspersky OpenTIP (opentip.kaspersky.com): per-domain threat-zone lookup.
 	OpenTIPEnabled bool   `json:"opentip_enabled"`
 	OpenTIPAPIKey  string `json:"opentip_api_key"`
+	// ExcludeDomains are never classified, nor any name under them (see
+	// exclude.go): the network's own domains, kept away from third parties.
+	ExcludeDomains []string `json:"exclude_domains"`
 }
 
 // aiConfigured reports whether the optional LLM layer should run. The AI master
@@ -129,6 +132,11 @@ type Worker struct {
 	rep     *RepCache
 
 	zoneResolves func(ctx context.Context, domain string) bool // overridden in tests
+
+	// The conditional forwarders' domains, cached (exclude.go).
+	fwdMu       sync.Mutex
+	fwdSuffixes []string
+	fwdAt       time.Time
 
 	// catDB is the category database: a domain it knows needs no content
 	// category from the model (nil = no database: always ask).
@@ -194,6 +202,9 @@ func (w *Worker) Enqueue(name string) {
 	domain := RegisteredDomain(name)
 	if domain == "" || IsReservedName(domain) {
 		return // reserved / private-use names never exist publicly
+	}
+	if w.Excluded(name) {
+		return // the network's own names never leave it (exclude.go)
 	}
 	w.mu.Lock()
 	if t, ok := w.recent[domain]; ok && time.Since(t) < time.Hour {
@@ -359,6 +370,9 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	mode := ParseMode(s.Mode)
 	if !s.Enabled || mode == ModeOff {
 		return
+	}
+	if w.Excluded(domain) {
+		return // excluded after it was queued
 	}
 	w.trusted.ensureSync(trustedSources(s))
 	w.threat.ensureSync(threatSources(s))

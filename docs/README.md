@@ -20,6 +20,11 @@ is written for deploying and operating those containers — no source builds req
 
 ## Concepts at a glance
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/architecture-dark.png">
+  <img src="images/architecture.png" alt="Clients in each site query a DNS agent on port 53; every agent syncs with one control plane, which you use from a browser">
+</picture>
+
 - **Control plane** — holds the config and dashboard, coordinates the cluster,
   never answers DNS. Run one.
 - **DNS agent** — serves DNS and replicates its filtering config from the control

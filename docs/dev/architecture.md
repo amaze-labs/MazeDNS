@@ -7,6 +7,11 @@ wire codec (`miekg/dns`).
 
 ## Components
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../images/architecture-dark.png">
+  <img src="../images/architecture.png" alt="Clients in each site query a DNS agent on port 53; every agent syncs with one control plane, which you use from a browser">
+</picture>
+
 ```
                        ┌────────────────────────────────────────────────┐
    DNS clients ──53──▶ │  DNS AGENT (data plane, Go + miekg/dns)        │

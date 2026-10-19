@@ -13,12 +13,22 @@
 # Cluster page compares to flag outdated agents). That is why they are rebuilt or
 # retagged TOGETHER: retagging only one would leave it reporting the old version.
 #
+# A push that only changes documentation (docs/, *.md, LICENSE) or CI (.github/)
+# releases nothing: it doesn't start the workflow at all, and when it runs anyway
+# (a push mixing those with the workflow file, say) the version job skips. Those
+# commits ship with the next release; `docs:` commits don't bump its version.
+# Run the workflow by hand to release CI-only changes.
+#
 # Pushing the tag does not re-trigger this workflow (it only runs on branches).
 name: Release
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'LICENSE'
   workflow_dispatch:
 
 # One release at a time, in order: two quick pushes must not compute the same
@@ -51,13 +61,24 @@ jobs:
 
       - name: Next version
         id: next
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -eu
           version=$(.github/scripts/next-version.sh)
           previous=$(.github/scripts/next-version.sh --previous)
           echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+          # What changed since the last release, minus documentation and CI.
+          shipped=""
+          if [ -n "$previous" ]; then
+            shipped=$(git diff --name-only "$previous" HEAD | grep -Ev '^(docs/|\.github/)|\.md$|^LICENSE$' || true)
+          fi
           if git rev-parse -q --verify "refs/tags/${version}" >/dev/null; then
             echo "HEAD is already tagged ${version}: nothing to release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$previous" ] && [ -z "$shipped" ] && [ "$EVENT" != "workflow_dispatch" ]; then
+            echo "Only documentation or CI changed since ${previous}: nothing to release."
+            echo "### Nothing to release: only documentation or CI changed" >> "$GITHUB_STEP_SUMMARY"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"

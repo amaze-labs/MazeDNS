@@ -82,6 +82,7 @@ export default function DomainDetail({
 }) {
   const [whois, setWhois] = useState<WhoisInfo | null>(null)
   const [whoisErr, setWhoisErr] = useState('')
+  const [whoisOff, setWhoisOff] = useState(false) // not looked up by choice (WHOIS off, or kept private)
   const [loading, setLoading] = useState(true)
   const [clients, setClients] = useState<DomainClient[] | null>(null)
   const [clientsErr, setClientsErr] = useState('')
@@ -95,11 +96,19 @@ export default function DomainDetail({
     setLoading(true)
     setWhois(null)
     setWhoisErr('')
+    setWhoisOff(false)
     setClients(null)
     setClientsErr('')
     api
       .whois(c.domain)
-      .then((r) => alive && (r.ok && r.whois ? setWhois(r.whois) : setWhoisErr(r.error || 'unavailable')))
+      .then((r) => {
+        if (!alive) return
+        if (r.ok && r.whois) setWhois(r.whois)
+        else {
+          setWhoisOff(!!r.off)
+          setWhoisErr(r.error || 'unavailable')
+        }
+      })
       .catch((e) => alive && setWhoisErr(e.message))
       .finally(() => alive && setLoading(false))
     api
@@ -340,7 +349,7 @@ export default function DomainDetail({
         {loading ? (
           <Spinner label="Looking up…" />
         ) : whoisErr ? (
-          <p className="muted nomargin">WHOIS unavailable: {whoisErr}</p>
+          <p className="muted nomargin">{whoisOff ? `Not looked up: ${whoisErr}.` : `WHOIS unavailable: ${whoisErr}`}</p>
         ) : whois ? (
           <dl className="kv">
             {whois.registrant && (

@@ -219,6 +219,19 @@ func (s *Server) getWhois(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "classifier not available")
 		return
 	}
+	// Opening a domain's details must not send it anywhere the operator hasn't
+	// chosen: only with lookups and WHOIS on, and never for a kept-private name.
+	set := classifier.LoadSettings(s.store, classifier.Settings{})
+	switch {
+	case !set.Enabled || !set.WhoisEnabled:
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "off": true, "domain": domain,
+			"error": "WHOIS lookups are off (Settings → Classification)"})
+		return
+	case s.cls.Excluded(domain):
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "off": true, "domain": domain,
+			"error": "this domain is kept private (Settings → Classification)"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	info, err := s.cls.Whois(ctx, domain)

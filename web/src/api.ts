@@ -816,7 +816,7 @@ export const api = {
   clearClassifications: () => fetch('/api/classifications', { method: 'DELETE' }).then(j<{ deleted: number }>),
   whois: (domain: string) =>
     fetch(`/api/classifier/whois?domain=${encodeURIComponent(domain)}`).then(
-      j<{ ok: boolean; error?: string; domain?: string; whois?: WhoisInfo }>,
+      j<{ ok: boolean; off?: boolean; error?: string; domain?: string; whois?: WhoisInfo }>,
     ),
   domainClients: (domain: string) =>
     fetch(`/api/classifier/clients?domain=${encodeURIComponent(domain)}`).then(

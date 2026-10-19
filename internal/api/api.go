@@ -250,6 +250,9 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// Account (self) + user management (admin).
 		mux.HandleFunc("POST /api/auth/password", s.requireSession(roleReadonly, s.changePassword))
+		mux.HandleFunc("PUT /api/auth/avatar", s.requireSession(roleReadonly, s.putAvatar))
+		mux.HandleFunc("DELETE /api/auth/avatar", s.requireSession(roleReadonly, s.deleteAvatar))
+		mux.HandleFunc("GET /api/users/{id}/avatar", s.requireSession(roleReadonly, s.userAvatar))
 		mux.HandleFunc("GET /api/users", s.requireSession(roleAdmin, s.listUsers))
 		mux.HandleFunc("POST /api/users", s.requireSession(roleAdmin, s.createUser))
 		mux.HandleFunc("PUT /api/users/{id}/role", s.requireSession(roleAdmin, s.setUserRole))
@@ -1399,16 +1402,21 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	}
 	// Enrich with source + avatar so the UI can hide password change for SSO
 	// accounts and show the profile picture.
-	source, avatar := "local", ""
+	source, avatar, uploaded, canUpload := "local", "", false, false
 	if full, _ := s.store.GetUserByID(u.ID); full != nil {
-		source, avatar = full.Source, full.AvatarURL
+		ssoAllowed := s.ssoAvatarUpload()
+		source, avatar = full.Source, effectiveAvatar(full, ssoAllowed)
+		canUpload = canUploadAvatar(full, ssoAllowed)
+		uploaded = full.AvatarData != "" && canUpload
 	}
 	if u.Kind == auth.KindToken {
-		source = "token"
+		source, canUpload = "token", false
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": u.ID, "username": u.Username, "role": u.Role, "kind": u.Kind,
 		"source": source, "avatar_url": avatar,
+		// Whether this account may upload its own picture, and has one.
+		"can_upload_avatar": canUpload, "has_uploaded_avatar": uploaded,
 	})
 }
 

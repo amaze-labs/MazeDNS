@@ -35,6 +35,10 @@ type OIDCSettings struct {
 	AdminEmail           string `json:"admin_email"`
 	DisablePasswordLogin bool   `json:"disable_password_login"`
 	AutoLogin            bool   `json:"auto_login"`
+	// AllowAvatarUpload lets SSO users replace the identity provider's picture
+	// with one they upload. Off: the IdP's picture always shows (local
+	// accounts can always upload their own).
+	AllowAvatarUpload bool `json:"allow_avatar_upload"`
 }
 
 // CPSettings is the control-plane's UI-editable runtime configuration.

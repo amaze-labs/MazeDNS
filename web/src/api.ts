@@ -183,7 +183,9 @@ export interface SessionUser {
   username: string
   role: string
   source?: string // "local" | "oidc"
-  avatar_url?: string
+  avatar_url?: string // the picture to show: an upload, the IdP's, or none
+  can_upload_avatar?: boolean // local accounts; SSO ones when allowed
+  has_uploaded_avatar?: boolean
 }
 
 export interface AuthInfo {
@@ -211,6 +213,7 @@ export interface OIDCSettings {
   admin_email: string
   disable_password_login: boolean
   auto_login: boolean
+  allow_avatar_upload: boolean // SSO users may replace the IdP's picture
 }
 
 // SetupCompleteRequest is the first-boot wizard payload. method "local" creates a
@@ -482,6 +485,7 @@ export interface User {
   username: string
   role: string
   source: string
+  avatar_url?: string
   updated_at: number
 }
 
@@ -601,6 +605,9 @@ export const api = {
   login: (username: string, password: string) =>
     fetch('/api/auth/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username, password }) }).then(j<SessionUser>),
   logout: () => fetch('/api/auth/logout', { method: 'POST' }),
+  setAvatar: (image: string) =>
+    fetch('/api/auth/avatar', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ image }) }).then(j<{ avatar_url: string }>),
+  removeAvatar: () => fetch('/api/auth/avatar', { method: 'DELETE' }).then(j<{ avatar_url: string }>),
   changePassword: (current_password: string, new_password: string) =>
     fetch('/api/auth/password', {
       method: 'POST',

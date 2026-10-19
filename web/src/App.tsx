@@ -301,11 +301,13 @@ export default function App() {
           </div>
           {user && (
             <div className="tb-account">
-              <AccountMenu user={user} authEnabled={!!info.auth_enabled} onSettings={() => navigate('account')} onLogout={logout} />
-              <span className="tb-user">
-                <b>{user.username}</b>
-                <small>{isAdmin ? 'Administrator' : 'Viewer'}</small>
-              </span>
+              <AccountMenu
+                user={user}
+                roleLabel={isAdmin ? 'Administrator' : 'Viewer'}
+                authEnabled={!!info.auth_enabled}
+                onSettings={() => navigate('account')}
+                onLogout={logout}
+              />
             </div>
           )}
         </div>
@@ -366,7 +368,7 @@ export default function App() {
         {shown === 'agents' && <Cluster />}
         {shown === 'logs' && <Logs />}
         {shown === 'settings' && <Settings onClassifierChange={() => refresh()} />}
-        {shown === 'account' && <Account me={user} oidc={!!info.oidc_enabled} />}
+        {shown === 'account' && <Account me={user} oidc={!!info.oidc_enabled} onProfileChange={() => refresh()} />}
       </main>
     </div>
   )

@@ -1,8 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { api, type SessionUser, type User } from '../api'
 import { PASSWORD_RULE, passwordPolicyError, passwordStrength } from '../passwordPolicy'
 import { TableStatusRow } from './tableKit'
 import Modal from './Modal'
+import Avatar from './Avatar'
+import { fileToAvatar } from '../avatar'
 import { SKIP_AUTOLOGIN_KEY } from './Login'
 import '../styles/account.css'
 
@@ -26,7 +28,15 @@ export function PasswordMeter({ password }: { password: string }) {
   )
 }
 
-export default function Account({ me, oidc = false }: { me: SessionUser | null; oidc?: boolean }) {
+export default function Account({
+  me,
+  oidc = false,
+  onProfileChange,
+}: {
+  me: SessionUser | null
+  oidc?: boolean
+  onProfileChange?: () => void // reload the signed-in account (its picture changed)
+}) {
   // With SSO enabled, accounts and roles are governed by the identity provider's
   // groups, so local user management is hidden.
   const isAdmin = me?.role === 'admin' && !oidc
@@ -53,6 +63,36 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
   const [resetErr, setResetErr] = useState('')
   const [delFor, setDelFor] = useState<User | null>(null)
   const [busy, setBusy] = useState(false)
+  // Profile picture: upload (resized in the browser) or remove.
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [picBusy, setPicBusy] = useState(false)
+  const [picErr, setPicErr] = useState('')
+  const pickPicture = async (file?: File) => {
+    if (!file) return
+    setPicBusy(true)
+    setPicErr('')
+    try {
+      await api.setAvatar(await fileToAvatar(file))
+      onProfileChange?.()
+    } catch (e: any) {
+      setPicErr(e.message)
+    } finally {
+      setPicBusy(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+  const removePicture = async () => {
+    setPicBusy(true)
+    setPicErr('')
+    try {
+      await api.removeAvatar()
+      onProfileChange?.()
+    } catch (e: any) {
+      setPicErr(e.message)
+    } finally {
+      setPicBusy(false)
+    }
+  }
 
   const loadUsers = () => {
     if (!isAdmin) return
@@ -177,7 +217,6 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
 
   // SSO (OIDC) accounts have no local password — managed by the identity provider.
   const isSSO = me?.source === 'oidc'
-  const initial = (me?.username || '?').charAt(0).toUpperCase()
 
   return (
     <div className="pg-account">
@@ -194,9 +233,7 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
 
       <section className="card acct-card">
         <div className="profile">
-          <span className="avatar" aria-hidden>
-            {me?.avatar_url ? <img src={me.avatar_url} alt="" /> : initial}
-          </span>
+          <Avatar name={me?.username || '?'} url={me?.avatar_url} size={56} />
           <div className="who">
             <b>{me?.username}</b>
             <span className="muted">
@@ -208,6 +245,33 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
               ? 'Administrators can change settings, rules, agents and people.'
               : 'Viewers see everything but can’t change settings, rules or agents.'}
           </p>
+          <div className="pic-actions">
+            {me?.can_upload_avatar ? (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  hidden
+                  onChange={(e) => pickPicture(e.target.files?.[0])}
+                />
+                <button type="button" className="btn sm" disabled={picBusy} onClick={() => fileRef.current?.click()}>
+                  {picBusy ? 'Saving…' : me.has_uploaded_avatar ? 'Change picture' : 'Upload a picture'}
+                </button>
+                {me.has_uploaded_avatar && (
+                  <button type="button" className="btn sm quiet" disabled={picBusy} onClick={removePicture}>
+                    Remove
+                  </button>
+                )}
+                <span className="muted small">
+                  {isSSO && !me.has_uploaded_avatar ? 'Replaces the picture from your identity provider.' : 'JPEG, PNG or WebP; cropped to a square.'}
+                </span>
+              </>
+            ) : (
+              isSSO && <span className="muted small">Your picture comes from your identity provider.</span>
+            )}
+          </div>
+          {picErr && <div className="error pic-err">{picErr}</div>}
         </div>
 
         <div className="pw">
@@ -337,7 +401,10 @@ export default function Account({ me, oidc = false }: { me: SessionUser | null; 
                 {users.map((u) => (
                   <tr key={u.id}>
                     <td className="lead">
-                      <b className="uname">{u.username}</b>
+                      <span className="person">
+                        <Avatar name={u.username} url={u.avatar_url} size={28} />
+                        <b className="uname">{u.username}</b>
+                      </span>
                       {me?.id === u.id && <span className="muted"> (you)</span>}
                     </td>
                     <td className="lead-r">

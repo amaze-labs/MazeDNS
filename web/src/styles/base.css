@@ -402,11 +402,31 @@ td,
 }
 .tb-account {
   display: flex;
+  align-items: stretch;
+  height: 48px;
+  min-width: 0;
+}
+.tb-account .acct {
+  display: flex;
+}
+/* The whole chip — picture, name, role — is the account menu's button. */
+.acct-trigger {
+  display: flex;
   align-items: center;
   gap: 10px;
-  height: 48px;
-  padding: 0 16px 0 7px;
   min-width: 0;
+  padding: 0 16px 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--t-fast) ease;
+}
+.acct-trigger:hover,
+.acct-trigger.open {
+  background: var(--raise);
 }
 .tb-user {
   display: grid;
@@ -489,7 +509,7 @@ td,
   .tb-account {
     height: 44px;
   }
-  .tb-account {
+  .acct-trigger {
     padding: 0 6px;
   }
   .tabbar {
@@ -2100,31 +2120,22 @@ tr.skel-row:hover {
   position: relative;
   flex: none;
 }
-.acct-avatar {
-  width: 34px;
-  height: 34px;
+/* A person's picture, or their initial (Avatar.tsx). */
+.avatar-pic {
+  display: grid;
+  place-items: center;
+  flex: none;
   border-radius: 50%;
-  border: 0;
-  padding: 0;
+  overflow: hidden;
   background: var(--fwd);
   color: #fff;
   font-weight: 600;
-  font-size: 13px;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  overflow: hidden;
+  line-height: 1;
 }
-.acct-avatar img {
+.avatar-pic img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-.acct-avatar.lg {
-  width: 40px;
-  height: 40px;
-  font-size: 16px;
-  cursor: default;
 }
 .acct-backdrop {
   position: fixed;

@@ -1,50 +1,54 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SessionUser } from '../api'
+import Avatar from './Avatar'
 
-// AccountMenu is the top-bar avatar that opens a dropdown with the signed-in
-// user's basic info, a link to account settings, and logout.
+// AccountMenu is the top-bar account chip — the picture, name and role as one
+// button — that opens a menu with the account's details, its settings and
+// sign out. Esc or a click outside closes it.
 export default function AccountMenu({
   user,
+  roleLabel,
   authEnabled,
   onSettings,
   onLogout,
 }: {
   user: SessionUser
+  roleLabel: string
   authEnabled: boolean
   onSettings: () => void
   onLogout: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const [imgOk, setImgOk] = useState(true)
-  const initial = (user.username.trim()[0] || '?').toUpperCase()
-  // Show the OIDC profile picture when present; fall back to the initial if it's
-  // missing or fails to load.
-  const avatar = user.avatar_url && imgOk ? user.avatar_url : ''
-  const Face = ({ cls }: { cls: string }) =>
-    avatar ? (
-      <img className={cls} src={avatar} alt="" referrerPolicy="no-referrer" onError={() => setImgOk(false)} />
-    ) : (
-      <div className={cls}>{initial}</div>
-    )
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
   return (
     <div className="acct">
       <button
-        className={`acct-avatar ${open ? 'open' : ''} ${avatar ? 'has-img' : ''}`}
+        className={`acct-trigger ${open ? 'open' : ''}`}
         onClick={() => setOpen((o) => !o)}
-        title={user.username}
-        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Account: ${user.username}`}
       >
-        {avatar ? <img src={avatar} alt="" referrerPolicy="no-referrer" onError={() => setImgOk(false)} /> : initial}
+        <Avatar name={user.username} url={user.avatar_url} className="acct-avatar" />
+        <span className="tb-user">
+          <b>{user.username}</b>
+          <small>{roleLabel}</small>
+        </span>
       </button>
       {open && (
         <>
           <div className="acct-backdrop" onClick={() => setOpen(false)} />
-          <div className="acct-menu">
+          <div className="acct-menu" role="menu">
             <div className="acct-head">
-              <Face cls="acct-avatar lg" />
+              <Avatar name={user.username} url={user.avatar_url} size={40} />
               <div className="acct-id">
                 <div className="acct-name">{user.username}</div>
-                <span className={`role-badge ${user.role}`}>{user.role}</span>
+                <span className={`role-badge ${user.role}`}>{roleLabel}</span>
               </div>
             </div>
             {authEnabled && (
@@ -52,6 +56,7 @@ export default function AccountMenu({
                 <div className="acct-divider" />
                 <button
                   className="acct-item"
+                  role="menuitem"
                   onClick={() => {
                     setOpen(false)
                     onSettings()
@@ -61,6 +66,7 @@ export default function AccountMenu({
                 </button>
                 <button
                   className="acct-item danger"
+                  role="menuitem"
                   onClick={() => {
                     setOpen(false)
                     onLogout()

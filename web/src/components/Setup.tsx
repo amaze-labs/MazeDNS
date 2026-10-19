@@ -155,6 +155,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
               admin_email: adminEmail.trim(),
               disable_password_login: false, // server derives this from break_glass
               auto_login: false,
+              allow_avatar_upload: false,
             }
           : undefined
       const res = await api.setupComplete({

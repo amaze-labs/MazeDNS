@@ -13,22 +13,24 @@
   align-content: start;
   align-items: center;
 }
-.pg-account .avatar {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  background: var(--fwd);
-  color: #fff;
-  font-size: 20px;
-  font-weight: 600;
+/* Picture controls under the profile. */
+.pg-account .pic-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-top: 6px;
 }
-.pg-account .avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.pg-account .pic-err {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.pg-account .person {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  vertical-align: middle;
 }
 .pg-account .who {
   min-width: 0;

@@ -14,6 +14,7 @@ type User struct {
 	Role         string `json:"role"`   // "admin" | "readonly"
 	Source       string `json:"source"` // "local" | "oidc"
 	AvatarURL    string `json:"avatar_url"`
+	AvatarData   string `json:"-"` // an uploaded picture (base64), see SetUserAvatar
 	Subject      string `json:"-"`
 	PasswordHash string `json:"-"`
 	UpdatedAt    int64  `json:"updated_at"`
@@ -37,7 +38,7 @@ func (s *Store) CreateLocalUser(username, passwordHash, role string) (int64, err
 // ListUsers returns all users ordered by username.
 func (s *Store) ListUsers() ([]User, error) {
 	rows, err := s.read.Query(
-		`SELECT id, username, role, source, updated_at FROM users ORDER BY username`)
+		`SELECT id, username, role, source, avatar_url, avatar_data, updated_at FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +46,7 @@ func (s *Store) ListUsers() ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.AvatarData, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -64,8 +65,8 @@ func (s *Store) CountAdmins() (int64, error) {
 func (s *Store) GetUserByID(id int64) (*User, error) {
 	u := &User{}
 	err := s.read.QueryRow(
-		`SELECT id, username, role, source, avatar_url, subject, password_hash, updated_at FROM users WHERE id=?`, id).
-		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
+		`SELECT id, username, role, source, avatar_url, avatar_data, subject, password_hash, updated_at FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Username, &u.Role, &u.Source, &u.AvatarURL, &u.AvatarData, &u.Subject, &u.PasswordHash, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -183,4 +184,17 @@ func (s *Store) UpsertOIDCUser(subject, username, role, avatarURL string) (*User
 		return nil, err
 	}
 	return s.GetUserByUsername(display)
+}
+
+// SetUserAvatar stores the picture a user uploaded (validated base64; "" to
+// remove it). It doesn't touch avatar_url, the IdP's picture.
+func (s *Store) SetUserAvatar(id int64, data string) error {
+	res, err := s.db.Exec(`UPDATE users SET avatar_data=?, updated_at=? WHERE id=?`, data, time.Now().Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
 }

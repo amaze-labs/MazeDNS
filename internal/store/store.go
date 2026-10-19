@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS users (
 	source TEXT NOT NULL DEFAULT 'local',
 	subject TEXT NOT NULL DEFAULT '',
 	avatar_url TEXT NOT NULL DEFAULT '',
+	avatar_data TEXT NOT NULL DEFAULT '',
 	password_hash TEXT NOT NULL DEFAULT '',
 	updated_at INTEGER NOT NULL
 );
@@ -427,6 +428,9 @@ func (s *Store) migrate() error {
 		`ALTER TABLE nodes ADD COLUMN q_errors INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE nodes ADD COLUMN insights TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT ''`,
+		// A picture the user uploaded (base64 JPEG/PNG/WebP), kept apart from
+		// avatar_url, which SSO sign-in overwrites from the IdP every time.
+		`ALTER TABLE users ADD COLUMN avatar_data TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE classifications ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE classifications ADD COLUMN threat INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE classifications ADD COLUMN score INTEGER NOT NULL DEFAULT 100`,

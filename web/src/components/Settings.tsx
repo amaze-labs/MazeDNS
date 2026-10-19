@@ -1112,6 +1112,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                 checked={cp.oidc.auto_login}
                 onChange={(v) => setCp({ ...cp, oidc: { ...cp.oidc, auto_login: v } })}
               />
+              <Toggle
+                label="Let SSO users replace their picture"
+                desc="Off: the picture from the identity provider always shows. On: people can upload their own under Account, and it wins. Local accounts can always upload."
+                checked={!!cp.oidc.allow_avatar_upload}
+                onChange={(v) => setCp({ ...cp, oidc: { ...cp.oidc, allow_avatar_upload: v } })}
+              />
             </div>
           )}
         </div>

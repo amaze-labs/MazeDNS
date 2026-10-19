@@ -21,6 +21,10 @@ func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 	if users == nil {
 		users = []store.User{}
 	}
+	ssoAllowed := s.ssoAvatarUpload()
+	for i := range users {
+		users[i].AvatarURL = effectiveAvatar(&users[i], ssoAllowed)
+	}
 	writeJSON(w, http.StatusOK, users)
 }
 

@@ -14,6 +14,7 @@ import {
 import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
 import Modal from './Modal'
+import ClassifierHelp from './ClassifierHelp'
 import { SkelGroups, SkelList } from './Skeleton'
 import About from './About'
 import { invalidateAllClientNames } from '../useClientNames'
@@ -309,6 +310,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // A section can be linked to: /settings?section=about (the top bar's
   // "update available" note does).
   const [confirmClassify, setConfirmClassify] = useState(false)
+  const [showClsHelp, setShowClsHelp] = useState(false)
   const [view, setView] = useState<View>(() => {
     const s = new URLSearchParams(window.location.search).get('section')
     return s && s in VIEW_LABEL ? (s as View) : 'resolver'
@@ -1228,7 +1230,17 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const keyPlaceholder = (has: boolean | undefined, empty: string) => (has ? '•••••••• (saved, leave empty to keep)' : empty)
   const classificationView = cls && (
     <>
-      <Group title="Domain classification" desc="Score newly seen domains for risk instead of keeping blocklists by hand.">
+      <Group
+        title="Domain classification"
+        desc={
+          <>
+            Score newly seen domains for risk instead of keeping blocklists by hand.{' '}
+            <button type="button" className="linklike" onClick={() => setShowClsHelp(true)}>
+              How classification works
+            </button>
+          </>
+        }
+      >
         <Toggle
           label="Classify new domains"
           desc="Every domain starts legitimate; the signals you turn on below adjust the score, with risky TLDs and look-alike names always counted. Runs on the control plane; auto-blocks reach every agent. Nothing below contacts anything while this is off."
@@ -1480,6 +1492,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       </Group>
       </fieldset>
 
+      {showClsHelp && <ClassifierHelp onClose={() => setShowClsHelp(false)} />}
       {confirmClassify && (
         <Modal
           kind="dialog"

@@ -10,19 +10,30 @@ function before(a: number[], b: number[]): boolean {
   return false
 }
 
+// latestAgent: the newest of what the running control plane knows (its
+// agent_build) and what GitHub's releases say (agent_latest): an agent release
+// can be out before the control plane is updated.
+export function latestAgent(...known: (string | undefined)[]): string {
+  let best = ''
+  for (const v of known) {
+    const p = semver(v ?? '')
+    if (p && (!best || before(semver(best)!, p))) best = v!
+  }
+  return best
+}
+
 // versionKnown reports whether the control plane has a comparable version
 // (local "dev" builds can't meaningfully flag anyone as outdated).
 export const versionKnown = (cp?: string) => !!cp && cp !== 'dev'
 
 // agentOutdated: the agent reports no version (it predates version reporting),
-// or one older than the release its current code comes from. Without that
-// release (an older or local control plane), anything but the control plane's
-// own version counts as outdated.
-export function agentOutdated(app: string, cp?: string, agentBuild?: string): boolean {
+// or one older than the release the latest agent code comes from (latestAgent).
+// Without that release (an older or local control plane, no update check),
+// anything but the control plane's own version counts as outdated.
+export function agentOutdated(app: string, cp?: string, latest?: string): boolean {
   if (!versionKnown(cp)) return false
   if (!app) return true
-  if (app === cp) return false
   const a = semver(app)
-  const b = semver(agentBuild ?? '')
-  return a && b ? before(a, b) : true
+  const b = semver(latest ?? '')
+  return a && b ? before(a, b) : app !== cp
 }

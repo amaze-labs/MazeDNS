@@ -5,7 +5,7 @@ import Modal from './Modal'
 import { Skel, SkelList } from './Skeleton'
 import { useIsAdmin } from './ScopePicker'
 import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
-import { agentOutdated, versionKnown } from '../agentVersion'
+import { agentOutdated, latestAgent, versionKnown } from '../agentVersion'
 import '../styles/agents.css'
 
 const ONLINE_WINDOW = 120 // seconds
@@ -139,6 +139,15 @@ export default function Cluster() {
   const [keysErr, setKeysErr] = useState('') // enrollment keys load + actions
   const [revokedErr, setRevokedErr] = useState('')
   const [cpVer, setCpVer] = useState<CPVersion | null>(null)
+  // The release the latest agent code comes from per GitHub's releases: an
+  // agent release can be out before this control plane is updated.
+  const [agentLatest, setAgentLatest] = useState('')
+  useEffect(() => {
+    api
+      .updates()
+      .then((u) => setAgentLatest(u.agent_latest ?? ''))
+      .catch(() => {})
+  }, [])
 
   const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
   const [newEnrollKey, setNewEnrollKey] = useState<{ name: string; key: string } | null>(null)
@@ -374,14 +383,17 @@ export default function Cluster() {
   const membersOf = (site: string) => admitted.filter((n) => n.site === site).sort(byRole)
   const unassigned = admitted.filter((n) => !n.site).sort((a, b) => a.name.localeCompare(b.name))
   const selectedNode = selected ? nodes.find((n) => n.id === selected) || null : null
-  const stale = admitted.filter((n) => outdated(n, cpVer ?? undefined))
+  // The control plane's version, with agent_build raised to the newest agent
+  // code known (its own, or a later release's).
+  const ver: CPVersion | null = cpVer && { ...cpVer, agent_build: latestAgent(cpVer.agent_build, agentLatest) }
+  const stale = admitted.filter((n) => outdated(n, ver ?? undefined))
 
   const agentRow = (n: Node) => (
     <AgentRow
       key={n.id}
       node={n}
       rate={rates[n.name]}
-      cp={cpVer ?? undefined}
+      cp={ver ?? undefined}
       selected={selected === n.id}
       onOpen={() => setSelected(n.id)}
     />
@@ -431,12 +443,12 @@ export default function Cluster() {
           <span>{behind === 1 ? 'agent' : 'agents'} behind on config</span>
         </div>
         <div>
-          <b className="ag-ver">{cpVer?.version || <Skel w={84} h={24} />}</b>
+          <b className="ag-ver">{ver?.version || <Skel w={84} h={24} />}</b>
           <span>
             control plane
-            {cpVer?.config_version && (
+            {ver?.config_version && (
               <>
-                , config <span className="mono">{cpVer.config_version.slice(0, 6)}</span>
+                , config <span className="mono">{ver.config_version.slice(0, 6)}</span>
               </>
             )}
           </span>
@@ -448,7 +460,7 @@ export default function Cluster() {
           <div>
             <b>
               {stale.length === 1 ? '1 agent needs' : `${stale.length} agents need`} an update: the latest agent code is from{' '}
-              {cpVer!.agent_build || cpVer!.version}
+              {ver!.agent_build || ver!.version}
             </b>
             <p>
               Update {stale.length === 1 ? 'its container image' : 'their container images'}:{' '}
@@ -667,7 +679,7 @@ export default function Cluster() {
           node={selectedNode}
           admin={admin}
           rate={rates[selectedNode.name]}
-          cpVer={cpVer}
+          cpVer={ver}
           sites={sitesInUse}
           newKey={newKey?.name === selectedNode.name ? newKey : null}
           onClose={closeAgent}

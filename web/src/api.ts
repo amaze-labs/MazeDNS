@@ -49,7 +49,15 @@ export interface CategoryList {
 
 // Where a domain's category came from.
 // The control plane's version against the published releases (GET /api/updates).
-export type Release = { version: string; name: string; published_at: string; url: string; notes: string }
+export type Release = {
+  version: string
+  name: string
+  published_at: string
+  url: string
+  notes: string
+  control_plane_build?: string // the release each image's code comes from (an earlier one = unchanged)
+  agent_build?: string
+}
 export type UpdateStatus = {
   current: string
   latest?: string
@@ -59,6 +67,7 @@ export type UpdateStatus = {
   checked_at?: number // unix secs
   error?: string
   releases: Release[] // newest first: what an update brings, or the latest few
+  agent_latest?: string // the release the latest agent code comes from
 }
 
 export type CategorySource = 'override' | 'classifier' | 'database' | 'builtin' | 'model' | 'local' | ''

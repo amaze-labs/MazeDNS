@@ -5,6 +5,7 @@ import Modal from './Modal'
 import { Skel, SkelList } from './Skeleton'
 import { useIsAdmin } from './ScopePicker'
 import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
+import { agentOutdated, versionKnown } from '../agentVersion'
 import '../styles/agents.css'
 
 const ONLINE_WINDOW = 120 // seconds
@@ -98,14 +99,10 @@ const ENROLL_COLS: SortAccessors<EnrollKey> = {
   created: (k) => k.created_at,
 }
 
-// versionKnown reports whether the control plane has a comparable build version
-// (local "dev" builds can't meaningfully flag anyone as outdated).
-const versionKnown = (cp?: string) => !!cp && cp !== 'dev'
-// outdated: the agent reports a build version different from the control plane's
-// (or none at all — an agent from before version reporting is by definition old).
-const outdated = (n: Node, cp?: string) => versionKnown(cp) && n.app_version !== cp
+// outdated: the agent's code is older than the latest agent code (see agentVersion.ts).
+const outdated = (n: Node, cp?: CPVersion) => agentOutdated(n.app_version, cp?.version, cp?.agent_build)
 
-type CPVersion = { version: string; config_version: string }
+type CPVersion = { version: string; agent_build?: string; config_version: string }
 type Rate = { qps?: number; ms?: number }
 
 // Navigation to other pages goes through history + popstate, which App listens
@@ -377,14 +374,14 @@ export default function Cluster() {
   const membersOf = (site: string) => admitted.filter((n) => n.site === site).sort(byRole)
   const unassigned = admitted.filter((n) => !n.site).sort((a, b) => a.name.localeCompare(b.name))
   const selectedNode = selected ? nodes.find((n) => n.id === selected) || null : null
-  const stale = admitted.filter((n) => outdated(n, cpVer?.version))
+  const stale = admitted.filter((n) => outdated(n, cpVer ?? undefined))
 
   const agentRow = (n: Node) => (
     <AgentRow
       key={n.id}
       node={n}
       rate={rates[n.name]}
-      cp={cpVer?.version}
+      cp={cpVer ?? undefined}
       selected={selected === n.id}
       onOpen={() => setSelected(n.id)}
     />
@@ -450,8 +447,8 @@ export default function Cluster() {
         <div className="callout warn">
           <div>
             <b>
-              {stale.length === 1 ? '1 agent runs' : `${stale.length} agents run`} a different version than the control
-              plane ({cpVer!.version})
+              {stale.length === 1 ? '1 agent needs' : `${stale.length} agents need`} an update: the latest agent code is from{' '}
+              {cpVer!.agent_build || cpVer!.version}
             </b>
             <p>
               Update {stale.length === 1 ? 'its container image' : 'their container images'}:{' '}
@@ -706,7 +703,7 @@ function AgentRow({
 }: {
   node: Node
   rate?: Rate
-  cp?: string
+  cp?: CPVersion
   selected: boolean
   onOpen: () => void
 }) {
@@ -1374,12 +1371,21 @@ function AgentDrawer({
           <dd>
             {node.app_version || <span className="muted">unknown — predates version reporting</span>}
             {node.app_version && versionKnown(cpVer?.version) && (
-              outdated(node, cpVer?.version) ? (
-                <span className="tag warn ag-tag-gap" title={`Control plane runs ${cpVer!.version}`}>
+              outdated(node, cpVer ?? undefined) ? (
+                <span className="tag warn ag-tag-gap" title={`The latest agent code is release ${cpVer!.agent_build || cpVer!.version}`}>
                   update available
                 </span>
               ) : (
-                <span className="tag ok ag-tag-gap">current</span>
+                <span
+                  className="tag ok ag-tag-gap"
+                  title={
+                    node.app_version !== cpVer!.version
+                      ? `Releases after ${node.app_version} only changed the control plane`
+                      : undefined
+                  }
+                >
+                  current
+                </span>
               )
             )}
           </dd>

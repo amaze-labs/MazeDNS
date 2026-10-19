@@ -1056,13 +1056,15 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ingested": len(entries)})
 }
 
-// serverVersion reports the control plane's own build version (the reference the
-// UI compares each agent's app_version against to flag out-of-date nodes) and the
-// current replicated-config version (the rules hash agents should have applied).
+// serverVersion reports the control plane's own release version, the release
+// whose agent code ships with it (the UI flags agents older than that as out of
+// date; empty when unknown) and the current replicated-config version (the rules
+// hash agents should have applied).
 func (s *Server) serverVersion(w http.ResponseWriter, _ *http.Request) {
 	cfgVer, _ := s.store.CachedConfigVersion()
 	writeJSON(w, http.StatusOK, map[string]string{
 		"version":        version.Short(),
+		"agent_build":    version.AgentBuild,
 		"config_version": cfgVer,
 	})
 }

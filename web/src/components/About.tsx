@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, type Node, type Release, type UpdateStatus } from '../api'
+import { agentOutdated } from '../agentVersion'
 import Spinner from './Spinner'
 import { SkelGroups } from './Skeleton'
 
@@ -87,6 +88,7 @@ export default function About() {
   const [err, setErr] = useState('')
   const [checking, setChecking] = useState(false)
   const [nodes, setNodes] = useState<Node[] | null>(null)
+  const [agentBuild, setAgentBuild] = useState('')
 
   const load = async (refresh: boolean) => {
     setChecking(refresh)
@@ -105,6 +107,10 @@ export default function About() {
       .clusterNodes()
       .then(setNodes)
       .catch(() => setNodes([]))
+    api
+      .serverVersion()
+      .then((v) => setAgentBuild(v.agent_build ?? ''))
+      .catch(() => {})
   }, [])
 
   // Agents grouped by the version they report.
@@ -178,7 +184,8 @@ export default function About() {
                 <b>How to update</b>
                 <p>
                   Pull <code>{`${IMAGE}:${st.latest}`}</code> (or <code>:latest</code>) and restart the control plane,
-                  then update the agents to the same version. Settings, rules and history stay in the database.
+                  then update the agents to the same version if the agents below say so. Settings, rules and history stay
+                  in the database.
                 </p>
               </div>
             </div>
@@ -190,7 +197,10 @@ export default function About() {
         <section className="sg">
           <header>
             <h2>Agents</h2>
-            <p>The version each agent reports. Update them after the control plane.</p>
+            <p>
+              The version each agent reports. A release rebuilds only what changed, so an agent on an earlier version
+              is still current when the releases since then only changed the control plane.
+            </p>
           </header>
           <div className="sg-body">
             <ul className="ab-agents">
@@ -199,8 +209,10 @@ export default function About() {
                   <b className="mono">{v}</b>
                   {v === st.current ? (
                     <span className="tag ok">Same as the control plane</span>
+                  ) : agentOutdated(v === 'unknown' ? '' : v, st.current, agentBuild) ? (
+                    <span className="tag warn">Update available</span>
                   ) : (
-                    <span className="tag warn">Different from the control plane</span>
+                    <span className="tag ok">Current</span>
                   )}
                   <span className="muted small ab-names">{names.join(', ')}</span>
                 </li>

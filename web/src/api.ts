@@ -852,9 +852,10 @@ export const api = {
   // cluster
   clusterNodes: () => fetch('/api/cluster/nodes').then(j<Node[]>),
   updates: (refresh = false) => fetch(`/api/updates${refresh ? '?refresh=1' : ''}`).then(j<UpdateStatus>),
-  // Control plane's own build version (the up-to-date reference for agents) and
-  // the current replicated-config version (the rules hash agents should carry).
-  serverVersion: () => fetch('/api/version').then(j<{ version: string; config_version: string }>),
+  // Control plane's own release version, the release its agent code comes from
+  // (agents older than that are out of date) and the current replicated-config
+  // version (the rules hash agents should carry).
+  serverVersion: () => fetch('/api/version').then(j<{ version: string; agent_build?: string; config_version: string }>),
   addNode: (name: string) =>
     fetch('/api/cluster/nodes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name }) }).then(j<{ id: string; name: string; key: string }>),
   renewNodeKey: (id: string) =>

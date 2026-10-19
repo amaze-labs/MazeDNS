@@ -9,6 +9,9 @@
 #   docker build --target dns-agent     -t mazedns-agent .
 
 ARG VERSION=dev
+# The release whose agent code ships with this release (the control plane flags
+# older agents); the release pipeline sets it, local builds leave it empty.
+ARG AGENT_BUILD=
 
 # ---- frontend (control plane only) ----
 FROM node:22-alpine AS web
@@ -21,6 +24,7 @@ RUN npm run build
 # ---- control-plane binary (web UI embedded) ----
 FROM golang:1.26-alpine AS build-cp
 ARG VERSION
+ARG AGENT_BUILD
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -28,7 +32,8 @@ COPY . .
 COPY --from=web /web/dist ./web/dist
 RUN mkdir -p /data && \
     CGO_ENABLED=0 go build -tags embed_dist -trimpath \
-      -ldflags="-s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=${VERSION}" -o /out/control-plane ./cmd/control-plane
+      -ldflags="-s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=${VERSION} -X github.com/IPMaze/MazeDNS/internal/version.AgentBuild=${AGENT_BUILD}" \
+      -o /out/control-plane ./cmd/control-plane
 
 # ---- dns-agent binary (lean: no web assets) ----
 FROM golang:1.26-alpine AS build-agent

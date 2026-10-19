@@ -43,3 +43,34 @@ func SaveSettings(st *store.Store, s Settings) error {
 	}
 	return st.SetMeta(SettingsKey, string(b))
 }
+
+// OptInMigratedKey marks that MigrateOptIn has run.
+const OptInMigratedKey = "classifier_optin_migrated"
+
+// MigrateOptIn runs once on an existing install. Older releases seeded the
+// AI layer, WHOIS/RDAP, four threat feeds and the nameserver check as on;
+// where classification was never turned on, nobody chose them, so they are
+// reset to off: turning classification on later means choosing each service
+// explicitly. Where it is on, they were in use and stay as they are.
+func MigrateOptIn(st *store.Store) error {
+	if done, _ := st.GetMeta(OptInMigratedKey); done != "" {
+		return nil
+	}
+	raw, err := st.GetMeta(SettingsKey)
+	if err != nil {
+		return err
+	}
+	if raw != "" {
+		var s Settings
+		if json.Unmarshal([]byte(raw), &s) == nil && !s.Enabled {
+			s.AIEnabled = false
+			s.WhoisEnabled = false
+			s.ThreatFeeds = []string{}
+			s.NSCheckDisabled = true
+			if err := SaveSettings(st, s); err != nil {
+				return err
+			}
+		}
+	}
+	return st.SetMeta(OptInMigratedKey, "1")
+}

@@ -281,7 +281,7 @@ func main() {
 func newClassifier(st *store.Store, cfg config.Config, reload func() error) *classifier.Worker {
 	defaults := classifier.Settings{
 		Enabled:               cfg.Classifier.Enabled,
-		AIEnabled:             !cfg.Classifier.AIDisabled,
+		AIEnabled:             cfg.Classifier.AIEnabled && !cfg.Classifier.AIDisabled,
 		Provider:              cfg.Classifier.Provider,
 		Endpoint:              cfg.Classifier.Endpoint,
 		Model:                 cfg.Classifier.Model,
@@ -302,12 +302,18 @@ func newClassifier(st *store.Store, cfg config.Config, reload func() error) *cla
 		AbuseIPDBAPIKey:       cfg.Classifier.AbuseIPDBAPIKey,
 		OpenTIPEnabled:        cfg.Classifier.OpenTIPEnabled,
 		OpenTIPAPIKey:         cfg.Classifier.OpenTIPAPIKey,
+		// The nameserver check asks Cloudflare/Quad9 over DoH: opt-in.
+		NSCheckDisabled: true,
 	}
 	if defaults.ThreatFeeds == nil {
-		defaults.ThreatFeeds = classifier.DefaultThreatFeeds
+		// Explicitly none: a missing list means "the old URLhaus default".
+		defaults.ThreatFeeds = []string{}
 	}
 	if cur, _ := st.GetMeta(classifier.SettingsKey); cur == "" {
 		_ = classifier.SaveSettings(st, defaults)
+		_ = st.SetMeta(classifier.OptInMigratedKey, "1") // seeded opt-in already
+	} else if err := classifier.MigrateOptIn(st); err != nil {
+		slog.Warn("classifier opt-in migration failed", "err", err)
 	}
 	getSettings := func() classifier.Settings { return classifier.LoadSettings(st, defaults) }
 	return classifier.NewWorker(st, getSettings, reload)

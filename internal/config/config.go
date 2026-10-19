@@ -200,8 +200,12 @@ type OIDC struct {
 // Disabled by default; runs only on the master. The enforcement mode is seeded
 // from here and then changeable at runtime from the UI.
 type Classifier struct {
-	Enabled    bool   `yaml:"enabled"`
-	AIDisabled bool   `yaml:"ai_disabled"` // turn the optional LLM layer off (static analysis only)
+	Enabled bool `yaml:"enabled"`
+	// AIEnabled turns the optional LLM layer on (off by default: nothing is
+	// sent to a model unless chosen). AIDisabled is the older opposite switch
+	// and still wins.
+	AIEnabled  bool   `yaml:"ai_enabled"`
+	AIDisabled bool   `yaml:"ai_disabled"`
 	Provider   string `yaml:"provider"`    // openai (OpenAI-compatible, default) | anthropic
 	Endpoint   string `yaml:"endpoint"`    // OpenAI-compatible base URL, e.g. http://localhost:11434/v1
 	Model      string `yaml:"model"`       // model name, e.g. "llama3.2"
@@ -328,12 +332,13 @@ func Default() Config {
 			SessionTTL: Duration(24 * time.Hour),
 		},
 		Classifier: Classifier{
-			Endpoint:     "http://localhost:11434/v1",
-			Model:        "llama3.2",
-			Mode:         "suggest",
-			MinGapMS:     1000,
-			TimeoutSec:   60,
-			WhoisEnabled: true,
+			Endpoint:   "http://localhost:11434/v1",
+			Model:      "llama3.2",
+			Mode:       "suggest",
+			MinGapMS:   1000,
+			TimeoutSec: 60,
+			// WHOIS, threat feeds and the AI layer start off: nothing in the
+			// classifier contacts a third party unless the operator turns it on.
 		},
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
@@ -465,11 +470,14 @@ func Load(path string) (Config, error) {
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENABLED"); v == "true" || v == "1" {
 		cfg.Classifier.Enabled = true
 	}
+	// Naming a model or an endpoint in the environment is choosing the AI layer.
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENDPOINT"); v != "" {
 		cfg.Classifier.Endpoint = v
+		cfg.Classifier.AIEnabled = true
 	}
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_MODEL"); v != "" {
 		cfg.Classifier.Model = v
+		cfg.Classifier.AIEnabled = true
 	}
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_MODE"); v != "" {
 		cfg.Classifier.Mode = v

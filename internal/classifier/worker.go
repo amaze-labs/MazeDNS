@@ -76,6 +76,10 @@ type Settings struct {
 	// ExcludeDomains are never classified, nor any name under them (see
 	// exclude.go): the network's own domains, kept away from third parties.
 	ExcludeDomains []string `json:"exclude_domains"`
+	// NSCheckDisabled turns off the nameserver check (nscheck.go), which asks
+	// Cloudflare/Quad9 over DoH whether a domain's zone resolves. Stored as
+	// "disabled" so settings from before the switch keep it on.
+	NSCheckDisabled bool `json:"ns_check_disabled"`
 }
 
 // aiConfigured reports whether the optional LLM layer should run. The AI master
@@ -237,10 +241,12 @@ func (w *Worker) pruneLocked() {
 func (w *Worker) Run(ctx context.Context) {
 	slog.Info("classifier worker started")
 	// Start loading the trusted/threat lists up front so the first classified
-	// domains already have the signals (rather than racing the first lookup).
-	s := w.get()
-	w.trusted.ensureSync(trustedSources(s))
-	w.threat.ensureSync(threatSources(s))
+	// domains already have the signals (rather than racing the first lookup) —
+	// only while classification is on: nothing is downloaded otherwise.
+	if s := w.get(); s.Enabled {
+		w.trusted.ensureSync(trustedSources(s))
+		w.threat.ensureSync(threatSources(s))
+	}
 	go w.refreshThreatLoop(ctx)
 	go w.rescoreLegacyTrusted(ctx) // feeds the queue below, so it can't run inline
 	// Content categories for verdicts from before categories existed are asked
@@ -284,7 +290,13 @@ func (w *Worker) refreshThreatLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			s := w.get()
-			if !s.Enabled || ParseMode(s.Mode) == ModeOff {
+			if !s.Enabled {
+				// Turned off: let the lists go (they reload when it's back on).
+				w.trusted.ensureSync(nil)
+				w.threat.ensureSync(nil)
+				continue
+			}
+			if ParseMode(s.Mode) == ModeOff {
 				continue
 			}
 			w.threat.refresh(threatSources(s))
@@ -519,7 +531,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 // listed nameserver must belong to that one company and none to a shared DNS
 // host, and the zone must actually resolve.
 func (w *Worker) trustedNameservers(ctx context.Context, domain string, whois WhoisInfo) string {
-	if whois.Source != "rdap" || len(whois.Nameservers) == 0 {
+	if w.get().NSCheckDisabled || whois.Source != "rdap" || len(whois.Nameservers) == 0 {
 		return ""
 	}
 	owner := ""

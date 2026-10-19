@@ -19,7 +19,7 @@ func trustedWorker(t *testing.T, trusted []string, resolving ...string) (*Worker
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &Worker{trusted: newSetHolder("trusted", false)}
+	w := &Worker{trusted: newSetHolder("trusted", false), get: func() Settings { return Settings{} }}
 	w.trusted.set.Store(set)
 	calls := 0
 	w.zoneResolves = func(_ context.Context, domain string) bool {
@@ -117,5 +117,14 @@ func TestZoneResolves(t *testing.T) {
 	}
 	if zoneResolves(context.Background(), "evil.com") {
 		t.Error("SERVFAIL accepted as resolving")
+	}
+}
+
+// With the check turned off, nothing is asked over DoH and no trust is given.
+func TestTrustedNameserversOff(t *testing.T) {
+	w, calls := trustedWorker(t, []string{"apple.com"}, "aaplimg.com")
+	w.get = func() Settings { return Settings{NSCheckDisabled: true} }
+	if got := w.trustedNameservers(context.Background(), "aaplimg.com", WhoisInfo{Source: "rdap", Nameservers: []string{"a.ns.apple.com"}}); got != "" || *calls != 0 {
+		t.Errorf("check off: got %q after %d DoH calls", got, *calls)
 	}
 }

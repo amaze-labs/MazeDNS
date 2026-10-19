@@ -68,9 +68,9 @@ classifier:                    # optional domain classification (static signals 
   trusted_top_n: 0                # cap the built-in ranked list (0 = top 100k)
   # Built-in public threat-intel feeds to enable (merged). Available keys:
   # urlhaus, threatfox, phishing_army, hagezi_tif, openphish.
-  threat_feeds: ["urlhaus", "threatfox", "phishing_army", "hagezi_tif"]
+  threat_feeds: []                # e.g. ["urlhaus", "threatfox", "phishing_army", "hagezi_tif"]
   threat_list_url: ""             # extra custom threat lists (one per line / comma-separated)
-  whois_enabled: true             # enrich verdicts with RDAP/WHOIS registration data (domain age, registrar)
+  whois_enabled: false            # enrich verdicts with RDAP/WHOIS registration data (domain age, registrar)
   vt_enabled: false               # VirusTotal domain reputation (key-gated)
   vt_api_key: ""
   abuseipdb_enabled: false        # AbuseIPDB IP reputation (key-gated)

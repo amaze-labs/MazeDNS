@@ -331,6 +331,7 @@ export interface ClassifierSettings {
   opentip_enabled: boolean
   opentip_api_key: string
   exclude_domains?: string[] // never classified, with their subdomains
+  ns_check_disabled?: boolean // the nameserver check over DoH (Cloudflare/Quad9)
 }
 
 export interface LLMUsageDay {

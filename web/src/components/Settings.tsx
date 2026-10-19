@@ -1308,6 +1308,23 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <Msg m={testMsg} />
       </Group>
 
+      <Group
+        title="Never classify"
+        desc="Your own domains: never sent to WHOIS, reputation services or the AI model."
+      >
+        <Field
+          label="Domains, one per line"
+          hint="Each covers its subdomains (example.com covers nas.example.com). Names answered by your local records and names under a conditional forwarder are already skipped. Categories still apply: they are looked up locally."
+        >
+          <textarea
+            rows={4}
+            value={(cls.exclude_domains ?? []).join('\n')}
+            onChange={(e) => setCls({ ...cls, exclude_domains: e.target.value.split('\n') })}
+            placeholder={'example.com\ncorp.example.net'}
+          />
+        </Field>
+      </Group>
+
       <Group title="Trusted list" desc="Domains on the trusted list are never blocked, even if a signal flags them.">
         <Toggle
           label="Use the built-in public list"

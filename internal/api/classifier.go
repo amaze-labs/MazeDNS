@@ -88,6 +88,7 @@ func (s *Server) putClassifierSettings(w http.ResponseWriter, r *http.Request) {
 	in.Mode = string(classifier.ParseMode(in.Mode))
 	in.Endpoint = strings.TrimSpace(in.Endpoint)
 	in.Model = strings.TrimSpace(in.Model)
+	in.ExcludeDomains = classifier.NormalizeExcludes(in.ExcludeDomains)
 	// An empty key field means "leave unchanged" so masked fields round-trip.
 	prev := classifier.LoadSettings(s.store, classifier.Settings{})
 	if in.APIKey == "" {

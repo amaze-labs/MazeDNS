@@ -1044,6 +1044,11 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 	s.ingested.Add(int64(len(entries)))
 	if s.enqueue != nil {
 		for _, e := range entries {
+			// A name a local record answered is the network's own: it never
+			// goes to the classifier (and so to its third-party lookups).
+			if e.Action == "rewrite" || e.Action == "authoritative" {
+				continue
+			}
 			s.enqueue(e.Name)
 		}
 	}

@@ -330,6 +330,7 @@ export interface ClassifierSettings {
   abuseipdb_api_key: string
   opentip_enabled: boolean
   opentip_api_key: string
+  exclude_domains?: string[] // never classified, with their subdomains
 }
 
 export interface LLMUsageDay {

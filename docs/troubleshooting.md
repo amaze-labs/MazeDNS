@@ -196,7 +196,7 @@ the upstream isn't validating.
 
 MazeDNS records per-query processing time. Compare it against what clients feel:
 
-- **Requests** tab → set the **Node** filter to the affected host → sort by `ms`.
+- **Queries** page → pick the affected agent at the top → sort by `ms`.
 - From a client: `dig @<agent-host> example.com` and read `Query time`.
 
 If MazeDNS's `ms` is **low** but the client's query time is **high**, the problem is

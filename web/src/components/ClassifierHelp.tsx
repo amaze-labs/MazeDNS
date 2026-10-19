@@ -92,7 +92,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
                 <li>names answered by your <b>local records</b> (Local DNS);</li>
                 <li>names under a <b>conditional forwarder’s</b> domain;</li>
                 <li>
-                  domains on your <b>Never classify</b> list (Settings → Classification), with their subdomains;
+                  domains on your <b>Keep private</b> list (Settings → Classification), with their subdomains;
                 </li>
                 <li>
                   private-use names: <code>.lan</code>, <code>.local</code>, <code>.home.arpa</code>, <code>.internal</code>, reverse

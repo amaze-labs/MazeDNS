@@ -4,30 +4,56 @@ Everything you do day-to-day happens in the **control-plane web UI** (default
 `http://<control-plane-host>:8080`). The control plane holds all config; agents
 replicate it automatically. You never edit files on an agent.
 
-- [Dashboard](#dashboard)
+- [Overview](#overview)
+- [Queries and clients](#queries-and-clients)
 - [Upstreams, cache, and DNS behavior](#upstreams-cache-and-dns-behavior)
 - [Blocklists and allow/deny rules](#blocklists-and-allowdeny-rules)
 - [Domain categories](#domain-categories)
+- [Classification: traffic types and risk](#classification-traffic-types-and-risk)
 - [Local DNS: local records](#local-dns-local-records)
 - [Client names](#client-names)
 - [Pause blocking](#pause-blocking)
 - [Clustering operations](#clustering-operations)
 - [Authentication and SSO](#authentication-and-sso)
+- [Your account, profile picture and theme](#your-account-profile-picture-and-theme)
 - [API tokens](#api-tokens)
 - [Backup and restore](#backup-and-restore)
+- [About and updates](#about-and-updates)
+- [On a phone or tablet](#on-a-phone-or-tablet)
 - [Seeing real client IPs](#seeing-real-client-ips)
 
 ---
 
-## Dashboard
+## Overview
 
-The dashboard groups KPIs into **traffic**, **protection**, and **performance**,
-with a selectable time window (1 hour → 90 days), per-client and per-type
-breakdowns, top domains, and a live query log. You can show/hide individual KPI
-cards; the choice is remembered in your browser.
+![The Overview page](images/overview.png)
 
-Use the **Requests** tab to inspect individual queries — filter by node, client, or
-action, and sort by processing time (`ms`) to find slow lookups.
+**Overview** is the home page. Pick a time window (30 minutes → 15 days) and an
+agent at the top; everything below follows it:
+
+- the total queries, average latency and clients, and how the queries were
+  answered: from cache, forwarded upstream, blocked or rewritten by a local record;
+- **Queries over time**, with the same split;
+- **Agents**: every agent grouped by site, online or not, in sync or not, with its
+  load and block rate;
+- **By category**: what the traffic is (social, streaming, work…). Pick a
+  category to open its queries;
+- the top domains, top blocked domains and the busiest clients.
+
+The **Protection on** badge and **Pause protection…** next to the title are the
+[pause control](#pause-blocking).
+
+## Queries and clients
+
+![The Queries page](images/queries.png)
+
+**Queries** lists individual queries. Filter by agent or site, client, domain,
+type, action, category and response code, and sort by processing time (`ms`) to
+find slow lookups. Click a row for its details: how it was answered, by which
+agent and upstream, and the domain's category, which you can **Change** from
+there.
+
+![A query's details](images/query-detail.png)
 
 Switch the Queries page to **Live** to watch queries as the agents answer them
 (within about a second), newest first — e.g. while debugging a client or checking
@@ -38,6 +64,15 @@ browser keeps the last 1000 rows, and the stream pauses while the tab is hidden.
 Agents only send queries while someone is watching them, and only the ones that
 match the filters. Live is best effort (a slow view drops rows); the stored query
 log is unaffected.
+
+**Clients** lists every device that queried an agent, with its name (see
+[Client names](#client-names)), volume and block rate. Open one to see what it
+uses, per category, and its top and blocked domains; you can give it a name
+there.
+
+| Clients | A client |
+|---|---|
+| ![Clients](images/clients.png) | ![A client's details](images/client-detail.png) |
 
 ## Upstreams, cache, and DNS behavior
 
@@ -80,6 +115,8 @@ control plane's settings take precedence over both.
 ## Blocklists and allow/deny rules
 
 Manage blocking from the UI:
+
+![Filtering → Blocklists](images/filtering-lists.png)
 
 - **Blocklists** — add lists from a file, pasted text, or a remote URL with
   scheduled auto-refresh. Enable/disable each independently, view entry counts, and
@@ -135,6 +172,8 @@ Where you see them:
 
 ### Block by category
 
+![Filtering → Categories](images/filtering-categories.png)
+
 **Filtering → Categories** blocks whole categories on every agent (parental
 control, a focus policy). Each agent downloads the category database for just
 the categories you block — Adult is the largest at about 45 MB of memory, most
@@ -144,13 +183,75 @@ language model's labels apply on the agents as well: overriding a domain out of
 a blocked category exempts it.
 
 Categories the database doesn't cover (search, productivity, technology, CDN,
-trackers) block only what the language model and your overrides put there.
+trackers) block what the built-in list of common platforms, the language model
+and your overrides put there.
 
 `MAZEDNS_CATEGORY_DB=off` turns categories off (on the control plane: no
 labels; on an agent: no category blocking) — for example on a host that can't
 reach `dsi.ut-capitole.fr`.
 
+## Classification: traffic types and risk
+
+Classification tells you two things about every domain your network uses. It runs
+on the control plane in the background, **never on the DNS path**: a query is
+answered at once, and its domain is looked at afterwards.
+
+- **What it is: traffic types.** Every query gets a category, as described in
+  [Domain categories](#domain-categories). This is always on and uses local data
+  only, so it sends nothing out.
+- **Whether it's safe: risk.** Each newly seen registered domain gets a 0–100
+  legitimacy score from the signals you turn on, and a verdict: clean, or a block
+  candidate.
+
+**Settings → Classification** is where you choose:
+
+- **Look up new domains**: the master switch for risk scoring. Off, nothing is
+  gathered, downloaded or sent anywhere.
+- **The signals** it may use, each with its own switch: the trusted list
+  (Majestic), threat-intelligence feeds, WHOIS (RDAP), the nameserver check,
+  VirusTotal, AbuseIPDB, Kaspersky OpenTIP and an AI model (your own endpoint or a
+  hosted provider). Feeds and the trusted list are downloaded; the others receive
+  each new domain (AbuseIPDB its address).
+- **When a domain looks risky**: do nothing, **suggest** a block for you to
+  approve, or **block it automatically** on every agent.
+- **Keep private**: your own domains, one per line, never looked up by any
+  outside service (subdomains included). Names your local records answer, names
+  under a conditional forwarder and private-use names (`.lan`, `.home.arpa`,
+  reverse lookups…) are always skipped.
+
+![Settings → Classification](images/settings-classification.png)
+
+**How classification works**, opened from Settings → Classification or Filtering →
+Review, explains the whole process: the order of the traffic-type sources, the path
+from a query to a verdict, which service sees what, and how the score is built.
+
+![How classification works](images/how-classification-works.png)
+
+In short, the score starts at 85. Domains on the trusted list (and CDN
+infrastructure) stay at 100. Otherwise risk factors subtract: threat feeds, a young
+registration, risky TLDs, look-alike or random names, hosting platforms, suspended
+registrations, reputation flags and the AI model. Trust evidence adds back: an old
+registration, the company's own nameservers, registry locks, clean reputation. A
+domain becomes a block candidate only below **50** *and* with a real threat signal,
+so a young but legitimate site is never blocked on its shape alone.
+
+### Review
+
+**Filtering → Review** lists the domains the classifier scored, under **To check**
+(block candidates waiting for you), **Auto-blocked**, **Blocked by you**, **Allowed
+by you** and **Clean**. For a candidate, **Block** enforces it on every agent,
+**Allow** never blocks it and stops suggesting it, and **Dismiss** hides it this
+once (it may be scored again and come back).
+Open a domain to see why it scored as it did: every signal, the points it cost or
+added, and its WHOIS data.
+
+| Review | A domain's score |
+|---|---|
+| ![Filtering → Review](images/filtering-review.png) | ![A domain's details](images/domain-detail.png) |
+
 ## Local DNS: local records
+
+![Local DNS](images/local-dns.png)
 
 Add local answers (LAN hosts, split-horizon overrides) under **Local DNS →
 Local records**. The API calls these entries *rewrites* (`/api/rewrites`), as
@@ -259,7 +360,7 @@ a record can only be switched on or off: instead of Edit and Delete it has a
 
 ## Client names
 
-Wherever a client IP is shown (Dashboard, Requests, Clients, domain drill-downs)
+Wherever a client IP is shown (Overview, Queries, Clients, domain drill-downs)
 the UI labels it with a name, taking the first source that knows the IP:
 
 1. **static** — a hostname you assigned on the client's detail view (Clients tab).
@@ -286,13 +387,15 @@ rewrite, cache, and forwarding are unaffected; blocking resumes automatically.
 
 ## Clustering operations
 
+![Agents, grouped by site](images/agents.png)
+
 The control plane is the source of truth; each agent pulls rules + rewrites over an
 authenticated snapshot and applies them live. The control plane never answers DNS,
 so its dashboard/classifier load can't affect resolver latency.
 
 - **Enrollment** — agents self-register with an **enrollment key** (created under
   Agents → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
-  **Cluster** tab automatically, no key to copy. Toggle **require approval**
+  **Agents** page automatically, no key to copy. Toggle **require approval**
   (setup wizard, or Settings → Access → Cluster policy) to hold new agents until you
   approve them there — `MAZEDNS_REQUIRE_APPROVAL` only seeds this on first boot.
 - **Per-node keys** — issued automatically when an agent enrolls with a key, and
@@ -300,7 +403,12 @@ so its dashboard/classifier load can't affect resolver latency.
   (used via `MAZEDNS_NODE_KEY`). An agent whose key was *rotated* re-attaches to the
   same node by itself; a *revoked* node is refused at re-enrollment until you
   un-revoke it (see [install.md](install.md#removing-an-agent-revoke-vs-remove-only)).
-- **Node health** — the Agents page shows each node's address, status, and counters.
+- **Sites** — group agents by site, each with a role, and edit a site's name and
+  description in place. Scoped records and forwarders target sites.
+- **Node health** — the Agents page shows each node's address, status, version,
+  sync state and counters; open an agent for its details.
+
+  ![An agent's details](images/agent-detail.png)
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
 - **Removing agents** — *Remove & revoke* tombstones the node so the still-running
@@ -308,10 +416,12 @@ so its dashboard/classifier load can't affect resolver latency.
   are listed in a collapsible panel where you can *Un-revoke* (the agent may rejoin
   as a new node) or *Delete forever* (permanently remove the record — rejoining
   would still need a valid enrollment key).
-- **Logs** — the **Logs** tab shows recent process logs from the control plane and
+- **Logs** — the **Logs** page shows recent process logs from the control plane and
   every agent (admin only). Agents ship new lines with their config poll, so agent
   logs can lag by up to ~30s. Logs are kept in a bounded in-memory buffer — history
   is lost on restart; use VictoriaLogs export for durable, searchable query logs.
+
+  ![Logs](images/logs.png)
 
 Create enrollment keys with an expiry and a maximum number of uses; the full secret
 is shown once and then stored hashed. A revoked, expired or exhausted key can be
@@ -338,6 +448,22 @@ shows the exact value to register, and it's logged at startup so you can compare
 (The `MAZEDNS_OIDC_*` variables still exist, but they only **seed** the database on
 first boot and are ignored afterwards — see
 [configuration.md](configuration.md#control-plane).)
+
+## Your account, profile picture and theme
+
+**Account** (your avatar, top right) holds your profile and password and, for
+admins, **People**: who can sign in, with which role.
+
+![Account](images/account.png)
+
+- **Profile picture.** Upload a JPEG, PNG or WebP (cropped to a square and resized
+  in the browser) or remove it.
+  Local accounts can always upload. SSO accounts show the identity provider's
+  picture; an admin decides whether they may replace it with **Let SSO users
+  replace their picture** under Settings → Access & sign-in.
+- **Theme.** The three buttons next to your avatar pick light, **system** (follows
+  your device's setting as it changes) or dark. The choice is kept in your
+  browser.
 
 ## API tokens
 
@@ -400,7 +526,7 @@ An integration that syncs records should mark them as its own with `source`; see
 
 ## Backup and restore
 
-The **Settings** tab can export the full mutable config — settings, rules, and
+**Settings** can export the full mutable config — settings, rules, and
 rewrites — as one versioned JSON bundle, and import it back. Import has two modes:
 `merge` (upsert on top of what's there) and `replace` (clear rules and rewrites
 first). A restore applies settings live, reloads the filtering policy, and bumps the
@@ -417,6 +543,26 @@ curl -s -X POST 'http://<control-plane-host>:8080/api/config/import?mode=replace
 ```
 
 (Send your session cookie/credentials if auth is enabled.)
+
+## About and updates
+
+**Settings → About & updates** shows the version the control plane runs, whether a
+newer release is out (checked against GitHub releases every 6 hours, or on
+**Check now**) and the
+changelog of every release in between, plus the version each agent runs. Set
+`MAZEDNS_UPDATE_CHECK=off` to stop the check, for example on a host without
+internet access.
+
+![Settings → About & updates](images/settings-about.png)
+
+## On a phone or tablet
+
+The UI adapts to phones and tablets: on a phone, the main pages sit in a tab bar at
+the bottom and the rest under **More**.
+
+| Overview | More | Agents |
+|---|---|---|
+| ![Overview on a phone](images/mobile-overview.png) | ![The More menu](images/mobile-more.png) | ![Agents on a phone](images/mobile-agents.png) |
 
 ## Seeing real client IPs
 

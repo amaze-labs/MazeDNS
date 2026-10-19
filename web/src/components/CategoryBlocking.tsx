@@ -80,7 +80,7 @@ export default function CategoryBlocking({ canEdit }: { canEdit: boolean }) {
               <label key={c.id} className="check-row toggle">
                 <span className="t">
                   <b>{c.label}</b>
-                  <small>{c.domains ? `${fmtCount(c.domains)} domains in the database` : 'Known from the language model and your overrides'}</small>
+                  <small>{c.domains ? `${fmtCount(c.domains)} domains in the database` : 'From the built-in list of common platforms, the AI model and your corrections'}</small>
                 </span>
                 <input type="checkbox" checked={c.blocked} disabled={!canEdit || busy !== ''} onChange={(e) => toggle(c, e.target.checked)} />
                 <span className="track">

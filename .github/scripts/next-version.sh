@@ -3,6 +3,8 @@
 # prefix) reachable from HEAD, applying every later commit in chronological order:
 #   - "type!:" or "type(scope)!:"  -> major (minor and patch reset to 0)
 #   - "feat:" / "feat(scope):"      -> minor (patch reset to 0)
+#   - "docs:" / "docs(scope):"      -> nothing (documentation ships with the
+#                                      next release but doesn't bump it)
 #   - anything else                 -> patch
 # Merge commits are skipped. Prints the version (e.g. 0.92.3). If HEAD is already
 # tagged it prints that version unchanged (the caller decides whether to skip).
@@ -44,6 +46,8 @@ while IFS= read -r subject; do
     major=$((major + 1)); minor=0; patch=0
   elif printf '%s' "$subject" | grep -Eiq '^feat(\([^)]*\))?:'; then
     minor=$((minor + 1)); patch=0
+  elif printf '%s' "$subject" | grep -Eiq '^docs(\([^)]*\))?:'; then
+    :
   else
     patch=$((patch + 1))
   fi

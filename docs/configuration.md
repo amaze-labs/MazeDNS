@@ -146,6 +146,13 @@ When `GOGC` is unset, the DNS agent raises it to `200` to cut GC jitter on the
 query path; the control plane keeps Go's default (`100`), since it serves no DNS
 and a higher value would only inflate its heap.
 
+`MAZEDNS_IMAGE_VERSION` and `MAZEDNS_AGENT_BUILD` are set **by the published
+images**, not by you. A release rebuilds only the image whose code changed and
+stamps the other with the new version through these variables, so both report
+the same version; the control plane then knows which release its agent code
+comes from, and doesn't flag agents as outdated after a release that only
+changed the control plane. Don't override them.
+
 ---
 
 ## YAML configuration reference

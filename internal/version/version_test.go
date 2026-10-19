@@ -17,3 +17,21 @@ func TestShort(t *testing.T) {
 		}
 	}
 }
+
+func TestFromEnv(t *testing.T) {
+	origV, origA := Version, AgentBuild
+	t.Cleanup(func() { Version, AgentBuild = origV, origA })
+
+	Version, AgentBuild = "0.136.4", "0.136.4"
+	fromEnv(func(string) string { return "" })
+	if Version != "0.136.4" || AgentBuild != "0.136.4" {
+		t.Fatalf("no stamp changed the build: %q %q", Version, AgentBuild)
+	}
+
+	env := map[string]string{"MAZEDNS_IMAGE_VERSION": "0.137.0", "MAZEDNS_AGENT_BUILD": " 0.136.4 "}
+	Version, AgentBuild = "0.136.4", ""
+	fromEnv(func(k string) string { return env[k] })
+	if Version != "0.137.0" || AgentBuild != "0.136.4" {
+		t.Fatalf("stamp: got %q %q, want 0.137.0 0.136.4", Version, AgentBuild)
+	}
+}

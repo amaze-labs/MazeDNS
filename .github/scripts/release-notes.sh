@@ -51,6 +51,19 @@ section "Fixes" "$tmp/fix"
 section "Performance" "$tmp/perf"
 section "Other changes" "$tmp/other"
 
+# CP_BUILD / AGENT_BUILD (from the release workflow) name the release each
+# image's code comes from; one older than this release means that image only got
+# the new version stamped, and its line says so.
 if [ -n "$from" ]; then
-  printf '**Images:** `ghcr.io/amaze-labs/mazedns-control-plane:%s`, `ghcr.io/amaze-labs/mazedns-agent:%s`\n' "${RELEASE_VERSION:-$to}" "${RELEASE_VERSION:-$to}"
+  v="${RELEASE_VERSION:-$to}"
+  image() {  # $1 = name, $2 = the release its code comes from
+    if [ -n "$2" ] && [ "$2" != "$v" ]; then
+      printf -- '- `ghcr.io/amaze-labs/mazedns-%s:%s` (unchanged since %s)\n' "$1" "$v" "$2"
+    else
+      printf -- '- `ghcr.io/amaze-labs/mazedns-%s:%s`\n' "$1" "$v"
+    fi
+  }
+  printf '**Images:**\n\n'
+  image control-plane "${CP_BUILD:-}"
+  image agent "${AGENT_BUILD:-}"
 fi

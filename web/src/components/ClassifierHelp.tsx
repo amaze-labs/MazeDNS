@@ -26,23 +26,55 @@ const Arrow = () => (
   </div>
 )
 
-// ClassifierHelp explains domain classification end to end: what happens to
-// a query, which names are never looked at, who sees what, how the score is
-// built and what the review actions do. Opened from Filtering → Review and
-// Settings → Classification.
+// ClassifierHelp explains domain classification end to end: its two uses
+// (traffic types and risk), what happens to a query, which names are never
+// looked up, who sees what, how the score is built and what the review
+// actions do. Opened from Filtering → Review and Settings → Classification.
 export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="How classification works" eyebrow="Domain classification" onClose={onClose} size="wide">
       <div className="cls-help">
         <p className="muted nomargin">
-          Classification scores every <em>newly seen registered domain</em> for risk, the way a security analyst would, so you
-          don’t have to keep blocklists by hand. It runs on the control plane in the background, <b>never on the DNS path</b>: a
-          query is answered at once, and its domain is looked at afterwards. Most of the work is <b>static analysis</b>. A language
-          model is an optional extra signal that mainly cuts false positives, and it can never block a site on its own.
+          Classification tells you two things about every domain your network uses. It runs on the control plane in the background,{' '}
+          <b>never on the DNS path</b>: a query is answered at once, and its domain is looked at afterwards.
         </p>
+        <div className="flow-outcomes">
+          <div className="flow-box info">
+            <b>What it is: traffic types</b>
+            <br />
+            Social, streaming, work, gaming, adult… for every query, as it arrives. Always on, from local data. You see what your
+            network is used for, per client and over time, and can block whole types.
+          </div>
+          <div className="flow-box warn">
+            <b>Whether it’s safe: risk</b>
+            <br />
+            A 0–100 legitimacy score for each newly seen domain, from the services you choose, so you don’t have to keep blocklists
+            by hand. Risky domains wait for your review, or are blocked.
+          </div>
+        </div>
 
         <div>
-          <h3>From a query to a verdict</h3>
+          <h3>Traffic types</h3>
+          <p className="muted nomargin">
+            Every query is labelled with what its domain is, from the first source that knows it:
+          </p>
+          <ul className="factors">
+            <li><span><b>Your correction</b>: a type you set on a domain wins over everything else.</span></li>
+            <li><span><b>Local network</b>: names your local records answer, reverse lookups and private names (.lan, .home.arpa…).</span></li>
+            <li><span><b>A security verdict</b> the classifier enforces (phishing, malware, ads, trackers).</span></li>
+            <li><span><b>The category database</b> (UT1, Université Toulouse Capitole): about 5 million domains, downloaded daily.</span></li>
+            <li><span><b>Common platforms</b>: a built-in list of the services behind most everyday traffic (Apple, Microsoft, Google, CDNs, the big apps).</span></li>
+            <li><span><b>The AI model</b>, when lookups and a model are on, for domains none of the above knows.</span></li>
+            <li><span><b>Other</b>, when nothing knows the domain yet. Recent queries are labelled again as their domains get a type.</span></li>
+          </ul>
+          <p className="muted">
+            All of these are looked up on the control plane, so labelling sends nothing out. Overview → By category, Queries and
+            Clients show the result; Filtering → Categories blocks whole types on every agent.
+          </p>
+        </div>
+
+        <div>
+          <h3>Risk: from a query to a verdict</h3>
           <div className="flow">
             <Step n={1}>
               A client asks an agent for a name. The agent <b>answers right away</b> from its rules, cache or upstream: classification
@@ -50,8 +82,8 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
             </Step>
             <Arrow />
             <Step n={2}>
-              The agent ships the query to the control plane with its query log. Its <b>category</b> (social, streaming, …) is
-              labelled there from local data; see “Categories” below.
+              The agent ships the query to the control plane with its query log, where its <b>traffic type</b> is labelled from
+              local data (above).
             </Step>
             <Arrow />
             <Step n={3} tone="info">
@@ -76,8 +108,9 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
             </Step>
             <Arrow />
             <Step n={5}>
-              If <b>classification is on</b>, the signals <b>you turned on</b> are gathered: the trusted list, threat feeds, WHOIS, the
-              nameserver check, reputation services, the AI model. Off, nothing is gathered, downloaded or sent.
+              If <b>“Look up new domains”</b> is on, the signals <b>you turned on</b> are gathered: the trusted list, threat feeds,
+              WHOIS, the nameserver check, reputation services, the AI model (which also labels the traffic type). Off, nothing is
+              gathered, downloaded or sent.
             </Step>
             <Arrow />
             <Step n={6}>
@@ -94,7 +127,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         <div>
           <h3>Who sees what</h3>
           <p className="muted small">
-            Each service is used only when its switch is on in Settings → Classification, and only while classification is on.
+            Each service is used only when its switch is on in Settings → Classification, and only while “Look up new domains” is on.
           </p>
           <table className="who-sees">
             <thead>
@@ -233,17 +266,6 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
         </div>
 
         <div>
-          <h3>Categories</h3>
-          <p className="muted nomargin">
-            Separate from the risk score, every query is labelled with what its domain is (social, streaming, shopping, …) from the
-            first source that knows it: your override; <b>Local network</b> for names your records answer and private-use names; a
-            security verdict the classifier enforces; the category database (UT1, downloaded); a built-in list of common platforms;
-            and, when a model is on, the model’s answer. All of these are looked up on the control plane, so labelling sends nothing
-            out. Filtering → Categories blocks whole categories on every agent.
-          </p>
-        </div>
-
-        <div>
           <h3>What the numbers and tags mean</h3>
           <dl className="kv help-kv">
             <dt>Legitimacy</dt>
@@ -265,8 +287,8 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
             <dd>A well-known legitimate site or trusted infrastructure. Scores 100 and is never blocked, even if a threat list names it.</dd>
             <dt>Category</dt>
             <dd>
-              What the domain is (see Categories above). A security reason (ads, trackers, malware, phishing) is shown next to it when
-              the classifier blocks the domain for it.
+              What the domain is (see Traffic types above). A security reason (ads, trackers, malware, phishing) is shown next to it
+              when the classifier blocks the domain for it.
             </dd>
           </dl>
         </div>

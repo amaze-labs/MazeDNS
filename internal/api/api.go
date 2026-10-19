@@ -116,6 +116,7 @@ type classifierStatus interface {
 	TrustedSearch(q string, limit int) []string
 	ThreatSearch(q string, limit int) []string
 	Whois(ctx context.Context, domain string) (classifier.WhoisInfo, error)
+	Excluded(name string) bool // kept private: never looked up
 }
 
 // QueryLogIngested is how many query-log entries agents have shipped since start.

@@ -701,3 +701,25 @@
 .pg-about .ab-notes p {
   margin: 6px 0;
 }
+
+/* Classification: the sections that depend on the main switch are locked
+   (dimmed, read-only) while it is off; their values are kept. */
+.pg-settings .cls-deps {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  transition: opacity 0.2s ease;
+}
+.pg-settings .cls-deps:disabled {
+  opacity: 0.5;
+}
+.pg-settings .cls-off-note {
+  margin: 4px 0 6px;
+}
+.cls-contacts {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}

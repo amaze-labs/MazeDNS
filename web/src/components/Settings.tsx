@@ -13,6 +13,7 @@ import {
 } from '../api'
 import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
+import Modal from './Modal'
 import { SkelGroups, SkelList } from './Skeleton'
 import About from './About'
 import { invalidateAllClientNames } from '../useClientNames'
@@ -156,6 +157,22 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 // Group is one block of a settings section: title and a one-line explanation on
 // the left, the controls on the right (stacked on narrow screens).
+// externalContacts lists, in plain words, what the classifier will contact
+// with these settings (for the confirmation when it is turned on).
+function externalContacts(c: ClassifierSettings): string[] {
+  const out: string[] = []
+  if (!c.trusted_disable_default) out.push('majestic.com: the trusted list is downloaded (it receives none of your queries).')
+  if ((c.threat_feeds ?? []).length || (c.threat_list_url ?? '').trim())
+    out.push('The threat feeds’ publishers: their lists are downloaded (they receive none of your queries).')
+  if (c.whois_enabled) out.push('rdap.org and domain registries receive every new domain (WHOIS).')
+  if (c.whois_enabled && !c.ns_check_disabled) out.push('Cloudflare and Quad9 (DoH) receive domains served by trusted companies’ nameservers.')
+  if (c.ai_enabled) out.push(`Your AI model (${c.provider === 'anthropic' ? 'api.anthropic.com' : c.endpoint || 'its endpoint'}) receives every new domain.`)
+  if (c.vt_enabled) out.push('virustotal.com receives every new domain.')
+  if (c.abuseipdb_enabled) out.push('abuseipdb.com receives the address each new domain resolves to.')
+  if (c.opentip_enabled) out.push('opentip.kaspersky.com receives every new domain.')
+  return out
+}
+
 function Group({ title, desc, children }: { title: ReactNode; desc?: ReactNode; children: ReactNode }) {
   return (
     <section className="sg">
@@ -291,6 +308,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
   // A section can be linked to: /settings?section=about (the top bar's
   // "update available" note does).
+  const [confirmClassify, setConfirmClassify] = useState(false)
   const [view, setView] = useState<View>(() => {
     const s = new URLSearchParams(window.location.search).get('section')
     return s && s in VIEW_LABEL ? (s as View) : 'resolver'
@@ -1213,9 +1231,9 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       <Group title="Domain classification" desc="Score newly seen domains for risk instead of keeping blocklists by hand.">
         <Toggle
           label="Classify new domains"
-          desc="Every domain starts legitimate; threat feeds, the trusted list, reputation services, WHOIS age, risky TLDs and look-alike names adjust the score. Runs on the control plane; auto-blocks reach every agent."
+          desc="Every domain starts legitimate; the signals you turn on below adjust the score, with risky TLDs and look-alike names always counted. Runs on the control plane; auto-blocks reach every agent. Nothing below contacts anything while this is off."
           checked={cls.enabled}
-          onChange={(v) => setCls({ ...cls, enabled: v })}
+          onChange={(v) => (v ? setConfirmClassify(true) : setCls({ ...cls, enabled: false }))}
         />
         <div className="row2">
           <Field label="When a domain looks risky">
@@ -1228,13 +1246,23 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </div>
       </Group>
 
+      {!cls.enabled && (
+        <div className="callout cls-off-note">
+          <InfoIcon />
+          <div>
+            <b>Classification is off</b>
+            <p>The settings below apply once it’s on. They are kept as they are, and none of them downloads or sends anything meanwhile.</p>
+          </div>
+        </div>
+      )}
+      <fieldset className="cls-deps" disabled={!cls.enabled}>
       <Group
         title="AI model"
         desc="Optional. One more bounded signal that mainly cuts false positives and adds content categories."
       >
         <Toggle
           label="Use an AI model"
-          desc="A local or OpenAI-compatible endpoint, or a hosted provider. Off = static signals only."
+          desc="Sends every new domain to the model you configure: your own endpoint, or the hosted provider’s API (api.anthropic.com, api.openai.com…). Off = static signals only."
           checked={!!cls.ai_enabled}
           onChange={(v) => setCls({ ...cls, ai_enabled: v })}
         />
@@ -1328,7 +1356,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       <Group title="Trusted list" desc="Domains on the trusted list are never blocked, even if a signal flags them.">
         <Toggle
           label="Use the built-in public list"
-          desc="Majestic Million top domains."
+          desc="Majestic Million top domains, downloaded from majestic.com. A download only: it receives none of your queries."
           checked={!cls.trusted_disable_default}
           onChange={(v) => setCls({ ...cls, trusted_disable_default: !v })}
         />
@@ -1354,7 +1382,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <Group
         title="Threat-intelligence feeds"
-        desc="A domain on any enabled feed counts as malicious, even if nothing else flags it. Feeds are merged."
+        desc="A domain on any enabled feed counts as malicious, even if nothing else flags it. Each feed is downloaded from its publisher (abuse.ch, GitHub…) and receives none of your queries."
       >
         <div className="toggles">
           {(clsInfo?.threat_feed_catalog ?? []).map((f) => (
@@ -1387,13 +1415,13 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <div className="toggles">
           <Toggle
             label="WHOIS"
-            desc="Domain age and registrar via RDAP. A strong signal for young, throwaway domains."
+            desc="Domain age and registrar. Sends each new domain to rdap.org and its registry (or the registry’s WHOIS server). A strong signal for young, throwaway domains."
             checked={cls.whois_enabled}
             onChange={(v) => setCls({ ...cls, whois_enabled: v })}
           />
           <Toggle
             label="VirusTotal"
-            desc="Checks the domain’s reputation."
+            desc="Sends each new domain to virustotal.com for its reputation."
             checked={cls.vt_enabled}
             onChange={(v) => setCls({ ...cls, vt_enabled: v })}
           />
@@ -1410,7 +1438,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           )}
           <Toggle
             label="AbuseIPDB"
-            desc="Checks the address the domain resolves to."
+            desc="Sends the address each new domain resolves to to abuseipdb.com."
             checked={cls.abuseipdb_enabled}
             onChange={(v) => setCls({ ...cls, abuseipdb_enabled: v })}
           />
@@ -1427,9 +1455,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           )}
           <Toggle
             label="Kaspersky OpenTIP"
-            desc="Checks the domain’s threat zone on opentip.kaspersky.com."
+            desc="Sends each new domain to opentip.kaspersky.com for its threat zone."
             checked={cls.opentip_enabled}
             onChange={(v) => setCls({ ...cls, opentip_enabled: v })}
+          />
+          <Toggle
+            label="Nameserver check"
+            desc="When a domain is served by a trusted company’s own nameservers, asks Cloudflare and Quad9 over DNS-over-HTTPS whether it really resolves before trusting it. Sends that domain to them. Needs WHOIS."
+            checked={!cls.ns_check_disabled}
+            onChange={(v) => setCls({ ...cls, ns_check_disabled: !v })}
           />
           {cls.opentip_enabled && (
             <Field label={<>OpenTIP API key <KeySet on={clsInfo?.has_opentip_key} /></>} className="sub-field">
@@ -1444,6 +1478,44 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           )}
         </div>
       </Group>
+      </fieldset>
+
+      {confirmClassify && (
+        <Modal
+          kind="dialog"
+          title="Turn on classification?"
+          onClose={() => setConfirmClassify(false)}
+          footer={
+            <>
+              <span className="spacer" />
+              <button type="button" className="btn ghost" onClick={() => setConfirmClassify(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => {
+                  setCls({ ...cls, enabled: true })
+                  setConfirmClassify(false)
+                }}
+              >
+                Turn on
+              </button>
+            </>
+          }
+        >
+          <div className="ag-form">
+            <p>New domains your clients query will be scored on the control plane. With your current choices:</p>
+            <ul className="cls-contacts">
+              {externalContacts(cls).map((c) => (
+                <li key={c}>{c}</li>
+              ))}
+              {externalContacts(cls).length === 0 && <li>Nothing is contacted: only the local signals (risky TLDs, look-alike names) are used.</li>}
+            </ul>
+            <p className="muted small">You can change each of these below, before or after saving. Nothing changes until you save.</p>
+          </div>
+        </Modal>
+      )}
     </>
   )
 

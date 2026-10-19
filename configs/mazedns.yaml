@@ -77,7 +77,10 @@ api:
 classifier:                    # optional LLM domain classification (master only)
   # These values SEED the database on first run; afterwards edit them live in the
   # UI under Settings → "AI classification" (no restart needed).
-  enabled: false               # off by default; needs a local model endpoint
+  # Nothing below contacts a third party unless you turn it on: classification,
+  # the AI model, WHOIS/RDAP, threat feeds and the nameserver check start off.
+  enabled: false               # off by default
+  ai_enabled: false            # use a language model as one more signal
   endpoint: "http://localhost:11434/v1"  # OpenAI-compatible base (Ollama/llama.cpp/LM Studio)
   model: "llama3.2"            # model name your local server serves
   api_key: ""                  # usually empty for local models
@@ -95,11 +98,12 @@ classifier:                    # optional LLM domain classification (master only
   # default is abuse.ch URLhaus.
   # Built-in public threat-intel feeds to enable (merged). Available keys:
   # urlhaus, threatfox, phishing_army, hagezi_tif, openphish.
-  threat_feeds: ["urlhaus", "threatfox", "phishing_army", "hagezi_tif"]
+  # e.g. ["urlhaus", "threatfox", "phishing_army", "hagezi_tif"]
+  threat_feeds: []
   threat_list_url: ""             # extra custom threat lists (one per line / comma-separated)
   # Enrich each classification with WHOIS/RDAP registration data (domain age,
   # registrar) — a strong signal for the model. One RDAP lookup per new domain.
-  whois_enabled: true
+  whois_enabled: false
   # Reputation services (optional, key-gated): corroborate verdicts. A clean
   # report raises the legitimacy score (fewer false positives); a malicious one
   # lowers it. VirusTotal checks the domain; AbuseIPDB checks its resolved IP.

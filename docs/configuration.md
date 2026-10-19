@@ -97,7 +97,7 @@ ignored and the values are edited under **Settings** (or the setup wizard):
 | `MAZEDNS_REQUIRE_APPROVAL` | Settings → Access → Cluster policy | Hold new agents pending approval. |
 | `MAZEDNS_KEY_MAX_AGE` / `MAZEDNS_KEY_GRACE` | Settings → Access → Cluster policy | Per-node key rotation policy. |
 | `MAZEDNS_ADVERTISE_ADDR` | Settings → Access → Cluster policy | Address handed to agents at enrollment. |
-| `MAZEDNS_CLASSIFIER_*` | Settings → AI classification | Endpoint/model/mode/API key. |
+| `MAZEDNS_CLASSIFIER_*` | Settings → Classification | Endpoint/model/mode/API key. Naming a model or an endpoint turns the AI layer on. Everything else that contacts a third party (WHOIS/RDAP, threat feeds, the nameserver DoH check, reputation services) starts off and is chosen in Settings; nothing is downloaded or sent while classification is off. |
 | `MAZEDNS_OIDC_*` | Settings → Access & sign-in | Issuer, client ID/secret, redirect URL, groups, flags. |
 
 Runtime **secrets** (OIDC client secret, metrics passwords, classifier API keys)

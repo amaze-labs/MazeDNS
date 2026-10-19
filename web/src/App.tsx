@@ -13,7 +13,7 @@ import Login, { SKIP_AUTOLOGIN_KEY } from './components/Login'
 import Setup from './components/Setup'
 import Spinner from './components/Spinner'
 import { Icon, type IconName } from './components/icons'
-import { useTheme } from './theme'
+import { useTheme, type ThemeMode } from './theme'
 import { withViewTransition } from './motion'
 import { useNavBadges } from './useNavBadges'
 import { api, UNAUTHORIZED, type SessionUser, type AuthInfo } from './api'
@@ -59,9 +59,9 @@ export default function App() {
   const [info, setInfo] = useState<AuthInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [moreOpen, setMoreOpen] = useState(false)
-  const { theme, toggle: flipTheme } = useTheme()
+  const { mode, setMode: applyMode } = useTheme()
   // The theme switch cross-fades the whole page where the browser can.
-  const toggle = () => withViewTransition(flipTheme)
+  const setMode = (m: ThemeMode) => m !== mode && withViewTransition(() => applyMode(m))
   // The active-tab pill slides between tabs: its offset and width follow the
   // current tab's button.
   const navRef = useRef<HTMLElement>(null)
@@ -230,7 +230,13 @@ export default function App() {
   const phoneTabs = tabs.filter((t) => !TAB_META[t].more)
   const moreTabs = tabs.filter((t) => TAB_META[t].more)
   const moreCount = moreTabs.reduce((n, t) => n + (counts[t] ?? 0), 0)
-  const themeLabel = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+  // Light, follow the system, dark: the same three choices in the top bar
+  // and in the phone's More sheet.
+  const THEMES: { m: ThemeMode; icon: IconName; label: string }[] = [
+    { m: 'light', icon: 'sun', label: 'Light' },
+    { m: 'system', icon: 'monitor', label: 'System' },
+    { m: 'dark', icon: 'moon', label: 'Dark' },
+  ]
 
   return (
     <div className="app">
@@ -281,12 +287,17 @@ export default function App() {
         </nav>
         <div className="tb-tools">
           <div className="tb-theme" role="group" aria-label="Theme">
-            <button className={theme === 'light' ? 'on' : ''} onClick={() => theme !== 'light' && toggle()} title="Light theme" aria-pressed={theme === 'light'}>
-              <Icon name="sun" size={16} />
-            </button>
-            <button className={theme === 'dark' ? 'on' : ''} onClick={() => theme !== 'dark' && toggle()} title="Dark theme" aria-pressed={theme === 'dark'}>
-              <Icon name="moon" size={16} />
-            </button>
+            {THEMES.map((o) => (
+              <button
+                key={o.m}
+                className={mode === o.m ? 'on' : ''}
+                onClick={() => setMode(o.m)}
+                title={o.m === 'system' ? 'Match the system' : `${o.label} theme`}
+                aria-pressed={mode === o.m}
+              >
+                <Icon name={o.icon} size={16} />
+              </button>
+            ))}
           </div>
           {user && (
             <div className="tb-account">
@@ -335,10 +346,14 @@ export default function App() {
                 {!!counts[t] && <span className="tb-count">{counts[t]}</span>}
               </button>
             ))}
-            <button role="menuitem" onClick={toggle}>
-              <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
-              <span>{themeLabel}</span>
-            </button>
+            <div className="sheet-theme" role="group" aria-label="Theme">
+              {THEMES.map((o) => (
+                <button key={o.m} className={mode === o.m ? 'on' : ''} onClick={() => setMode(o.m)} aria-pressed={mode === o.m}>
+                  <Icon name={o.icon} size={16} />
+                  <span>{o.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </>
       )}

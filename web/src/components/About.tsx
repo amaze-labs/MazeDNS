@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, type Node, type Release, type UpdateStatus } from '../api'
-import { agentOutdated } from '../agentVersion'
+import { agentOutdated, latestAgent } from '../agentVersion'
 import Spinner from './Spinner'
 import { SkelGroups } from './Skeleton'
 
@@ -70,6 +70,16 @@ function ReleaseItem({ r, current }: { r: Release; current: string }) {
       <div className="ab-release-head">
         <b className="mono">{r.version}</b>
         {r.version === current && <span className="tag info">Running</span>}
+        {r.agent_build && r.agent_build !== r.version && (
+          <span className="tag" title={`The agent image is ${r.agent_build}'s, with the new version`}>
+            Control plane only
+          </span>
+        )}
+        {r.control_plane_build && r.control_plane_build !== r.version && (
+          <span className="tag" title={`The control plane image is ${r.control_plane_build}'s, with the new version`}>
+            Agents only
+          </span>
+        )}
         <span className="muted small">{day(r.published_at)}</span>
         <span className="spacer" />
         {r.url && (
@@ -121,6 +131,10 @@ export default function About() {
     byVersion.set(v, [...(byVersion.get(v) ?? []), n.name])
   }
   const versions = [...byVersion.entries()].sort((a, b) => b[1].length - a[1].length)
+
+  // The newest agent code: what this control plane ships with, or a later
+  // release GitHub knows about.
+  const newestAgent = latestAgent(agentBuild, st?.agent_latest)
 
   if (!st) {
     return err ? <div className="error">Couldn’t load the version: {err}</div> : <SkelGroups groups={2} />
@@ -207,10 +221,10 @@ export default function About() {
               {versions.map(([v, names]) => (
                 <li key={v}>
                   <b className="mono">{v}</b>
-                  {v === st.current ? (
+                  {agentOutdated(v === 'unknown' ? '' : v, st.current, newestAgent) ? (
+                    <span className="tag warn">Update to {st.latest || st.current}</span>
+                  ) : v === st.current ? (
                     <span className="tag ok">Same as the control plane</span>
-                  ) : agentOutdated(v === 'unknown' ? '' : v, st.current, agentBuild) ? (
-                    <span className="tag warn">Update available</span>
                   ) : (
                     <span className="tag ok">Current</span>
                   )}
@@ -218,6 +232,15 @@ export default function About() {
                 </li>
               ))}
             </ul>
+            {newestAgent && (
+              <p className="hint">
+                The latest agent code is from <b className="mono">{newestAgent}</b>
+                {st.latest && newestAgent !== st.latest && <> (the releases after it only changed the control plane)</>}.
+                {st.update_available && versions.some(([v]) => agentOutdated(v === 'unknown' ? '' : v, st.current, newestAgent)) && (
+                  <> Update the control plane to {st.latest} first, then the agents.</>
+                )}
+              </p>
+            )}
           </div>
         </section>
       )}

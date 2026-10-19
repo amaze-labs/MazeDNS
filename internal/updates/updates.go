@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,6 +37,11 @@ type Release struct {
 	PublishedAt string `json:"published_at"`
 	URL         string `json:"url"`
 	Notes       string `json:"notes"`
+	// The release each image's code comes from: Version when the release
+	// rebuilt it, an earlier one when it only stamped the new version on it
+	// (the notes say "unchanged since X").
+	ControlPlaneBuild string `json:"control_plane_build"`
+	AgentBuild        string `json:"agent_build"`
 }
 
 // Status is what the UI shows.
@@ -50,6 +56,9 @@ type Status struct {
 	CheckedAt  int64     `json:"checked_at,omitempty"` // unix secs
 	Error      string    `json:"error,omitempty"`
 	Releases   []Release `json:"releases"` // newest first
+	// AgentLatest is the release the latest agent code comes from: agents on
+	// it or later are current, whatever the latest release number.
+	AgentLatest string `json:"agent_latest,omitempty"`
 }
 
 // Checker caches the release listing.
@@ -107,6 +116,7 @@ func (c *Checker) Status(ctx context.Context, refresh bool) Status {
 		return st
 	}
 	st.Latest = c.releases[0].Version
+	st.AgentLatest = c.releases[0].AgentBuild
 	if latest, _ := parse(st.Latest); comparable && less(cur, latest) {
 		// What an update brings: every release newer than the running one.
 		st.UpdateAvailable = true
@@ -163,7 +173,12 @@ func (c *Checker) fetch(ctx context.Context) ([]Release, error) {
 		if len(notes) > maxNotes {
 			notes = notes[:maxNotes] + "\n\n…"
 		}
-		out = append(out, Release{Version: strings.TrimPrefix(r.Tag, "v"), Name: r.Name, PublishedAt: r.PublishedAt, URL: r.URL, Notes: notes})
+		v := strings.TrimPrefix(r.Tag, "v")
+		out = append(out, Release{
+			Version: v, Name: r.Name, PublishedAt: r.PublishedAt, URL: r.URL, Notes: notes,
+			ControlPlaneBuild: builtAt(r.Body, "control-plane", v),
+			AgentBuild:        builtAt(r.Body, "agent", v),
+		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, _ := parse(out[i].Version)
@@ -171,6 +186,22 @@ func (c *Checker) fetch(ctx context.Context) ([]Release, error) {
 		return less(b, a)
 	})
 	return out, nil
+}
+
+// unchanged matches a release-notes image line that only got the version
+// stamped: "`ghcr.io/amaze-labs/mazedns-agent:0.137.0` (unchanged since 0.136.6)".
+var unchanged = regexp.MustCompile("mazedns-(control-plane|agent):[^`\\s]*`?\\s*\\(unchanged since v?([0-9]+\\.[0-9]+\\.[0-9]+)\\)")
+
+// builtAt is the release an image's code in release v comes from, read from
+// v's notes: v itself unless they say the image is unchanged since an earlier
+// one (releases before per-image builds rebuilt both).
+func builtAt(notes, image, v string) string {
+	for _, m := range unchanged.FindAllStringSubmatch(notes, -1) {
+		if m[1] == image {
+			return m[2]
+		}
+	}
+	return v
 }
 
 type semver [3]int

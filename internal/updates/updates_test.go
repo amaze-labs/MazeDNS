@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 )
@@ -96,5 +97,41 @@ func TestDisabled(t *testing.T) {
 	c.url = srv.URL
 	if st := c.Status(context.Background(), true); !st.Disabled || hits.Load() != 0 {
 		t.Errorf("disabled: %+v, %d fetches", st, hits.Load())
+	}
+}
+
+// Release notes say which image a release only stamped; the agent's latest code
+// is then an earlier release's.
+func TestPerImageBuilds(t *testing.T) {
+	notes := func(cp, agent string) string {
+		return "### Fixes\n- x\n\n**Images:**\n\n- `ghcr.io/amaze-labs/mazedns-control-plane:0.137.1`" + cp +
+			"\n- `ghcr.io/amaze-labs/mazedns-agent:0.137.1`" + agent + "\n"
+	}
+	for _, tc := range []struct {
+		name, notes, cp, agent string
+	}{
+		{"both rebuilt", notes("", ""), "0.137.1", "0.137.1"},
+		{"control plane only", notes("", " (unchanged since 0.136.6)"), "0.137.1", "0.136.6"},
+		{"agent only", notes(" (unchanged since 0.137.0)", ""), "0.137.0", "0.137.1"},
+		{"older notes", "### Fixes\n- a\n\n**Images:** `ghcr.io/amaze-labs/mazedns-control-plane:0.137.1`, `ghcr.io/amaze-labs/mazedns-agent:0.137.1`", "0.137.1", "0.137.1"},
+	} {
+		if got := builtAt(tc.notes, "control-plane", "0.137.1"); got != tc.cp {
+			t.Errorf("%s: control plane from %q, want %q", tc.name, got, tc.cp)
+		}
+		if got := builtAt(tc.notes, "agent", "0.137.1"); got != tc.agent {
+			t.Errorf("%s: agent from %q, want %q", tc.name, got, tc.agent)
+		}
+	}
+
+	var hits atomic.Int32
+	body := `[{"tag_name":"0.137.1","name":"0.137.1","body":` + strconv.Quote(notes("", " (unchanged since 0.136.6)")) + `,"html_url":"u"}]`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	st := checker("0.136.6", srv.URL).Status(context.Background(), false)
+	if st.AgentLatest != "0.136.6" || !st.UpdateAvailable {
+		t.Fatalf("agent latest %q, update %v; want 0.136.6, true", st.AgentLatest, st.UpdateAvailable)
 	}
 }

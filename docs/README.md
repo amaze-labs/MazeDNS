@@ -4,6 +4,8 @@ MazeDNS runs as two containers: a **control plane** (web UI, API, config — no 
 and one or more **DNS agents** (the resolvers your clients query). Everything below
 is written for deploying and operating those containers — no source builds required.
 
+![The MazeDNS overview](images/overview-hero.png)
+
 ## For operators
 
 - **[Install](install.md)** — deploy with Docker/Compose (fast deploy first) or
@@ -24,7 +26,7 @@ is written for deploying and operating those containers — no source builds req
   plane. Run one or more. Clients point here.
 - **Enrollment** — agents self-register with an **enrollment key** (created in the UI,
   passed as `MAZEDNS_JOIN_TOKEN`) and receive a per-node key automatically; they then
-  appear in the **Cluster** tab.
+  appear on the **Agents** page.
 - **Bootstrap vs. operational settings** — the database, HTTP/DNS bind addresses &
   ports, TLS, and log level are read from env/YAML on every start; everything else on
   the control plane (auth/SSO, cluster policy, DNS defaults, cache, rate limits, block

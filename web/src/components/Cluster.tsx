@@ -1298,7 +1298,7 @@ function AgentDrawer({
     { label: 'Cached', value: node.cached, k: 'var(--cache)' },
     { label: 'Forwarded', value: node.forwarded, k: 'var(--fwd)' },
     { label: 'Blocked', value: node.blocked, k: 'var(--block)' },
-    { label: 'Rewritten', value: node.rewritten, k: 'var(--rewrite)' },
+    { label: 'Local DNS', value: node.rewritten, k: 'var(--rewrite)' },
     { label: 'Errors', value: node.errors, k: 'var(--faint)' },
   ]
   const synced = !!node.version && node.version === (node.expected_version ?? cpVer?.config_version)

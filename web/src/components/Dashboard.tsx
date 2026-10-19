@@ -115,7 +115,7 @@ const FLOW = [
   { key: 'cached', k: 'cache', label: 'From cache' },
   { key: 'forwarded', k: 'fwd', label: 'Forwarded' },
   { key: 'blocked', k: 'block', label: 'Blocked' },
-  { key: 'rewritten', k: 'rewrite', label: 'Rewritten' },
+  { key: 'rewritten', k: 'rewrite', label: 'Local DNS' },
 ] as const
 
 // The traffic chart stacks the series the time-series API returns; whatever
@@ -124,7 +124,7 @@ const STACK = [
   { key: 'cached', k: 'cache', label: 'Cache' },
   { key: 'forwarded', k: 'fwd', label: 'Forwarded' },
   { key: 'blocked', k: 'block', label: 'Blocked' },
-  { key: 'other', k: 'rewrite', label: 'Rewritten and other' },
+  { key: 'other', k: 'rewrite', label: 'Local DNS and other' },
 ] as const
 
 type TrafficRow = {
@@ -481,7 +481,7 @@ export default function Dashboard() {
 
   // ---- flow hints ----
   const flowHint: Record<string, string> = {
-    cached: 'answered locally',
+    cached: 'reused answers',
     forwarded: upstreams && upstreams.length > 0 ? `to ${upstreams.slice(0, 2).map((u) => u.replace(/:53$/, '')).join(', ')}${upstreams.length > 2 ? ` +${upstreams.length - 2}` : ''}` : 'to upstream resolvers',
     blocked:
       // Lists from MAZEDNS_BLOCKLIST_FILES block too but aren't in the API, so
@@ -489,7 +489,7 @@ export default function Dashboard() {
       listCount != null && ruleCount != null && listCount + ruleCount > 0
         ? `by ${listCount} ${listCount === 1 ? 'list' : 'lists'}, ${ruleCount} ${ruleCount === 1 ? 'rule' : 'rules'}`
         : 'by blocklists and rules',
-    rewritten: 'local records',
+    rewritten: 'your own records',
   }
 
   const topRows = topKind === 'blocked' ? topDom?.top_blocked : topDom?.top_queried

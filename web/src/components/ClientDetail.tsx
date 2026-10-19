@@ -16,7 +16,7 @@ export const RESULTS: Record<string, { label: string; tag: string; color: string
   blocked: { label: 'Blocked', tag: 'block', color: 'var(--block)' },
   forward: { label: 'Forwarded', tag: 'fwd', color: 'var(--fwd)' },
   cache: { label: 'Cache', tag: 'cache', color: 'var(--cache)' },
-  rewrite: { label: 'Rewritten', tag: 'rewrite', color: 'var(--rewrite)' },
+  rewrite: { label: 'Local DNS', tag: 'rewrite', color: 'var(--rewrite)' },
   authoritative: { label: 'Local zone', tag: 'ok', color: 'var(--ok)' },
   error: { label: 'Error', tag: 'warn', color: 'var(--warn)' },
   refused: { label: 'Refused', tag: '', color: 'var(--faint)' },
@@ -217,7 +217,7 @@ export default function ClientDetail({
             <dd>{t.total ? `${pct(t.cached, t.total)}%` : '—'} <span className="muted">({t.cached.toLocaleString()} cached)</span></dd>
             <dt>Forwarded</dt>
             <dd>{t.forwarded.toLocaleString()}</dd>
-            <dt>Rewritten</dt>
+            <dt>Local DNS</dt>
             <dd>{t.rewritten.toLocaleString()}</dd>
             <dt>Errors</dt>
             <dd className={t.errors > 0 ? 'bad-text' : ''}>{t.errors.toLocaleString()}</dd>

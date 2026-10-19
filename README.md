@@ -86,18 +86,12 @@ agents are healthy, in sync and up to date.
 
 MazeDNS is two containers:
 
-```mermaid
-flowchart LR
-  subgraph Site A
-    C1[Clients] -->|DNS :53| A1[Agent]
-  end
-  subgraph Site B
-    C2[Clients] -->|DNS :53| A2[Agent]
-    C2 --> A3[Agent]
-  end
-  A1 & A2 & A3 -->|config, query log, metrics| CP[Control plane<br/>UI · API · no DNS]
-  You((You)) -->|browser| CP
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.png">
+  <img src="docs/images/architecture.png" alt="Clients in each site query a DNS agent on port 53; every agent syncs with one control plane, which you use from a browser">
+</picture>
+
+<sub>Drawn with Excalidraw: open <a href="docs/images/architecture.excalidraw">architecture.excalidraw</a> on excalidraw.com to edit it.</sub>
 
 | Image | Serves | Run |
 |-------|--------|-----|

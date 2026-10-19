@@ -622,11 +622,11 @@ function explain(e: QueryLogEntry, rule: Rule | undefined, cats: CategoryList | 
       }
     }
     case 'forward':
-      return { kind: '', title: 'Forwarded upstream', text: `It wasn’t blocked, rewritten or cached, so the agent asked an upstream resolver. ${answered}` }
+      return { kind: '', title: 'Forwarded upstream', text: `It wasn’t blocked, answered by a local record or cached, so the agent asked an upstream resolver. ${answered}` }
     case 'cache':
       return { kind: 'ok', title: 'Answered from cache', text: `The agent still had the answer from an earlier upstream lookup. ${answered}` }
     case 'rewrite':
-      return { kind: 'warn', title: 'Rewritten', text: `A rewrite answers this name with your own records instead of asking upstream. ${answered}` }
+      return { kind: 'warn', title: 'Local DNS', text: `One of your local records answers this name instead of asking upstream. ${answered}` }
     case 'authoritative':
       return { kind: 'ok', title: 'Answered from a local zone', text: `The agent is authoritative for this name and answered it itself. ${answered}` }
     case 'error':

@@ -244,7 +244,7 @@ export default function Classifier({
         New domains get a legitimacy score from threat feeds, WHOIS age, the shape of the name and, if enabled, a language model. Low
         scores land in “To check” for you to decide.{' '}
         <button className="linklike" onClick={() => setShowHelp(true)}>
-          How scoring works
+          How classification works
         </button>
       </p>
 

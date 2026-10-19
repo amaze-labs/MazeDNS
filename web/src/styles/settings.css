@@ -723,3 +723,41 @@
   display: grid;
   gap: 6px;
 }
+
+/* Classification: the two-purpose intro, and the traffic-type sources. */
+.pg-settings .cls-intro {
+  margin: 18px 0 4px;
+  max-width: 760px;
+  color: var(--muted);
+}
+.pg-settings .cls-intro b {
+  color: var(--text);
+}
+.pg-settings .cls-sources {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.pg-settings .cls-sources li {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 4px 16px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--soft);
+  font-size: 13px;
+}
+.pg-settings .cls-sources li:first-child {
+  border-top: 0;
+}
+.pg-settings .cls-sources li > span:last-child {
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .pg-settings .cls-sources li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

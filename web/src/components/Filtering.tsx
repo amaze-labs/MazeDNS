@@ -32,7 +32,11 @@ function fmtLeft(s: number): string {
 // (protection state, list/rule/review counts, the viewer's role) so the header
 // and tab counts stay current whichever tab is open.
 export default function Filtering({ classifier = false }: { classifier?: boolean }) {
-  const [sub, setSub] = useState<Sub>(classifier ? 'review' : 'lists')
+  // A tab can be linked to: /filtering?tab=categories.
+  const [sub, setSub] = useState<Sub>(() => {
+    const t = new URLSearchParams(window.location.search).get('tab')
+    return t === 'review' || t === 'lists' || t === 'categories' || t === 'rules' ? t : classifier ? 'review' : 'lists'
+  })
   // If the classifier gets disabled while Review is open, fall back.
   const active: Sub = sub === 'review' && !classifier ? 'lists' : sub
 

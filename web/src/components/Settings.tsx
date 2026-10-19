@@ -14,8 +14,11 @@ import {
 import ApiTokens from './ApiTokens'
 import Spinner from './Spinner'
 import Modal from './Modal'
+import ClassifierHelp from './ClassifierHelp'
 import { SkelGroups, SkelList } from './Skeleton'
 import About from './About'
+import { useCategories } from '../categories'
+import { timeAgo } from './tableKit'
 import { invalidateAllClientNames } from '../useClientNames'
 import { PASSWORD_RULE } from '../passwordPolicy'
 import '../styles/settings.css'
@@ -309,6 +312,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // A section can be linked to: /settings?section=about (the top bar's
   // "update available" note does).
   const [confirmClassify, setConfirmClassify] = useState(false)
+  const [showClsHelp, setShowClsHelp] = useState(false)
+  const catList = useCategories()
   const [view, setView] = useState<View>(() => {
     const s = new URLSearchParams(window.location.search).get('section')
     return s && s in VIEW_LABEL ? (s as View) : 'resolver'
@@ -1228,10 +1233,76 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const keyPlaceholder = (has: boolean | undefined, empty: string) => (has ? '•••••••• (saved, leave empty to keep)' : empty)
   const classificationView = cls && (
     <>
-      <Group title="Domain classification" desc="Score newly seen domains for risk instead of keeping blocklists by hand.">
+      <p className="cls-intro">
+        Classification tells you two things about every domain your network uses: <b>what it is</b> (its traffic type: social,
+        streaming, work, …) and <b>whether it’s safe</b> (its risk).{' '}
+        <button type="button" className="linklike" onClick={() => setShowClsHelp(true)}>
+          How classification works
+        </button>
+      </p>
+
+      <Group
+        title="Traffic types"
+        desc="What each domain is. Every query is labelled as it arrives, for Overview, Queries and Clients. Always on, and local: nothing is sent out."
+      >
+        <ul className="cls-sources">
+          <li>
+            <b>Category database</b>
+            <span>
+              {!catList
+                ? 'Loading…'
+                : !catList.enabled
+                  ? 'Off on this control plane (MAZEDNS_CATEGORY_DB=off).'
+                  : catList.database.updated_at
+                    ? `UT1, Université Toulouse Capitole: ${catList.database.domains.toLocaleString()} domains, updated ${timeAgo(catList.database.updated_at * 1000)}.`
+                    : catList.database.loading
+                      ? 'UT1: downloading…'
+                      : 'UT1: not loaded yet.'}
+              {catList?.database.error && <span className="bad-text"> Last refresh failed: {catList.database.error}</span>}
+            </span>
+          </li>
+          <li>
+            <b>Common platforms</b>
+            <span>A built-in list of the services behind most everyday traffic: Apple, Microsoft, Google, CDNs, the big apps.</span>
+          </li>
+          <li>
+            <b>Local network</b>
+            <span>Names your local records answer, reverse lookups and private names (.lan, .home.arpa…).</span>
+          </li>
+          <li>
+            <b>Your corrections</b>
+            <span>Change any domain’s type from its details (Queries → a query → Category); it wins over everything else.</span>
+          </li>
+          <li>
+            <b>
+              AI model <span className="muted">(optional)</span>
+            </b>
+            <span>Labels what none of the above knows. Needs lookups on (below).</span>
+          </li>
+        </ul>
+        <p className="hint">
+          To block whole types on every agent (adult, gambling, social…), go to{' '}
+          <a
+            href="/filtering?tab=categories"
+            onClick={(e) => {
+              e.preventDefault()
+              window.history.pushState({}, '', '/filtering?tab=categories')
+              window.dispatchEvent(new PopStateEvent('popstate'))
+            }}
+          >
+            Filtering → Categories
+          </a>
+          .
+        </p>
+      </Group>
+
+      <Group
+        title="Lookups and risk"
+        desc="Looks up each newly seen domain with the services you choose below, to score its risk and, with an AI model, to label its type."
+      >
         <Toggle
-          label="Classify new domains"
-          desc="Every domain starts legitimate; the signals you turn on below adjust the score, with risky TLDs and look-alike names always counted. Runs on the control plane; auto-blocks reach every agent. Nothing below contacts anything while this is off."
+          label="Look up new domains"
+          desc="Each domain starts legitimate; the signals you turn on below adjust its score, with risky TLDs and look-alike names always counted. Runs on the control plane, never on the DNS path. Off: nothing below downloads or sends anything."
           checked={cls.enabled}
           onChange={(v) => (v ? setConfirmClassify(true) : setCls({ ...cls, enabled: false }))}
         />
@@ -1246,19 +1317,36 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </div>
       </Group>
 
+      <Group
+        title="Keep private"
+        desc="Your own domains are never looked up, so they never reach WHOIS, reputation services or the AI model. Their traffic types still apply: those are looked up locally."
+      >
+        <Field
+          label="Never look up these domains (one per line)"
+          hint="Each covers its subdomains (example.com covers nas.example.com). Names answered by your local records and names under a conditional forwarder are always skipped."
+        >
+          <textarea
+            rows={4}
+            value={(cls.exclude_domains ?? []).join('\n')}
+            onChange={(e) => setCls({ ...cls, exclude_domains: e.target.value.split('\n') })}
+            placeholder={'example.com\ncorp.example.net'}
+          />
+        </Field>
+      </Group>
+
       {!cls.enabled && (
         <div className="callout cls-off-note">
           <InfoIcon />
           <div>
-            <b>Classification is off</b>
-            <p>The settings below apply once it’s on. They are kept as they are, and none of them downloads or sends anything meanwhile.</p>
+            <b>Lookups are off</b>
+            <p>The services below apply once “Look up new domains” is on. They are kept as they are, and none of them downloads or sends anything meanwhile.</p>
           </div>
         </div>
       )}
       <fieldset className="cls-deps" disabled={!cls.enabled}>
       <Group
         title="AI model"
-        desc="Optional. One more bounded signal that mainly cuts false positives and adds content categories."
+        desc="Optional. Helps both ways: labels the traffic types the database doesn’t know, and adds one bounded risk signal that mainly cuts false positives."
       >
         <Toggle
           label="Use an AI model"
@@ -1336,24 +1424,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <Msg m={testMsg} />
       </Group>
 
-      <Group
-        title="Never classify"
-        desc="Your own domains: never sent to WHOIS, reputation services or the AI model."
-      >
-        <Field
-          label="Domains, one per line"
-          hint="Each covers its subdomains (example.com covers nas.example.com). Names answered by your local records and names under a conditional forwarder are already skipped. Categories still apply: they are looked up locally."
-        >
-          <textarea
-            rows={4}
-            value={(cls.exclude_domains ?? []).join('\n')}
-            onChange={(e) => setCls({ ...cls, exclude_domains: e.target.value.split('\n') })}
-            placeholder={'example.com\ncorp.example.net'}
-          />
-        </Field>
-      </Group>
-
-      <Group title="Trusted list" desc="Domains on the trusted list are never blocked, even if a signal flags them.">
+      <Group title="Trusted list" desc="Risk: domains on the trusted list are never blocked, even if a signal flags them.">
         <Toggle
           label="Use the built-in public list"
           desc="Majestic Million top domains, downloaded from majestic.com. A download only: it receives none of your queries."
@@ -1382,7 +1453,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <Group
         title="Threat-intelligence feeds"
-        desc="A domain on any enabled feed counts as malicious, even if nothing else flags it. Each feed is downloaded from its publisher (abuse.ch, GitHub…) and receives none of your queries."
+        desc="Risk: a domain on any enabled feed counts as malicious, even if nothing else flags it. Each feed is downloaded from its publisher (abuse.ch, GitHub…) and receives none of your queries."
       >
         <div className="toggles">
           {(clsInfo?.threat_feed_catalog ?? []).map((f) => (
@@ -1410,7 +1481,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <Group
         title="Reputation services"
-        desc="Optional lookups per new domain. A clean report raises the score, a malicious one lowers it. Keys stay on the server."
+        desc="Risk: optional lookups per new domain. A clean report raises the score, a malicious one lowers it. Keys stay on the server."
       >
         <div className="toggles">
           <Toggle
@@ -1480,10 +1551,11 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       </Group>
       </fieldset>
 
+      {showClsHelp && <ClassifierHelp onClose={() => setShowClsHelp(false)} />}
       {confirmClassify && (
         <Modal
           kind="dialog"
-          title="Turn on classification?"
+          title="Turn on lookups?"
           onClose={() => setConfirmClassify(false)}
           footer={
             <>
@@ -1505,7 +1577,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           }
         >
           <div className="ag-form">
-            <p>New domains your clients query will be scored on the control plane. With your current choices:</p>
+            <p>New domains your clients query will be looked up on the control plane, to score their risk and label their type. With your current choices:</p>
             <ul className="cls-contacts">
               {externalContacts(cls).map((c) => (
                 <li key={c}>{c}</li>

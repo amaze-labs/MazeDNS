@@ -593,55 +593,6 @@
   font-size: 17px;
 }
 
-/* ---- How scoring works ---- */
-.pg-filtering .flow {
-  display: grid;
-  gap: 4px;
-}
-.pg-filtering .flow-box {
-  --k: var(--line);
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--k) 45%, var(--line));
-  background: color-mix(in srgb, var(--k) 7%, var(--sunk));
-}
-.pg-filtering .flow-box.info {
-  --k: var(--fwd);
-}
-.pg-filtering .flow-box.ok {
-  --k: var(--ok);
-}
-.pg-filtering .flow-box.warn {
-  --k: var(--warn);
-}
-.pg-filtering .flow-box.block {
-  --k: var(--block);
-}
-.pg-filtering .flow-arrow {
-  color: var(--faint);
-  padding-left: 18px;
-  line-height: 1.2;
-}
-.pg-filtering .flow-factors {
-  margin-top: 10px;
-}
-.pg-filtering .flow-outcomes {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 8px;
-  margin-top: 8px;
-}
-.pg-filtering .help-kv {
-  gap: 10px 18px;
-}
-.pg-filtering .help-kv dt {
-  font-weight: 500;
-  color: var(--text);
-}
-.pg-filtering .help-kv dd {
-  color: var(--muted);
-}
-
 /* ---- Mobile ---- */
 @media (max-width: 900px) {
   .pg-filtering .cols.lists-cols {
@@ -729,16 +680,6 @@
   }
   .pg-filtering .llm-usage .inset-strip {
     margin: 4px 16px 14px;
-  }
-  .pg-filtering .flow-outcomes {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .pg-filtering .help-kv {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
-  }
-  .pg-filtering .help-kv dd {
-    margin-bottom: 10px;
   }
 }
 

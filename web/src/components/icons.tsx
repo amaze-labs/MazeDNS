@@ -18,6 +18,7 @@ type IconName =
   | 'sun'
   | 'moon'
   | 'more'
+  | 'monitor'
 
 // Each entry is the inner markup of a 24×24 viewBox icon.
 const PATHS: Record<IconName, JSX.Element> = {
@@ -84,6 +85,12 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   moon: <path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" />,
+  monitor: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </>
+  ),
   more: (
     <>
       <circle cx="5" cy="12" r="1.2" />

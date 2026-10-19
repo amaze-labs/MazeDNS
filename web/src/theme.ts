@@ -1,42 +1,53 @@
 import { useCallback, useEffect, useState } from 'react'
 
 export type Theme = 'light' | 'dark'
+// The user's choice: a fixed theme, or follow the operating system.
+export type ThemeMode = Theme | 'system'
 const KEY = 'mazedns.theme'
 
-// current reads whatever the pre-paint inline script (index.html) already applied
-// to <html data-theme>, falling back to the system preference.
-function current(): Theme {
-  const attr = document.documentElement.getAttribute('data-theme')
-  if (attr === 'light' || attr === 'dark') return attr
-  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+const systemTheme = (): Theme => (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+
+function storedMode(): ThemeMode {
+  try {
+    const v = localStorage.getItem(KEY)
+    if (v === 'light' || v === 'dark') return v
+  } catch {
+    /* storage unavailable: follow the system */
+  }
+  return 'system'
 }
 
-// useTheme exposes the active theme and a toggle. The choice is persisted; until
-// the user picks one, the app follows the OS setting live.
-export function useTheme(): { theme: Theme; toggle: () => void } {
-  const [theme, setTheme] = useState<Theme>(current)
+// useTheme exposes the chosen mode, the theme it resolves to, and setMode.
+// "system" (the default, stored as no value) follows the OS setting live; the
+// pre-paint script in index.html applies the same rule before first render.
+export function useTheme(): { mode: ThemeMode; theme: Theme; setMode: (m: ThemeMode) => void; toggle: () => void } {
+  const [mode, setModeState] = useState<ThemeMode>(storedMode)
+  const [sys, setSys] = useState<Theme>(systemTheme)
+  const theme: Theme = mode === 'system' ? sys : mode
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
-  // Follow the OS while the user hasn't made an explicit choice.
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: light)')
-    const onChange = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem(KEY)) setTheme(e.matches ? 'light' : 'dark')
-    }
+    const onChange = (e: MediaQueryListEvent) => setSys(e.matches ? 'light' : 'dark')
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
-  const toggle = useCallback(() => {
-    setTheme((t) => {
-      const next: Theme = t === 'dark' ? 'light' : 'dark'
-      localStorage.setItem(KEY, next)
-      return next
-    })
+  const setMode = useCallback((m: ThemeMode) => {
+    setModeState(m)
+    try {
+      if (m === 'system') localStorage.removeItem(KEY)
+      else localStorage.setItem(KEY, m)
+    } catch {
+      /* the choice just won't persist */
+    }
   }, [])
 
-  return { theme, toggle }
+  // toggle flips between light and dark (a fixed choice).
+  const toggle = useCallback(() => setMode(theme === 'dark' ? 'light' : 'dark'), [setMode, theme])
+
+  return { mode, theme, setMode, toggle }
 }

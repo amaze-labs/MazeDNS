@@ -5,10 +5,15 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
 	"strings"
 )
+
+// The web app manifest's type isn't in Go's built-in table (it would go out
+// as text/plain, which browsers may ignore).
+func init() { _ = mime.AddExtensionType(".webmanifest", "application/manifest+json") }
 
 //go:embed all:dist
 var distFS embed.FS

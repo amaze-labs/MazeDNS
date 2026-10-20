@@ -90,9 +90,11 @@ func (s *Scrubber) Scrub(now time.Time) error {
 				return err
 			}
 			hidden += n
-		case p.DetailHours > 0 || redo:
-			// Rare-only: decide name by name. With no detail window, ingest
-			// already decided every new query, so only a redo needs this.
+		default:
+			// Rare-only: decide name by name, over the whole range every time.
+			// Ingest decides new queries when there is no detail window, but the
+			// range can still hold full-detail entries (the window was just
+			// shortened), and deciding a decided name again changes nothing.
 			n, err := s.st.ReduceQueryLogNames(lo, hi, Hidden, func(name string, ts int64) string {
 				return s.a.domains.keep(name, ts, p.DomainK)
 			})

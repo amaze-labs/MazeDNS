@@ -115,3 +115,32 @@ func TestScrubRareDomains(t *testing.T) {
 		t.Errorf("after hiding every domain: %v", got)
 	}
 }
+
+// Shortening the detail window to none reduces the full-detail entries the old
+// window kept, in rare-only mode too.
+func TestScrubRareDomainsWindowShortened(t *testing.T) {
+	st := openStore(t)
+	now := time.Now()
+	recent := now.Add(-2 * time.Hour).UnixMilli()
+	if err := st.InsertNodeQueryLog("a1", []store.QueryLogEntry{named("10.0.0.1", "rare.other.", recent)}); err != nil {
+		t.Fatal(err)
+	}
+	p := Policy{Level: LevelHideDomains, DomainK: 2, DetailHours: 24}
+	a := New(func() Policy { return p }, NewKeyring(st))
+	a.SetDaySeeder(st.QueryLogDayPairs)
+	s := NewScrubber(st, a)
+	if err := s.Scrub(now); err != nil { // inside the window: kept
+		t.Fatal(err)
+	}
+	p.DetailHours = 0
+	if err := s.Scrub(now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	res, _, err := st.SearchQueryLog(store.QueryLogQuery{Limit: 10})
+	if err != nil || len(res) != 1 {
+		t.Fatalf("got %v, %v", res, err)
+	}
+	if res[0].Name != Hidden {
+		t.Errorf("full-detail entry kept its name after the window was removed: %q", res[0].Name)
+	}
+}

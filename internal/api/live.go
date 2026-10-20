@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/cluster"
+	"github.com/IPMaze/MazeDNS/internal/privacy"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -233,6 +234,12 @@ func (s *Server) clusterLivePush(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.labelEntries(entries)
+	s.priv.Ingest(entries, time.Now())
+	if p := s.priv.Policy(); p.Level == privacy.LevelAnonymous && p.DetailHours == 0 {
+		// Anonymous mode keeps no query, live ones included.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	s.live.publish(node.Name, entries)
 	w.WriteHeader(http.StatusNoContent)
 }

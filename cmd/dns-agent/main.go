@@ -336,6 +336,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		// Re-merge local + centrally pushed settings after every applied snapshot
 		// (central forwarders win per suffix).
 		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
+		ag.SetPurgeShipped(func() bool { level, _, _ := res.Privacy(); return level > 0 })
 		relay := ag.RelayMetrics
 		metricsRelay.Store(&relay)
 		if cfg.Cluster.JoinToken != "" {

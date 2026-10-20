@@ -33,6 +33,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/logbuf"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
+	"github.com/IPMaze/MazeDNS/internal/privacy"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 	"github.com/IPMaze/MazeDNS/internal/updates"
@@ -195,9 +196,18 @@ func main() {
 		}
 	}()
 
+	// Query-log privacy level (Settings → Privacy): applied as logs arrive and,
+	// once the detail window passes, to everything stored.
+	anon := privacy.New(func() privacy.Policy {
+		level, hours, k := res.Privacy()
+		return privacy.Policy{Level: level, DetailHours: hours, DomainK: k}
+	}, privacy.NewKeyring(st))
+	anon.SetDaySeeder(st.QueryLogDayPairs)
+	go privacy.NewScrubber(st, anon).Run(context.Background())
+
 	// VictoriaMetrics + VictoriaLogs export (control plane holds the cluster-wide view).
 	startMetricsExport(st, cfg, mx)
-	startLogsExport(st, cfg)
+	startLogsExport(st, cfg, anon)
 
 	// HTTP: API + UI + metrics + cluster control plane. Auth applies; cluster
 	// endpoints (including token self-enrollment) are always available.
@@ -223,6 +233,7 @@ func main() {
 	apiSrv.SetClassifierStatus(clsWorker)
 	apiSrv.SetClassifierEnqueue(clsWorker.Enqueue)
 	apiSrv.SetEnricher(enricher)
+	apiSrv.SetPrivacy(anon)
 	if categorizer != nil {
 		apiSrv.SetCategorizer(categorizer)
 	}
@@ -343,7 +354,7 @@ func startMetricsExport(st *store.Store, cfg config.Config, mx *metrics.Metrics)
 
 // startLogsExport ships the cluster-wide query log to VictoriaLogs for retention
 // beyond the local window.
-func startLogsExport(st *store.Store, cfg config.Config) {
+func startLogsExport(st *store.Store, cfg config.Config, anon *privacy.Anonymizer) {
 	vl := cfg.Metrics.VictoriaLogs
 	_ = st.EnsureVLExport(store.VLExport{
 		Enabled: vl.Enabled, URL: vl.URL, IntervalSec: int(vl.Interval.Std().Seconds()),
@@ -356,7 +367,9 @@ func startLogsExport(st *store.Store, cfg config.Config) {
 			Username: v.Username, Password: v.Password,
 		}
 	}
-	go victorialogs.NewExporter(getVL, st).Run(context.Background())
+	exp := victorialogs.NewExporter(getVL, st)
+	exp.SetReduce(anon.Export)
+	go exp.Run(context.Background())
 }
 
 // seedCPSettings maps the file/env config to the DB-backed control-plane runtime

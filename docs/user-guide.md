@@ -6,6 +6,7 @@ replicate it automatically. You never edit files on an agent.
 
 - [Overview](#overview)
 - [Queries and clients](#queries-and-clients)
+- [Query privacy](#query-privacy)
 - [Upstreams, cache, and DNS behavior](#upstreams-cache-and-dns-behavior)
 - [Blocklists and allow/deny rules](#blocklists-and-allowdeny-rules)
 - [Domain categories](#domain-categories)
@@ -73,6 +74,49 @@ there.
 | Clients | A client |
 |---|---|
 | ![Clients](images/clients.png) | ![A client's details](images/client-detail.png) |
+
+## Query privacy
+
+**Settings → Resolver → Privacy** limits what MazeDNS keeps about each query.
+The levels are Pi-hole's, applied cluster-wide:
+
+| Level | What is kept |
+|---|---|
+| **Show everything** (default) | Every query with its client and domain. |
+| **Hide domains** | Domains are stored as `hidden`; clients are kept. |
+| **Hide domains and clients** | Domains are hidden and each client becomes a pseudonym such as `anon-3f9a2c1b7e`. |
+| **Anonymous (counts only)** | No query is kept, only the dashboard counts (totals, actions, content categories). |
+
+Filtering never changes: blocking, rate limiting, the cache and local records
+always use the real client and domain. Only what is stored, shown (Queries,
+Clients, Live, a client's details) and exported to VictoriaLogs is reduced.
+
+- **Pseudonyms.** A device keeps the same pseudonym for one UTC day, so top
+  clients and per-client block rates still work. Each day uses a new random key
+  that is deleted once the day is past the detail window, after which nobody,
+  you included, can tell which address a pseudonym stood for or link it to
+  another day. Unique-client counts over several days therefore count a device
+  once per day.
+- **Hide only rare domains (k-anonymity).** With either "hide" level you can
+  choose **Domains to hide: visited by fewer than k devices** instead of all of
+  them. A domain is kept when at least *k* different devices queried it that
+  UTC day or the day before; a rarer one is hidden, because a domain only one
+  or two devices visit (a personal site, a clinic, a small employer) can point
+  to a person. When a name is rare but its registered domain is common, the
+  registered domain is kept instead (`u123.tracker.com` → `tracker.com`).
+  Devices are counted by their daily pseudonym, in memory, never by address.
+  A domain's first queries of the day can be hidden before it reaches *k*.
+- **Classification keeps working.** Each domain is labelled with its content
+  category and handed to the classifier as it arrives, before it is hidden.
+- **Keep full detail for.** Optionally, queries keep full detail for a few hours
+  (up to 7 days) for troubleshooting, then the level applies to them. Exports
+  to VictoriaLogs always get the reduced data, whatever this window.
+- **Changing the level.** Raising it also applies it to the history already
+  stored (within a minute). Lowering it applies to new queries only: what was
+  hidden cannot be brought back.
+- **Agents** delete their local copy of each query once it has been sent to
+  the control plane, and their `query` process-log lines leave out what the
+  level hides.
 
 ## Upstreams, cache, and DNS behavior
 

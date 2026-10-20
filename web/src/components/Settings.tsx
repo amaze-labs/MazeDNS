@@ -154,6 +154,14 @@ type Saved = {
   cp: CPSettings | null
 }
 
+// What each privacy level keeps, shown under the level picker.
+const PRIVACY_HINT: Record<number, string> = {
+  0: 'Every query is stored with its client and domain.',
+  1: 'Domains are stored as "hidden"; clients are kept. The classifier and content categories still work, because a domain is checked before it is hidden.',
+  2: 'Domains are hidden and each client becomes a pseudonym (anon-…). A device keeps the same pseudonym for one day (UTC), so per-client stats still work, but days cannot be linked to each other or back to an address.',
+  3: 'No query is kept. Only the dashboard counts (totals, actions, content categories) remain; the Queries, Clients and Live views stay empty (a query is removed within a minute of being counted).',
+}
+
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 // --- Small layout pieces -------------------------------------------------------
@@ -607,6 +615,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
   const patch = (p: Partial<S>) => setS({ ...s, ...p })
   const hedged = s.upstream_strategy === 'hedged'
+  const privacyLevel = s.privacy_level ?? 0
   const patchCache = (p: Partial<S['cache']>) => setS({ ...s, cache: { ...s.cache, ...p } })
 
   // Structured upstream editing keeps the canonical `upstreams` text in sync so
@@ -993,6 +1002,71 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             />
           </span>
         </div>
+      </Group>
+
+      <Group
+        title="Privacy"
+        desc="What MazeDNS keeps about each query. Filtering always sees the real client and domain; this only changes what is stored, shown and exported."
+      >
+        <div className="row3">
+          <Field label="Privacy level">
+            <select
+              value={privacyLevel}
+              onChange={(e) => patch({ privacy_level: Number(e.target.value) })}
+            >
+              <option value={0}>Show everything</option>
+              <option value={1}>Hide domains</option>
+              <option value={2}>Hide domains and clients</option>
+              <option value={3}>Anonymous (counts only)</option>
+            </select>
+          </Field>
+          {(privacyLevel === 1 || privacyLevel === 2) && (
+            <Field label="Domains to hide">
+              <select
+                value={s.privacy_domain_k ?? 0}
+                onChange={(e) => patch({ privacy_domain_k: Number(e.target.value) })}
+              >
+                <option value={0}>All domains</option>
+                <option value={3}>Visited by fewer than 3 devices</option>
+                <option value={5}>Visited by fewer than 5 devices</option>
+                <option value={10}>Visited by fewer than 10 devices</option>
+                <option value={20}>Visited by fewer than 20 devices</option>
+              </select>
+            </Field>
+          )}
+          {privacyLevel > 0 && (
+            <Field label="Keep full detail for">
+              <select
+                value={s.privacy_detail_hours ?? 0}
+                onChange={(e) => patch({ privacy_detail_hours: Number(e.target.value) })}
+              >
+                <option value={0}>No time (apply at once)</option>
+                <option value={1}>1 hour</option>
+                <option value={6}>6 hours</option>
+                <option value={24}>24 hours</option>
+                <option value={72}>3 days</option>
+                <option value={168}>7 days</option>
+              </select>
+            </Field>
+          )}
+        </div>
+        <p className="hint">{PRIVACY_HINT[privacyLevel] ?? PRIVACY_HINT[0]}</p>
+        {(privacyLevel === 1 || privacyLevel === 2) && (s.privacy_domain_k ?? 0) > 0 && (
+          <p className="hint">
+            A domain is kept only when at least {s.privacy_domain_k} different devices queried it that day (UTC) or the
+            day before, so a domain that points to one person (a personal site, a clinic, a small employer) is hidden.
+            When a name is rare but its registered domain is common, the registered domain is kept instead
+            (u123.tracker.com becomes tracker.com).
+          </p>
+        )}
+        {privacyLevel > 0 && (
+          <p className="hint">
+            {(s.privacy_detail_hours ?? 0) > 0
+              ? `Queries keep full detail for ${s.privacy_detail_hours} h, for troubleshooting, then the level applies to them. Exports to VictoriaLogs always get the reduced data.`
+              : 'The level applies as queries arrive.'}{' '}
+            Raising the level also applies it to the history already stored. Lowering it cannot bring back what was removed.
+          </p>
+        )}
       </Group>
     </>
   )

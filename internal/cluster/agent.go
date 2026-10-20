@@ -50,7 +50,8 @@ type Agent struct {
 	stats          func() store.NodeStats
 	setPause       func(int64)
 	setMaintenance func(bool)
-	applySettings  func() // re-merge local + central settings after an applied snapshot (may be nil)
+	purgeShipped   func() bool // drop shipped query-log entries (privacy level on; may be nil)
+	applySettings  func()      // re-merge local + central settings after an applied snapshot (may be nil)
 	client         *http.Client
 	lastShipped    int64
 	reenroll       func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
@@ -104,6 +105,12 @@ func (a *Agent) SetProcessLogs(buf *logbuf.Buffer) { a.procLogs = buf }
 // receives a fresh key, persists it, and returns it. Enables zero-touch key
 // rotation and self-healing after a control-plane DB reset.
 func (a *Agent) SetReenroll(fn func(ctx context.Context) (string, error)) { a.reenroll = fn }
+
+// SetPurgeShipped installs a check, made after each shipped batch, of whether
+// the agent should drop the entries it just shipped instead of keeping its
+// local buffer (the privacy level is on: the control plane holds what may be
+// kept).
+func (a *Agent) SetPurgeShipped(fn func() bool) { a.purgeShipped = fn }
 
 // SetApplySettings installs a callback invoked after every applied snapshot,
 // so the node rebuilds its effective settings (local settings + centrally
@@ -293,6 +300,11 @@ func (a *Agent) shipLogs(ctx context.Context) {
 		}
 		a.lastShipped = maxID
 		_ = a.store.SetMetaInt("shipped_log_id", maxID)
+		if a.purgeShipped != nil && a.purgeShipped() {
+			if err := a.store.DeleteQueryLogThrough(maxID); err != nil {
+				slog.Warn("ship logs: purge shipped failed", "err", err)
+			}
+		}
 		if len(entries) < shipBatch {
 			return
 		}

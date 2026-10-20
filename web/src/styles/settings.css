@@ -308,23 +308,6 @@
   padding-inline: 10px;
 }
 
-/* Conditional forwarders. */
-.pg-settings .fwd-list {
-  display: grid;
-  gap: 8px;
-}
-.pg-settings .fwd-row {
-  display: grid;
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.6fr) 28px;
-  gap: 8px;
-  align-items: center;
-}
-.pg-settings .fwd-head {
-  color: var(--muted);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
 /* Choice cards (one of two). */
 .pg-settings .choice {
   display: grid;
@@ -558,20 +541,6 @@
     grid-template-columns: 14px 44px minmax(0, 1fr) auto;
     gap: 8px;
     padding-left: 10px;
-  }
-  .pg-settings .fwd-row {
-    grid-template-columns: minmax(0, 1fr) 28px;
-  }
-  .pg-settings .fwd-row > input:nth-child(2) {
-    grid-column: 1;
-  }
-  .pg-settings .fwd-row > .del {
-    grid-column: 2;
-    grid-row: 1;
-  }
-  .pg-settings .fwd-row {
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--soft);
   }
   .pg-settings .method {
     grid-template-columns: auto minmax(0, 1fr);

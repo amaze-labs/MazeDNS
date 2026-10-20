@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   type Settings as S,
-  type ForwardGroup,
   type UpstreamStrategy,
   type ClassifierSettings,
   type ClassifierStatus,
@@ -12,6 +11,7 @@ import {
   type AuditEntry,
 } from '../api'
 import ApiTokens from './ApiTokens'
+import ClusterForwarders from './ClusterForwarders'
 import Spinner from './Spinner'
 import Modal from './Modal'
 import ClassifierHelp from './ClassifierHelp'
@@ -117,22 +117,13 @@ const upstreamDisplay = (r: UpRow): { addr: string; sub: string } => {
   return { addr, sub: [provider, 'Unencrypted'].filter(Boolean).join(' · ') }
 }
 
-// Conditional forwarders keep the raw upstream text per row while editing; it is
-// parsed only when saving (or comparing), so typing a comma isn't swallowed.
-type FwdRow = { suffix: string; text: string }
-const toFwdRows = (gs: ForwardGroup[] | null | undefined): FwdRow[] =>
-  (gs || []).map((g) => ({ suffix: g.suffix, text: (g.upstreams || []).join(', ') }))
-const fromFwdRows = (rows: FwdRow[]): ForwardGroup[] =>
-  rows
-    .map((r) => ({ suffix: r.suffix.trim(), upstreams: linesToList(r.text) }))
-    .filter((g) => g.suffix && g.upstreams.length > 0)
-
 // The settings body as it would be saved: compared against the last saved copy
-// to tell whether the resolver section has unsaved changes.
-const resolverBody = (s: S, upstreamsText: string, fwd: FwdRow[]): S => ({
+// to tell whether the resolver section has unsaved changes. Its `forwarders`
+// (the control plane's own, which it never uses: it answers no queries) pass
+// through untouched; conditional forwarding is the cluster list instead.
+const resolverBody = (s: S, upstreamsText: string): S => ({
   ...s,
   upstreams: linesToList(upstreamsText),
-  forwarders: fromFwdRows(fwd),
 })
 
 type View = 'resolver' | 'access' | 'classification' | 'integrations' | 'backup' | 'about'
@@ -262,7 +253,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [editing, setEditing] = useState<number | null>(null)
   const [rawUpstreams, setRawUpstreams] = useState(false)
   const [qfProto, setQfProto] = useState<UpProto>('tls')
-  const [fwd, setFwd] = useState<FwdRow[]>([])
+  // Bumped to make the cluster forwarders list reload after the legacy move.
+  const [fwdReload, setFwdReload] = useState(0)
+  const [legacyBusy, setLegacyBusy] = useState(false)
+  const [legacyErr, setLegacyErr] = useState('')
   const [err, setErr] = useState('')
   const [loadErr, setLoadErr] = useState('')
   const [saving, setSaving] = useState(false)
@@ -334,7 +328,6 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     setUpstreams(text)
     setUpRows(textToRows(text))
     setEditing(null)
-    setFwd(toFwdRows(cur.forwarders))
     setSaved((p) => ({ ...p, s: cur }))
   }
 
@@ -454,7 +447,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   // --- Unsaved-change tracking ---
   const dirty = {
     resolver:
-      !!s && !!saved.s && !same(resolverBody(s, upstreams, fwd), resolverBody(saved.s, (saved.s.upstreams || []).join('\n'), toFwdRows(saved.s.forwarders))),
+      !!s && !!saved.s && !same(resolverBody(s, upstreams), resolverBody(saved.s, (saved.s.upstreams || []).join('\n'))),
     classification: !!cls && !same(cls, saved.cls),
     vm: !!vm && !same(vm, saved.vm),
     vl: !!vl && !same(vl, saved.vl),
@@ -494,7 +487,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     setSavedNote(false)
     try {
       if (dirty.resolver && s) {
-        applySettings(await api.saveSettings(resolverBody(s, upstreams, fwd)))
+        applySettings(await api.saveSettings(resolverBody(s, upstreams)))
       }
       if (dirty.classification && cls) {
         const v = await api.saveClassifierSettings(cls)
@@ -656,9 +649,48 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
     setRawUpstreams(!rawUpstreams)
   }
 
-  const setFwdRow = (i: number, f: Partial<FwdRow>) => setFwd(fwd.map((g, j) => (j === i ? { ...g, ...f } : g)))
-  const addFwd = () => setFwd([...fwd, { suffix: '', text: '' }])
-  const delFwd = (i: number) => setFwd(fwd.filter((_, j) => j !== i))
+  // Forwarders saved by older versions in the control plane's own settings.
+  // The control plane answers no queries, so they never forwarded anything:
+  // offer to move them to the cluster list (where they start applying on the
+  // agents) or to drop them.
+  const legacyFwd = saved.s?.forwarders ?? []
+  const clearLegacyFwd = async (move: boolean) => {
+    if (!saved.s || legacyBusy) return
+    setLegacyBusy(true)
+    setLegacyErr('')
+    const notes: string[] = []
+    try {
+      if (move) {
+        // Adding a suffix the list already has would overwrite that entry (the
+        // API upserts), so a domain already forwarded keeps its cluster entry.
+        const norm = (d: string) => d.trim().toLowerCase().replace(/\.$/, '')
+        const have = new Set((await api.forwarders()).map((f) => norm(f.suffix)))
+        const kept: string[] = []
+        for (const g of legacyFwd) {
+          if (have.has(norm(g.suffix))) {
+            kept.push(g.suffix)
+            continue
+          }
+          try {
+            await api.addForwarder(g.suffix, g.upstreams, 'all', [])
+          } catch (e) {
+            notes.push(`${g.suffix} not moved: ${e instanceof Error ? e.message : String(e)}`)
+          }
+        }
+        if (kept.length) notes.push(`Already in the list, left as they were: ${kept.join(', ')}`)
+        setFwdReload((n) => n + 1)
+      }
+      const next = await api.saveSettings({ ...saved.s, forwarders: [] })
+      // Keep any unsaved resolver edits; only the forwarders change.
+      setSaved((p) => ({ ...p, s: next }))
+      setS((cur) => (cur ? { ...cur, forwarders: [] } : cur))
+      if (notes.length) setLegacyErr(notes.join('. '))
+    } catch (e) {
+      setLegacyErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLegacyBusy(false)
+    }
+  }
 
   const views: View[] = ['resolver', 'access', ...(cls ? (['classification'] as View[]) : []), 'integrations', 'backup', 'about']
   const shownView: View = views.includes(view) ? view : 'resolver'
@@ -874,46 +906,48 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <Group
         title="Conditional forwarders"
-        desc="Send queries for a domain suffix to specific upstreams. Local to this control plane."
+        desc={
+          <>
+            Send a domain to specific resolvers — your router for <code>home.lan</code>, the office DNS for{' '}
+            <code>corp.internal</code>. Pushed to the agents in scope, overriding an agent's own forwarder for the same
+            domain. Changes apply as soon as you make them.
+          </>
+        }
       >
-        {fwd.length > 0 && (
-          <div className="fwd-list">
-            <div className="fwd-row fwd-head hide-sm" aria-hidden>
-              <span>Suffix</span>
-              <span>Upstreams</span>
-              <span />
+        {legacyFwd.length > 0 && (
+          <div className="callout warn">
+            <InfoIcon />
+            <div>
+              <b>
+                {legacyFwd.length === 1 ? 'One forwarder' : `${legacyFwd.length} forwarders`} from an older version never
+                applied
+              </b>
+              <p>
+                {legacyFwd.map((g) => `${g.suffix} → ${(g.upstreams || []).join(', ')}`).join(' · ')}. They were kept on
+                the control plane, which answers no queries. Move them to the list below to forward them on every agent,
+                or remove them.
+              </p>
+              {!readonly && (
+                <div className="row">
+                  <button type="button" className="btn sm" disabled={legacyBusy} onClick={() => clearLegacyFwd(true)}>
+                    Move to the list
+                  </button>
+                  <button type="button" className="btn sm quiet" disabled={legacyBusy} onClick={() => clearLegacyFwd(false)}>
+                    Remove
+                  </button>
+                </div>
+              )}
             </div>
-            {fwd.map((g, i) => (
-              <div className="fwd-row" key={i}>
-                <input
-                  className="mono"
-                  aria-label="Domain suffix"
-                  placeholder="lan"
-                  value={g.suffix}
-                  onChange={(e) => setFwdRow(i, { suffix: e.target.value })}
-                />
-                <input
-                  className="mono"
-                  aria-label="Upstreams, comma-separated"
-                  placeholder="192.168.1.1, 192.168.1.2:53"
-                  value={g.text}
-                  onChange={(e) => setFwdRow(i, { text: e.target.value })}
-                />
-                <button type="button" className="del" onClick={() => delFwd(i)} aria-label="Remove forwarder" title="Remove">
-                  ✕
-                </button>
-              </div>
-            ))}
           </div>
         )}
-        <div className="rw-only">
-          <button type="button" className="btn sm" onClick={addFwd}>
-            Add forwarder
-          </button>
-        </div>
-        <p className="hint">
-          Cluster-wide forwarders for the agents live under Local DNS and override an agent’s own entry for the same suffix.
-        </p>
+        {/* Outside the callout: it goes away once the legacy list is cleared. */}
+        {legacyErr && (
+          <div className="callout warn" role="status">
+            <InfoIcon />
+            <div>{legacyErr}</div>
+          </div>
+        )}
+        <ClusterForwarders reload={fwdReload} />
       </Group>
 
       <Group title="Blocked answers" desc="What a client gets back for a blocked name.">

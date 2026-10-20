@@ -1,4 +1,5 @@
-/* Local DNS page: local records + conditional forwarding. */
+/* Local DNS page (local records) and the scoped-entry UI it shares with the
+   conditional forwarders in Settings (.scoped-ui): add row, table, scope picker. */
 
 .pg-local-dns .rw-explain {
   display: flex;
@@ -14,7 +15,7 @@
 }
 
 /* Inline add row at the top of a card. */
-.pg-local-dns .rw-addrow {
+:is(.pg-local-dns, .scoped-ui) .rw-addrow {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) 96px minmax(0, 1.2fr) minmax(0, 1fr) auto;
   gap: 10px;
@@ -22,44 +23,44 @@
   border-bottom: 1px solid var(--line);
   align-items: start;
 }
-.pg-local-dns .rw-addrow.fw {
+:is(.pg-local-dns, .scoped-ui) .rw-addrow.fw {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr) auto;
   padding-top: 16px;
 }
-.pg-local-dns .rw-addrow > .btn {
+:is(.pg-local-dns, .scoped-ui) .rw-addrow > .btn {
   /* Align with the inputs (label row is ~26px high). */
   margin-top: 26px;
   min-height: 38px;
 }
-.pg-local-dns .card-head + .rw-addrow {
+:is(.pg-local-dns, .scoped-ui) .card-head + .rw-addrow {
   padding-top: 4px;
 }
-.pg-local-dns .card-head .sub {
+:is(.pg-local-dns, .scoped-ui) .card-head .sub {
   margin-bottom: 8px;
 }
-.pg-local-dns .rw-err {
+:is(.pg-local-dns, .scoped-ui) .rw-err {
   margin: 12px 20px 0;
 }
 
 /* Tables */
-.pg-local-dns .rw-table td {
+:is(.pg-local-dns, .scoped-ui) .rw-table td {
   vertical-align: middle;
 }
-.pg-local-dns .rw-table .tag.rewrite {
+:is(.pg-local-dns, .scoped-ui) .rw-table .tag.rewrite {
   font-family: var(--mono);
   font-size: 11.5px;
 }
-.pg-local-dns .rw-table tr.off td:not(.rw-switch):not(.actions) {
+:is(.pg-local-dns, .scoped-ui) .rw-table tr.off td:not(.rw-switch):not(.actions) {
   opacity: 0.55;
 }
-.pg-local-dns .rw-table td.rw-switch {
+:is(.pg-local-dns, .scoped-ui) .rw-table td.rw-switch {
   width: 56px;
   text-align: right;
 }
-.pg-local-dns .rw-table td.actions {
+:is(.pg-local-dns, .scoped-ui) .rw-table td.actions {
   width: 1%;
 }
-.pg-local-dns .switch-btn {
+:is(.pg-local-dns, .scoped-ui) .switch-btn {
   border: 0;
   background: none;
   padding: 4px;
@@ -68,30 +69,30 @@
   display: inline-flex;
   border-radius: 999px;
 }
-.pg-local-dns .rw-del:hover:not(:disabled) {
+:is(.pg-local-dns, .scoped-ui) .rw-del:hover:not(:disabled) {
   color: var(--block);
   background: color-mix(in srgb, var(--block) 10%, transparent);
 }
 
-/* Scope picker + chips (ScopePicker.tsx, only used on this page). */
-.pg-local-dns .scope-picker {
+/* Scope picker + chips (ScopePicker.tsx). */
+:is(.pg-local-dns, .scoped-ui) .scope-picker {
   display: grid;
   gap: 8px;
   min-width: 0;
 }
-.pg-local-dns .scope-options,
-.pg-local-dns .scope-chips {
+:is(.pg-local-dns, .scoped-ui) .scope-options,
+:is(.pg-local-dns, .scoped-ui) .scope-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-.pg-local-dns .scope-options .chip {
+:is(.pg-local-dns, .scoped-ui) .scope-options .chip {
   font-weight: 400;
 }
-.pg-local-dns .chip.unknown {
+:is(.pg-local-dns, .scoped-ui) .chip.unknown {
   border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
 }
-.pg-local-dns .sr-only,
+:is(.pg-local-dns, .scoped-ui) .sr-only,
 .rw-edit .sr-only {
   position: absolute;
   width: 1px;
@@ -124,48 +125,48 @@
 
 /* .actions (flex) from base.css would turn the cell into a flex box and break
    the row's borders; keep it a table cell on desktop. */
-.pg-local-dns td.actions {
+:is(.pg-local-dns, .scoped-ui) td.actions {
   display: table-cell;
 }
-.pg-local-dns td.actions .btn + .btn {
+:is(.pg-local-dns, .scoped-ui) td.actions .btn + .btn {
   margin-left: 6px;
 }
 
 @media (max-width: 900px) {
-  .pg-local-dns .rw-addrow,
-  .pg-local-dns .rw-addrow.fw {
+  :is(.pg-local-dns, .scoped-ui) .rw-addrow,
+  :is(.pg-local-dns, .scoped-ui) .rw-addrow.fw {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     padding: 14px 16px;
   }
-  .pg-local-dns .rw-addrow > :first-child {
+  :is(.pg-local-dns, .scoped-ui) .rw-addrow > :first-child {
     grid-column: 1 / -1;
   }
-  .pg-local-dns .rw-addrow.fw > :nth-child(2),
-  .pg-local-dns .rw-addrow > .field:has(.scope-picker) {
+  :is(.pg-local-dns, .scoped-ui) .rw-addrow.fw > :nth-child(2),
+  :is(.pg-local-dns, .scoped-ui) .rw-addrow > .field:has(.scope-picker) {
     grid-column: 1 / -1;
   }
-  .pg-local-dns .rw-addrow > .btn {
+  :is(.pg-local-dns, .scoped-ui) .rw-addrow > .btn {
     margin-top: 0;
     grid-column: 1 / -1;
   }
-  .pg-local-dns .rw-err {
+  :is(.pg-local-dns, .scoped-ui) .rw-err {
     margin: 12px 16px 0;
   }
-  .pg-local-dns table.stackable td.rw-switch {
+  :is(.pg-local-dns, .scoped-ui) table.stackable td.rw-switch {
     width: auto;
   }
-  .pg-local-dns table.stackable td.actions {
+  :is(.pg-local-dns, .scoped-ui) table.stackable td.actions {
     width: auto;
     display: flex;
     gap: 6px;
     justify-content: flex-start;
     margin-top: 4px;
   }
-  .pg-local-dns table.stackable td.actions .btn {
+  :is(.pg-local-dns, .scoped-ui) table.stackable td.actions .btn {
     padding-left: 0;
     padding-right: 10px;
   }
-  .pg-local-dns table.stackable td .domain {
+  :is(.pg-local-dns, .scoped-ui) table.stackable td .domain {
     color: var(--text);
   }
 }

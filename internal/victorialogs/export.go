@@ -47,7 +47,13 @@ type Exporter struct {
 	store  *store.Store
 	client *http.Client
 	cursor int64
+	// reduce, when set, trims entries to what may leave MazeDNS (the privacy
+	// level); it may drop them all.
+	reduce func([]store.QueryLogEntry) []store.QueryLogEntry
 }
+
+// SetReduce installs the privacy filter applied to every batch before it ships.
+func (e *Exporter) SetReduce(fn func([]store.QueryLogEntry) []store.QueryLogEntry) { e.reduce = fn }
 
 // NewExporter builds an exporter. get supplies the live config.
 func NewExporter(get func() Config, st *store.Store) *Exporter {
@@ -107,6 +113,14 @@ func (e *Exporter) ship(ctx context.Context, cfg Config) (int, error) {
 	if len(entries) == 0 {
 		return 0, nil
 	}
+	read := len(entries)
+	if e.reduce != nil {
+		if entries = e.reduce(entries); len(entries) == 0 {
+			e.cursor = maxID
+			_ = e.store.SetMetaInt(shippedCursorKey, maxID)
+			return read, nil
+		}
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	for _, q := range entries {
@@ -155,5 +169,5 @@ func (e *Exporter) ship(ctx context.Context, cfg Config) (int, error) {
 
 	e.cursor = maxID
 	_ = e.store.SetMetaInt(shippedCursorKey, maxID)
-	return len(entries), nil
+	return read, nil
 }

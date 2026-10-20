@@ -213,6 +213,10 @@ take rules/rewrites from the control plane via replication.
 | `filter` | `enabled` (`true`), `block_response` (`nxdomain` or `zeroip`), `blocklist_files`. |
 | `zones` | Authoritative records served locally. |
 
+The query privacy level has no YAML key: set it in **Settings → Resolver →
+Privacy** (stored as `privacy_level`, `privacy_detail_hours` and `privacy_domain_k` in the resolver
+settings and in config exports). See [Query privacy](user-guide.md#query-privacy).
+
 #### Upstream strategy
 
 - **`ordered`** (default) — strict failover. Every query goes to the first

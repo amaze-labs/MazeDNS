@@ -121,6 +121,16 @@ type Settings struct {
 	// in blocked categories. Filled in by the control plane when it replicates
 	// the settings; never stored.
 	CategoryDomains map[string]string `json:"category_domains,omitempty"`
+	// PrivacyLevel is what is kept about each query (internal/privacy, after
+	// Pi-hole's levels): 0 everything, 1 hides domains, 2 also replaces clients
+	// with daily pseudonyms, 3 keeps only counts. Filtering is unaffected.
+	PrivacyLevel int `json:"privacy_level,omitempty"`
+	// PrivacyDetailHours keeps full detail this many hours before the level
+	// applies (0 = as queries arrive).
+	PrivacyDetailHours int `json:"privacy_detail_hours,omitempty"`
+	// PrivacyDomainK, at levels 1 and 2, hides only the domains fewer than this
+	// many devices queried that day (k-anonymity for domains); 0 hides all.
+	PrivacyDomainK int `json:"privacy_domain_k,omitempty"`
 }
 
 // Options holds the static (non-UI-editable) resolver configuration.
@@ -172,6 +182,11 @@ type runtime struct {
 	// per-domain corrections to the category database (Settings.CategoryDomains).
 	blockedCats map[string]bool
 	catDomains  map[string]string
+	// privacyLevel, privacyDetailHours and privacyDomainK are the Settings
+	// fields of the same names.
+	privacyLevel       int
+	privacyDetailHours int
+	privacyDomainK     int
 }
 
 // Resolver answers DNS queries.
@@ -340,9 +355,12 @@ func (r *Resolver) ApplySettings(s Settings) {
 	}
 	strategy := NormalizeUpstreamStrategy(s.UpstreamStrategy)
 	rt := &runtime{
-		blockMode:   mode,
-		forceDNSSEC: s.DNSSEC,
-		hedged:      strategy == StrategyHedged,
+		blockMode:          mode,
+		forceDNSSEC:        s.DNSSEC,
+		hedged:             strategy == StrategyHedged,
+		privacyLevel:       s.PrivacyLevel,
+		privacyDetailHours: s.PrivacyDetailHours,
+		privacyDomainK:     s.PrivacyDomainK,
 	}
 	var per time.Duration // per-upstream network timeout; 0 = full budget (hedged)
 	if !rt.hedged {
@@ -390,7 +408,18 @@ func (r *Resolver) ApplySettings(s Settings) {
 	r.rt.Store(rt)
 	slog.Info("settings applied", "upstreams", len(rt.defaultUpstreams), "forwarders", len(rt.conditional),
 		"strategy", strategy, "upstream_timeout", rt.upstreamTimeout,
-		"block", rt.blockMode, "ratelimit", s.RateLimitQPM, "dnssec", s.DNSSEC, "cache", s.Cache.Enabled)
+		"block", rt.blockMode, "ratelimit", s.RateLimitQPM, "dnssec", s.DNSSEC, "cache", s.Cache.Enabled,
+		"privacy_level", s.PrivacyLevel)
+}
+
+// Privacy returns the applied privacy level, detail window (hours) and domain
+// threshold.
+func (r *Resolver) Privacy() (level, detailHours, domainK int) {
+	rt := r.rt.Load()
+	if rt == nil {
+		return 0, 0, 0
+	}
+	return rt.privacyLevel, rt.privacyDetailHours, rt.privacyDomainK
 }
 
 // MaintainUpstreams keeps DoT upstream connections warm so a cache miss on a
@@ -647,8 +676,24 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 		r.metrics.IncQuery(action)
 	}
 	if r.queryLog {
-		slog.Info("query", "name", q.Name, "type", dns.TypeToString[q.Qtype],
-			"action", action, "category", category, "rcode", rcode, "client", client)
+		// The process log is stored too (docker logs, the Logs view), so it keeps
+		// only what the privacy level does. It has no pseudonym keys: a client the
+		// level hides is left out, and at level 3 the line is not written.
+		name, who := q.Name, client
+		level := 0
+		if rt := r.rt.Load(); rt != nil {
+			level = rt.privacyLevel
+		}
+		if level >= 1 {
+			name = "hidden"
+		}
+		if level >= 2 {
+			who = "hidden"
+		}
+		if level < 3 {
+			slog.Info("query", "name", name, "type", dns.TypeToString[q.Qtype],
+				"action", action, "category", category, "rcode", rcode, "client", who)
+		}
 	}
 	if r.onQuery != nil {
 		ev := queryEventPool.Get().(*QueryEvent)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/IPMaze/MazeDNS/internal/privacy"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
@@ -24,6 +25,12 @@ type ConfigBundle struct {
 	Rules      []store.Rule       `json:"rules"`
 	Rewrites   []store.Rewrite    `json:"rewrites"`
 	Forwarders []store.Forwarder  `json:"forwarders,omitempty"`
+}
+
+// normalizePrivacy clamps the privacy level and detail window into range.
+func normalizePrivacy(set *resolver.Settings) {
+	p := privacy.Normalize(privacy.Policy{Level: set.PrivacyLevel, DetailHours: set.PrivacyDetailHours, DomainK: set.PrivacyDomainK})
+	set.PrivacyLevel, set.PrivacyDetailHours, set.PrivacyDomainK = p.Level, p.DetailHours, p.DomainK
 }
 
 // exportConfig returns the full mutable config as one downloadable JSON bundle.
@@ -143,6 +150,7 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 		if b.Settings.Cache.MaxEntries < 0 {
 			b.Settings.Cache.MaxEntries = 0
 		}
+		normalizePrivacy(b.Settings)
 		b.Settings.NormalizeUpstreams()
 		data, err := json.Marshal(b.Settings)
 		if err != nil {

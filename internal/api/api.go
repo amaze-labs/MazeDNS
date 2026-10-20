@@ -28,6 +28,7 @@ import (
 	"github.com/IPMaze/MazeDNS/internal/filter"
 	"github.com/IPMaze/MazeDNS/internal/lists"
 	"github.com/IPMaze/MazeDNS/internal/metrics"
+	"github.com/IPMaze/MazeDNS/internal/privacy"
 	"github.com/IPMaze/MazeDNS/internal/resolver"
 	"github.com/IPMaze/MazeDNS/internal/ruleimport"
 	"github.com/IPMaze/MazeDNS/internal/store"
@@ -81,6 +82,7 @@ type Server struct {
 	procLogs *procLogStore
 	// live fans agents' streamed queries out to the Live view (see live.go).
 	live    *liveHub
+	priv    *privacy.Anonymizer
 	updates *updates.Checker // nil = no update checks (agents)
 }
 
@@ -130,6 +132,10 @@ func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
 // DNS is served locally, so this ingest path is the classifier's source of newly
 // seen domains.
 func (s *Server) SetClassifierEnqueue(fn func(name string)) { s.enqueue = fn }
+
+// SetPrivacy wires the query-log privacy level into ingest (a nil Anonymizer
+// keeps everything).
+func (s *Server) SetPrivacy(a *privacy.Anonymizer) { s.priv = a }
 
 // SetEnricher wires the running client-name enricher into the API.
 func (s *Server) SetEnricher(e *clientname.Enricher) { s.enricher = e }
@@ -1038,11 +1044,8 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.labelEntries(entries)
-	if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	s.ingested.Add(int64(len(entries)))
+	// Names go to the classifier before the privacy level may hide them.
+	var classify []string
 	if s.enqueue != nil {
 		for _, e := range entries {
 			// A name a local record answered is the network's own: it never
@@ -1050,8 +1053,17 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 			if e.Action == "rewrite" || e.Action == "authoritative" {
 				continue
 			}
-			s.enqueue(e.Name)
+			classify = append(classify, e.Name)
 		}
+	}
+	s.priv.Ingest(entries, time.Now())
+	if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.ingested.Add(int64(len(entries)))
+	for _, name := range classify {
+		s.enqueue(name)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ingested": len(entries)})
 }
@@ -1712,10 +1724,20 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	// mention them (an older UI, a script) keeps them as they are.
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(body, &keys) == nil {
-		if _, sent := keys["blocked_categories"]; !sent {
-			if cur, err := s.loadSettings(); err == nil {
-				in.BlockedCategories = cur.BlockedCategories
-			}
+		cur, curErr := s.loadSettings()
+		if _, sent := keys["blocked_categories"]; !sent && curErr == nil {
+			in.BlockedCategories = cur.BlockedCategories
+		}
+		// Likewise the privacy level: a save that doesn't mention it must never
+		// quietly turn privacy off.
+		if _, sent := keys["privacy_level"]; !sent && curErr == nil {
+			in.PrivacyLevel = cur.PrivacyLevel
+		}
+		if _, sent := keys["privacy_detail_hours"]; !sent && curErr == nil {
+			in.PrivacyDetailHours = cur.PrivacyDetailHours
+		}
+		if _, sent := keys["privacy_domain_k"]; !sent && curErr == nil {
+			in.PrivacyDomainK = cur.PrivacyDomainK
 		}
 	}
 	if in.BlockedCategories, err = cleanBlockedCategories(in.BlockedCategories); err != nil {
@@ -1736,6 +1758,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if in.Cache.MaxEntries < 0 {
 		in.Cache.MaxEntries = 0
 	}
+	normalizePrivacy(&in)
 	in.NormalizeUpstreams()
 	b, err := json.Marshal(in)
 	if err != nil {

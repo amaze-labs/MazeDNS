@@ -532,6 +532,15 @@ export interface Settings {
   upstream_strategy: UpstreamStrategy
   // Ordered strategy: how long one upstream may take before the next is tried.
   upstream_timeout_ms: number
+  // What is kept about each query (after Pi-hole's privacy levels): 0 everything,
+  // 1 hides domains, 2 also replaces clients with daily pseudonyms, 3 keeps only
+  // counts. Absent on settings saved before it existed (= 0).
+  privacy_level?: number
+  // Hours a query keeps full detail before the level applies (0 = at once).
+  privacy_detail_hours?: number
+  // Levels 1 and 2: hide only domains fewer than this many devices queried that
+  // day (k-anonymity for domains); 0 hides every domain.
+  privacy_domain_k?: number
 }
 
 export type UpstreamStrategy = 'ordered' | 'hedged'

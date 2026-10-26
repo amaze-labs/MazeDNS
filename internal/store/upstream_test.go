@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -152,5 +153,31 @@ func TestRollupByUpstream(t *testing.T) {
 	}
 	if got, _ := s.RollupByUpstream(0, nil); len(got) != 0 {
 		t.Errorf("after prune: %+v", got)
+	}
+}
+
+// Every rollup statement folds only the new rows, found by id range: the
+// upstream rollup's action filter must not send it through the (action, ts)
+// index, which walks every forwarded row in the log on each advance.
+func TestRollupStatementsUseIDRange(t *testing.T) {
+	s := openUpstreamStore(t)
+	for _, q := range rollupStatements {
+		rows, err := s.read.Query(`EXPLAIN QUERY PLAN `+q, 100, 200)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan = append(plan, detail)
+		}
+		rows.Close()
+		if all := strings.Join(plan, "\n"); !strings.Contains(all, "INTEGER PRIMARY KEY (rowid>? AND rowid<?)") || strings.Contains(all, "USING INDEX") {
+			t.Errorf("%s\nplan:\n%s", q, all)
+		}
 	}
 }

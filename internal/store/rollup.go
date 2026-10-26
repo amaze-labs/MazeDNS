@@ -8,6 +8,39 @@ import (
 // rollupCursorKey tracks how far query_log has been folded into the rollups.
 const rollupCursorKey = "rollup_cursor_id"
 
+// rollupStatements fold query_log rows with id in (cursor, upto] — their two
+// arguments — into the rollup tables. Each must find those rows by the id
+// range alone: a filter the planner can serve from an index instead (action =
+// 'forward' with idx_query_log_action_ts) walks the whole log every advance.
+var rollupStatements = []string{
+	`INSERT INTO query_rollup(bucket, node, action, cnt, lat_sum)
+	 SELECT ts/60000, node, action, COUNT(*), COALESCE(SUM(elapsed_ms), 0)
+	 FROM query_log WHERE id > ? AND id <= ?
+	 GROUP BY ts/60000, node, action
+	 ON CONFLICT(bucket, node, action) DO UPDATE SET
+	   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+	`INSERT INTO client_rollup(hour, node, client, cnt, blocked)
+	 SELECT ts/3600000, node, client, COUNT(*), COALESCE(SUM(action='blocked'), 0)
+	 FROM query_log WHERE id > ? AND id <= ? AND client <> ''
+	 GROUP BY ts/3600000, node, client
+	 ON CONFLICT(hour, node, client) DO UPDATE SET
+	   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+	`INSERT INTO category_rollup(hour, node, category, cnt, blocked)
+	 SELECT ts/3600000, node, content_category, COUNT(*), COALESCE(SUM(action='blocked'), 0)
+	 FROM query_log WHERE id > ? AND id <= ? AND content_category <> ''
+	 GROUP BY ts/3600000, node, content_category
+	 ON CONFLICT(hour, node, category) DO UPDATE SET
+	   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+	// action || '' (not action) keeps the planner off the (action, ts) index:
+	// see above. A HAVING on action is moved back into WHERE, so it doesn't.
+	`INSERT INTO upstream_rollup(bucket, node, forwarder, upstream, cnt, lat_sum)
+	 SELECT ts/60000, node, forwarder, upstream, COUNT(*), COALESCE(SUM(elapsed_ms), 0)
+	 FROM query_log WHERE id > ? AND id <= ? AND action || '' = 'forward'
+	 GROUP BY ts/60000, node, forwarder, upstream
+	 ON CONFLICT(bucket, node, forwarder, upstream) DO UPDATE SET
+	   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+}
+
 // RollupAdvance folds the next batch of new query_log rows (id in (cursor, upto])
 // into the rollup tables, advancing the cursor atomically in the same transaction
 // (so a row is counted exactly once — never double-counted on retry). Returns
@@ -36,49 +69,11 @@ func (s *Store) RollupAdvance(batch int) (more bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	if _, err = tx.Exec(
-		`INSERT INTO query_rollup(bucket, node, action, cnt, lat_sum)
-		 SELECT ts/60000, node, action, COUNT(*), COALESCE(SUM(elapsed_ms), 0)
-		 FROM query_log WHERE id > ? AND id <= ?
-		 GROUP BY ts/60000, node, action
-		 ON CONFLICT(bucket, node, action) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
-		cursor, upto); err != nil {
-		_ = tx.Rollback()
-		return false, err
-	}
-	if _, err = tx.Exec(
-		`INSERT INTO client_rollup(hour, node, client, cnt, blocked)
-		 SELECT ts/3600000, node, client, COUNT(*), COALESCE(SUM(action='blocked'), 0)
-		 FROM query_log WHERE id > ? AND id <= ? AND client <> ''
-		 GROUP BY ts/3600000, node, client
-		 ON CONFLICT(hour, node, client) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
-		cursor, upto); err != nil {
-		_ = tx.Rollback()
-		return false, err
-	}
-	if _, err = tx.Exec(
-		`INSERT INTO category_rollup(hour, node, category, cnt, blocked)
-		 SELECT ts/3600000, node, content_category, COUNT(*), COALESCE(SUM(action='blocked'), 0)
-		 FROM query_log WHERE id > ? AND id <= ? AND content_category <> ''
-		 GROUP BY ts/3600000, node, content_category
-		 ON CONFLICT(hour, node, category) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
-		cursor, upto); err != nil {
-		_ = tx.Rollback()
-		return false, err
-	}
-	if _, err = tx.Exec(
-		`INSERT INTO upstream_rollup(bucket, node, forwarder, upstream, cnt, lat_sum)
-		 SELECT ts/60000, node, forwarder, upstream, COUNT(*), COALESCE(SUM(elapsed_ms), 0)
-		 FROM query_log WHERE id > ? AND id <= ? AND action = 'forward'
-		 GROUP BY ts/60000, node, forwarder, upstream
-		 ON CONFLICT(bucket, node, forwarder, upstream) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
-		cursor, upto); err != nil {
-		_ = tx.Rollback()
-		return false, err
+	for _, q := range rollupStatements {
+		if _, err = tx.Exec(q, cursor, upto); err != nil {
+			_ = tx.Rollback()
+			return false, err
+		}
 	}
 	if _, err = tx.Exec(
 		`INSERT INTO meta(key, value) VALUES(?, ?)

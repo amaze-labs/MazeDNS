@@ -216,14 +216,20 @@ func (u *dohUpstream) String() string {
 
 // upstreamLabel names an upstream in the query log and metrics: its spec as the
 // operator configured it (String normalises it, and drops a DoT server name),
-// except that a DoH URL keeps only scheme, host and path — credentials or a
-// token in it must not reach the log.
+// except that a DoH URL keeps only scheme and host. Every query carries this
+// label into the log, the API, log exports and metric labels, so nothing that
+// can identify an account goes with it: credentials, a token in the query, or
+// an account ID in the path (https://dns.nextdns.io/<profile>).
 func upstreamLabel(spec string) string {
 	spec = strings.TrimSpace(spec)
 	if !strings.HasPrefix(spec, "https://") {
 		return spec
 	}
-	return (&dohUpstream{url: spec}).String()
+	p, err := url.Parse(spec)
+	if err != nil {
+		return "https://(invalid url)"
+	}
+	return p.Scheme + "://" + p.Host
 }
 
 func ensurePort(addr, defPort string) string {

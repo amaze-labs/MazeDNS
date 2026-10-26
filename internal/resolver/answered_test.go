@@ -45,15 +45,18 @@ func TestForwardReportsWinner(t *testing.T) {
 }
 
 // An upstream is labelled with its spec as configured (not the normalised
-// form), except that a DoH URL loses credentials and query, which must never
-// reach the query log.
+// form), except that a DoH URL keeps only scheme and host: credentials, a
+// token in the query, or an account ID in the path (NextDNS, ControlD) must
+// never reach the query log, the API or metric labels.
 func TestUpstreamLabel(t *testing.T) {
 	for spec, want := range map[string]string{
 		"1.1.1.1":                                 "1.1.1.1",
 		" udp://9.9.9.9:53 ":                      "udp://9.9.9.9:53",
 		"tls://1.1.1.1:853#cloudflare-dns.com":    "tls://1.1.1.1:853#cloudflare-dns.com",
-		"https://dns.quad9.net/dns-query":         "https://dns.quad9.net/dns-query",
-		"https://user:pw@doh.example/q?token=abc": "https://doh.example/q",
+		"https://dns.quad9.net/dns-query":         "https://dns.quad9.net",
+		"https://user:pw@doh.example/q?token=abc": "https://doh.example",
+		"https://dns.nextdns.io/abc123":           "https://dns.nextdns.io",
+		"https://bad url":                         "https://(invalid url)",
 	} {
 		if got := upstreamLabel(spec); got != want {
 			t.Errorf("upstreamLabel(%q) = %q, want %q", spec, got, want)

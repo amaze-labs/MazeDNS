@@ -2237,6 +2237,32 @@ tr.skel-row:hover {
 .cat-bars .cat-more {
   padding-top: 6px;
 }
+.cat-bars .cat-row.static {
+  cursor: default;
+}
+.cat-bars .cat-row.static:hover .nm {
+  text-decoration: none;
+}
+
+/* Upstream breakdown (UpstreamBars): CategoryBars lists, one per forwarder. */
+.up-groups {
+  display: grid;
+  gap: 14px;
+}
+.up-group h4 {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.up-group h4 b {
+  font-weight: 500;
+  color: var(--text);
+}
 .cat-edit {
   display: inline-flex;
   flex-wrap: wrap;

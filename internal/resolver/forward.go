@@ -93,8 +93,19 @@ func exchange(u Upstream, req *dns.Msg) (*dns.Msg, time.Duration, error) {
 	return m, rtt, err
 }
 
-// forward sends req to ups using the runtime's upstream strategy.
-func (r *Resolver) forward(rt *runtime, req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
+// exchangeOnly is exchange for a list of one upstream, in forward's shape.
+func exchangeOnly(u Upstream, req *dns.Msg) (*dns.Msg, time.Duration, int, error) {
+	m, rtt, err := exchange(u, req)
+	if err != nil || m == nil {
+		return m, rtt, -1, err
+	}
+	return m, rtt, 0, nil
+}
+
+// forward sends req to ups using the runtime's upstream strategy. It also
+// returns the index in ups of the upstream whose response it returns (-1 when
+// none answered), so the query can be attributed to it.
+func (r *Resolver) forward(rt *runtime, req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, int, error) {
 	if rt.hedged {
 		return r.forwardHedged(req, ups)
 	}
@@ -107,12 +118,12 @@ func (r *Resolver) forward(rt *runtime, req *dns.Msg, ups []Upstream) (*dns.Msg,
 // overall query budget (r.timeout), and no new upstream is started once that
 // budget is spent. A late answer from an upstream we already moved on from is
 // still accepted if it arrives first — it costs no extra traffic.
-func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duration) (*dns.Msg, time.Duration, error) {
+func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duration) (*dns.Msg, time.Duration, int, error) {
 	if len(ups) == 0 {
-		return nil, 0, errNoUpstreams
+		return nil, 0, -1, errNoUpstreams
 	}
 	if len(ups) == 1 {
-		return exchange(ups[0], req)
+		return exchangeOnly(ups[0], req)
 	}
 	if per <= 0 {
 		per = time.Duration(DefaultUpstreamTimeoutMs) * time.Millisecond
@@ -158,15 +169,16 @@ func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duratio
 
 	var soft *dns.Msg // best soft-failure response so far
 	var softRtt time.Duration
+	softIdx := -1
 	var lastErr error
-	finish := func() (*dns.Msg, time.Duration, error) {
+	finish := func() (*dns.Msg, time.Duration, int, error) {
 		if soft != nil {
-			return soft, softRtt, nil // everyone SERVFAILed/REFUSED — relay it.
+			return soft, softRtt, softIdx, nil // everyone SERVFAILed/REFUSED — relay it.
 		}
 		if lastErr == nil {
 			lastErr = errUpstreamTimeout
 		}
-		return nil, 0, lastErr
+		return nil, 0, -1, lastErr
 	}
 
 	advance()
@@ -176,10 +188,10 @@ func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duratio
 			pending--
 			if res.err == nil && res.msg != nil {
 				if !softFailure(res.msg) {
-					return res.msg, res.rtt, nil // a real answer (incl. NXDOMAIN) wins.
+					return res.msg, res.rtt, res.idx, nil // a real answer (incl. NXDOMAIN) wins.
 				}
 				if b := betterSoft(soft, res.msg); b != soft {
-					soft, softRtt = b, res.rtt
+					soft, softRtt, softIdx = b, res.rtt, res.idx
 				}
 			} else {
 				lastErr = res.err
@@ -216,15 +228,16 @@ func (r *Resolver) forwardOrdered(req *dns.Msg, ups []Upstream, per time.Duratio
 // per-query timeout.
 const hedgeDelay = 30 * time.Millisecond
 
-func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, error) {
+func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.Duration, int, error) {
 	if len(ups) == 0 {
-		return nil, 0, errNoUpstreams
+		return nil, 0, -1, errNoUpstreams
 	}
 	if len(ups) == 1 {
-		return exchange(ups[0], req)
+		return exchangeOnly(ups[0], req)
 	}
 
 	type result struct {
+		idx int
 		msg *dns.Msg
 		rtt time.Duration
 		err error
@@ -232,28 +245,31 @@ func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.D
 	results := make(chan result, len(ups))
 	// Each goroutine exchanges against its own copy of the request so concurrent
 	// packing can never race on the shared message.
-	launch := func(u Upstream) {
+	launch := func(i int) {
 		go func() {
-			msg, rtt, err := exchange(u, req.Copy())
-			results <- result{msg, rtt, err}
+			msg, rtt, err := exchange(ups[i], req.Copy())
+			results <- result{i, msg, rtt, err}
 		}()
 	}
 
-	launch(ups[0])
+	launch(0)
 	hedge := time.NewTimer(hedgeDelay)
 	defer hedge.Stop()
 
 	pending := 1
-	rest := ups[1:]
+	launched := false
 	var lastErr error
 	var lastResp *dns.Msg // best response so far (a SERVFAIL we'd return if nothing better arrives)
 	var lastRtt time.Duration
+	lastIdx := -1
 	launchRest := func() {
-		for _, u := range rest {
-			launch(u)
-			pending++
+		if !launched {
+			for i := 1; i < len(ups); i++ {
+				launch(i)
+				pending++
+			}
+			launched = true
 		}
-		rest = nil
 		hedge.Stop()
 	}
 	for {
@@ -264,12 +280,12 @@ func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.D
 			pending--
 			switch {
 			case res.err == nil && res.msg != nil && !softFailure(res.msg):
-				return res.msg, res.rtt, nil // a real answer (incl. NXDOMAIN) wins.
+				return res.msg, res.rtt, res.idx, nil // a real answer (incl. NXDOMAIN) wins.
 			case res.err == nil && res.msg != nil:
 				// SERVFAIL/REFUSED: a soft failure. Remember it, but try the other
 				// upstreams — one of them may actually resolve the name.
 				if b := betterSoft(lastResp, res.msg); b != lastResp {
-					lastResp, lastRtt = b, res.rtt
+					lastResp, lastRtt, lastIdx = b, res.rtt, res.idx
 				}
 				launchRest()
 			default:
@@ -278,12 +294,12 @@ func (r *Resolver) forwardHedged(req *dns.Msg, ups []Upstream) (*dns.Msg, time.D
 			}
 			if pending == 0 {
 				if lastResp != nil {
-					return lastResp, lastRtt, nil // everyone failed softly — return that response.
+					return lastResp, lastRtt, lastIdx, nil // everyone failed softly — return that response.
 				}
 				if lastErr == nil {
 					lastErr = errNoUpstreams
 				}
-				return nil, 0, lastErr
+				return nil, 0, -1, lastErr
 			}
 		}
 	}

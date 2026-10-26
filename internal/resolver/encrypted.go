@@ -109,7 +109,8 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		if o := msg.IsEdns0(); o != nil {
 			clientDO = o.Do()
 		}
-		resp, action, category := r.Resolve(msg, client)
+		var via route
+		resp, action, category := r.resolve(msg, client, &via)
 		// DoH is over HTTP, so no UDP truncation is needed.
 		r.finalize(resp, clientEDNS, clientDO)
 		out, err := resp.Pack()
@@ -119,7 +120,7 @@ func (r *Resolver) DoHHandler() http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/dns-message")
 		_, _ = w.Write(out)
-		r.record(msg, resp, action, category, client, start)
+		r.record(msg, resp, action, category, client, via, start)
 	}
 }
 

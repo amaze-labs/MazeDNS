@@ -14,9 +14,11 @@ import (
 
 // Metrics holds the MazeDNS Prometheus collectors.
 type Metrics struct {
-	reg              *prometheus.Registry
-	Queries          *prometheus.CounterVec
-	UpstreamDuration prometheus.Histogram
+	reg     *prometheus.Registry
+	Queries *prometheus.CounterVec
+	// UpstreamDuration is labelled by the upstream that answered (as configured);
+	// see ObserveUpstream.
+	UpstreamDuration *prometheus.HistogramVec
 	// UpstreamTCPFallback counts UDP responses that were truncated and retried
 	// over TCP — a useful signal of DNSSEC/large-response cost.
 	UpstreamTCPFallback prometheus.Counter
@@ -59,12 +61,12 @@ func New() *Metrics {
 			Name:      "queries_total",
 			Help:      "Total DNS queries by action (blocked, cache, forward, rewrite, error).",
 		}, []string{"action"}),
-		UpstreamDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+		UpstreamDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: "mazedns",
 			Name:      "upstream_duration_seconds",
-			Help:      "Upstream query round-trip time.",
+			Help:      "Upstream query round-trip time, by the upstream that answered.",
 			Buckets:   prometheus.DefBuckets,
-		}),
+		}, []string{"upstream"}),
 		UpstreamTCPFallback: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: "mazedns",
 			Name:      "upstream_tcp_fallback_total",
@@ -88,6 +90,12 @@ func (m *Metrics) IncQuery(action string) {
 		return
 	}
 	m.Queries.WithLabelValues(action).Inc()
+}
+
+// ObserveUpstream records the round-trip time of a query upstream answered.
+// Upstreams are the configured few, so the label stays low-cardinality.
+func (m *Metrics) ObserveUpstream(upstream string, rtt time.Duration) {
+	m.UpstreamDuration.WithLabelValues(upstream).Observe(rtt.Seconds())
 }
 
 // RegisterQueryLogDropped registers a counter that reports how many query-log

@@ -694,6 +694,19 @@ func (s *Store) RenameNode(id, newName string) error {
 		_ = tx.Rollback()
 		return err
 	}
+	if _, err := tx.Exec(
+		`INSERT INTO upstream_rollup(bucket, node, forwarder, upstream, cnt, lat_sum)
+		 SELECT bucket, ?, forwarder, upstream, cnt, lat_sum FROM upstream_rollup WHERE node=?
+		 ON CONFLICT(bucket, node, forwarder, upstream) DO UPDATE SET
+		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+		newName, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM upstream_rollup WHERE node=?`, old); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	return tx.Commit()
 }
 

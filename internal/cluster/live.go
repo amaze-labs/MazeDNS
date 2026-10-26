@@ -53,6 +53,11 @@ type LiveFilter struct {
 	// entries are labelled on the control plane — so an unlabelled entry passes
 	// and the control plane filters it after labelling.
 	Content string `json:"content,omitempty"`
+	// Upstream is the upstream that answered, and Forwarder (when set) the
+	// conditional forwarder that routed it. An agent too old to know them
+	// ignores both and the control plane filters for it.
+	Upstream  string `json:"upstream,omitempty"`
+	Forwarder string `json:"forwarder,omitempty"`
 }
 
 // Match reports whether e passes the filter.
@@ -63,7 +68,8 @@ func (f LiveFilter) Match(e store.QueryLogEntry) bool {
 		(f.Action == "" || e.Action == f.Action) &&
 		(f.Category == "" || e.Category == f.Category) &&
 		(f.Rcode == "" || e.Rcode == f.Rcode) &&
-		(f.Content == "" || e.ContentCategory == "" || e.ContentCategory == f.Content)
+		(f.Content == "" || e.ContentCategory == "" || e.ContentCategory == f.Content) &&
+		(f.Upstream == "" || e.Upstream == f.Upstream && (f.Forwarder == "" || e.Forwarder == f.Forwarder))
 }
 
 // LiveState is the long-poll answer: the filters of the viewers watching the

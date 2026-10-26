@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type QueryLogEntry, type Node, type Rule, type DomainClient, type ClientIdentity, type CategoryList } from '../api'
+import { api, type QueryLogEntry, type Node, type Rule, type DomainClient, type ClientIdentity, type CategoryList, type UpstreamStat } from '../api'
 import { CategoryTag, DomainCategoryEditor, categoryLabel, useCategories } from '../categories'
+import { upstreamName, upstreamRoute } from '../upstreams'
 import { NodeFilter, makeNodeColor, VALID_HOURS, siteGroups } from './filters'
 import { pollWhileVisible } from '../poll'
 import { useClientNames } from '../useClientNames'
@@ -40,6 +41,22 @@ const clientFromURL = () => new URLSearchParams(window.location.search).get('cli
 // ?content= opens the page filtered to a category (from the Dashboard, a client).
 const contentFromURL = () => new URLSearchParams(window.location.search).get('content') || ''
 
+// The upstream filter: the upstream that answered and, when set, the
+// conditional forwarder that routed it. ?upstream=&forwarder= open the page
+// filtered to one (from the Dashboard's upstream breakdown).
+type UpstreamPick = { forwarder: string; upstream: string }
+const NO_UPSTREAM: UpstreamPick = { forwarder: '', upstream: '' }
+const upstreamFromURL = (): UpstreamPick => {
+  const p = new URLSearchParams(window.location.search)
+  return { upstream: p.get('upstream') || '', forwarder: p.get('upstream') ? p.get('forwarder') || '' : '' }
+}
+// A pick as one <select> value: a forwarder suffix can't contain a newline.
+const pickKey = (p: UpstreamPick) => (p.upstream ? `${p.forwarder}\n${p.upstream}` : '')
+const pickFromKey = (k: string): UpstreamPick => {
+  const i = k.indexOf('\n')
+  return i < 0 ? NO_UPSTREAM : { forwarder: k.slice(0, i), upstream: k.slice(i + 1) }
+}
+
 type Row = QueryLogEntry & { key: number | string }
 
 // Queries is the query-log explorer: History pages through the stored log of the
@@ -60,6 +77,9 @@ export default function Queries() {
   // The content category filter (what the domains are: social, shopping, …).
   const [category, setCategoryRaw] = useState(contentFromURL)
   const [rcode, setRcode] = useState('') // live only: the history API has no rcode filter
+  const [upstream, setUpstreamRaw] = useState<UpstreamPick>(upstreamFromURL)
+  // The upstreams that answered in the window: the filter's choices.
+  const [upstreamList, setUpstreamList] = useState<UpstreamStat[]>([])
   const catList = useCategories()
 
   const [log, setLog] = useState<QueryLogEntry[]>([])
@@ -97,6 +117,10 @@ export default function Queries() {
     setCategoryRaw(c)
     setPage(0)
   }
+  const setUpstream = (u: UpstreamPick) => {
+    setUpstreamRaw(u)
+    setPage(0)
+  }
 
   useEffect(() => {
     localStorage.setItem('mazedns.ql.hours', String(hours))
@@ -128,6 +152,12 @@ export default function Queries() {
         setLive(false)
         setPage(0)
       }
+      const up = upstreamFromURL()
+      if (up.upstream) {
+        setUpstreamRaw(up)
+        setLive(false)
+        setPage(0)
+      }
       const c = clientFromURL()
       if (c) {
         setInput(c)
@@ -139,6 +169,18 @@ export default function Queries() {
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
+
+  // The upstream filter's choices: what answered in the window, on these agents.
+  useEffect(() => {
+    let alive = true
+    api
+      .insights(hours, focus)
+      .then((ins) => alive && setUpstreamList((ins.by_upstream ?? []).filter((u) => u.upstream)))
+      .catch(() => alive && setUpstreamList([]))
+    return () => {
+      alive = false
+    }
+  }, [hours, focus])
 
   // Debounce the search box.
   useEffect(() => {
@@ -156,7 +198,7 @@ export default function Queries() {
     setLoading(true)
     const fetchLog = () =>
       api
-        .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, content: category, sort, desc, hours })
+        .queryLog({ limit: PAGE, offset: page * PAGE, search, nodes: focus, action, qtype, content: category, ...upstream, sort, desc, hours })
         .then((r) => {
           if (!alive) return
           setLog(r.entries)
@@ -174,14 +216,14 @@ export default function Queries() {
       alive = false
       stop()
     }
-  }, [live, page, search, focus, action, qtype, category, sort, desc, hours])
+  }, [live, page, search, focus, action, qtype, category, upstream, sort, desc, hours])
 
   // History: per-result counts for the chips, under the same filters (minus the
   // result itself). One count query per result; refreshed less often.
   useEffect(() => {
     if (live) return
     let alive = true
-    const base = { limit: 1, search, nodes: focus, qtype, content: category, hours }
+    const base = { limit: 1, search, nodes: focus, qtype, content: category, ...upstream, hours }
     const fetchCounts = () =>
       Promise.all([api.queryLog(base), ...ACTIONS.map((a) => api.queryLog({ ...base, action: a }))])
         .then(([all, ...per]) => {
@@ -198,9 +240,9 @@ export default function Queries() {
       alive = false
       stop()
     }
-  }, [live, search, focus, qtype, category, hours])
+  }, [live, search, focus, qtype, category, upstream, hours])
 
-  const stream = useLiveStream({ enabled: live, paused, focus, search, action, qtype, category, rcode })
+  const stream = useLiveStream({ enabled: live, paused, focus, search, action, qtype, category, rcode, upstream })
 
   // Clicking a column header sorts by it; clicking the active column flips it.
   const sorter = {
@@ -351,6 +393,19 @@ export default function Queries() {
           ))}
           {category && !catList?.categories.some((c) => c.id === category) && <option value={category}>{category}</option>}
         </select>
+        {(upstreamList.length > 0 || upstream.upstream) && (
+          <select className="q-filter" aria-label="Upstream" value={pickKey(upstream)} onChange={(e) => setUpstream(pickFromKey(e.target.value))}>
+            <option value="">Upstream: any</option>
+            {upstreamList.map((u) => (
+              <option key={pickKey(u)} value={pickKey(u)}>
+                {upstreamRoute(u.forwarder, u.upstream)}
+              </option>
+            ))}
+            {upstream.upstream && !upstreamList.some((u) => pickKey(u) === pickKey(upstream)) && (
+              <option value={pickKey(upstream)}>{upstreamRoute(upstream.forwarder, upstream.upstream)}</option>
+            )}
+          </select>
+        )}
         {live && (
           <select className="q-filter" aria-label="Response code" value={rcode} onChange={(e) => setRcode(e.target.value)}>
             <option value="">Response: any</option>
@@ -376,6 +431,7 @@ export default function Queries() {
                   <th className="hide-sm">Category</th>
                   <th>Client</th>
                   <th>Agent</th>
+                  <th className="hide-sm">Upstream</th>
                   <th className="num">Latency</th>
                 </tr>
               ) : (
@@ -389,6 +445,9 @@ export default function Queries() {
                   </Th>
                   <Th table={sorter} col="client">Client</Th>
                   <Th table={sorter} col="node">Agent</Th>
+                  <Th table={sorter} col="upstream" className="hide-sm">
+                    Upstream
+                  </Th>
                   <Th table={sorter} col="ms" className="num">Latency</Th>
                 </tr>
               )}
@@ -398,11 +457,11 @@ export default function Queries() {
                 <QueryRow key={e.key} e={e} names={names} cats={catList} selected={selected?.key === e.key} onClick={() => setSelected(e)} />
               ))}
               {live ? (
-                <TableStatusRow loading={false} empty={rows.length === 0} colSpan={8}>
+                <TableStatusRow loading={false} empty={rows.length === 0} colSpan={9}>
                   {stream.state === 'paused' ? 'The stream is paused.' : stream.rows.length > 0 ? 'No query on screen matches the search.' : 'Waiting for queries…'}
                 </TableStatusRow>
               ) : (
-                <TableStatusRow loading={loading} error={err} empty={rows.length === 0} colSpan={8}>
+                <TableStatusRow loading={loading} error={err} empty={rows.length === 0} colSpan={9}>
                   No queries match these filters in the last {hours < 1 ? `${hours * 60} minutes` : hours === 1 ? 'hour' : `${hours} hours`}.
                 </TableStatusRow>
               )}
@@ -492,6 +551,16 @@ function QueryRow({
         <ClientLabel ip={e.client} names={names} showIp={false} />
       </td>
       <td className="hide-sm muted">{e.node || 'master'}</td>
+      <td className="hide-sm up">
+        {e.upstream ? (
+          <>
+            <span className="mono">{upstreamName(e.upstream)}</span>
+            {e.forwarder && <small>{e.forwarder}</small>}
+          </>
+        ) : (
+          <span className="faint">—</span>
+        )}
+      </td>
       <td className="num hide-sm nowrap">{fmtMs(e.elapsed_ms)}</td>
     </tr>
   )
@@ -516,6 +585,7 @@ function useLiveStream({
   qtype,
   category,
   rcode,
+  upstream,
 }: {
   enabled: boolean
   paused: boolean
@@ -525,6 +595,7 @@ function useLiveStream({
   qtype: string
   category: string
   rcode: string
+  upstream: UpstreamPick
 }) {
   const [hidden, setHidden] = useState(document.hidden)
   const [status, setStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'closed'>('connecting')
@@ -542,13 +613,22 @@ function useLiveStream({
   }, [])
 
   // New server-side filters: the rows on screen no longer match them.
-  useEffect(() => setRows([]), [focusKey, client, action, qtype, category, rcode])
+  const { upstream: up, forwarder: fwd } = upstream
+  useEffect(() => setRows([]), [focusKey, client, action, qtype, category, rcode, up, fwd])
 
   useEffect(() => {
     if (!enabled || paused || hidden) return
     const p = new URLSearchParams()
     if (focusKey) p.set('nodes', focusKey)
-    for (const [k, v] of [['client', client], ['action', action], ['qtype', qtype], ['content', category], ['rcode', rcode]]) {
+    for (const [k, v] of [
+      ['client', client],
+      ['action', action],
+      ['qtype', qtype],
+      ['content', category],
+      ['rcode', rcode],
+      ['upstream', up],
+      ['forwarder', up ? fwd : ''],
+    ]) {
       if (v) p.set(k, v)
     }
     setStatus('connecting')
@@ -575,7 +655,7 @@ function useLiveStream({
       clearInterval(flush)
       pending.current = []
     }
-  }, [enabled, paused, hidden, focusKey, client, action, qtype, category, rcode, retry])
+  }, [enabled, paused, hidden, focusKey, client, action, qtype, category, rcode, up, fwd, retry])
 
   const state: StreamState = paused || hidden ? 'paused' : status === 'closed' ? 'down' : status
   const label = paused
@@ -622,7 +702,15 @@ function explain(e: QueryLogEntry, rule: Rule | undefined, cats: CategoryList | 
       }
     }
     case 'forward':
-      return { kind: '', title: 'Forwarded upstream', text: `It wasn’t blocked, answered by a local record or cached, so the agent asked an upstream resolver. ${answered}` }
+      return {
+        kind: '',
+        title: 'Forwarded upstream',
+        text: `It wasn’t blocked, answered by a local record or cached, so the agent asked ${
+          e.upstream
+            ? `${upstreamName(e.upstream)}${e.forwarder ? ` (the conditional forwarder for ${e.forwarder})` : ''}`
+            : 'an upstream resolver'
+        }. ${answered}`,
+      }
     case 'cache':
       return { kind: 'ok', title: 'Answered from cache', text: `The agent still had the answer from an earlier upstream lookup. ${answered}` }
     case 'rewrite':
@@ -784,6 +872,15 @@ function QueryDrawer({
             {e.node || 'master'}
             {node?.site ? <span className="muted"> ({node.site})</span> : null}
           </dd>
+          {e.upstream && (
+            <>
+              <dt>Upstream</dt>
+              <dd>
+                <span className="mono">{upstreamName(e.upstream)}</span>
+                {e.forwarder && <span className="muted"> (forwarder for {e.forwarder})</span>}
+              </dd>
+            </>
+          )}
           <dt>Category</dt>
           <dd>
             {/* The domain's category now (editable); the log keeps the label it had then. */}

@@ -1605,6 +1605,14 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 	if clients == nil {
 		clients = []store.ClientStat{}
 	}
+	byUpstream, err := s.store.RollupByUpstream(since, nodes)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if byUpstream == nil {
+		byUpstream = []store.UpstreamStat{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"unique_clients": summary.UniqueClients,
 		"avg_latency_ms": summary.AvgLatencyMS,
@@ -1613,6 +1621,7 @@ func (s *Server) getInsights(w http.ResponseWriter, r *http.Request) {
 		"top_blocked":    []store.DomainStat{},
 		"qtypes":         []store.TypeStat{},
 		"by_node":        byNode,
+		"by_upstream":    byUpstream,
 		"totals":         summary.Totals,
 	})
 }
@@ -1793,12 +1802,16 @@ func (s *Server) getQueryLog(w http.ResponseWriter, r *http.Request) {
 		QType:    strings.TrimSpace(q.Get("qtype")),
 		Category: strings.TrimSpace(q.Get("category")),
 		Content:  strings.TrimSpace(q.Get("content")),
-		Nodes:    parseNodes(r),
-		SinceMs:  sinceMs,
-		Sort:     strings.TrimSpace(q.Get("sort")),
-		Desc:     q.Get("desc") == "true" || q.Get("desc") == "1",
-		Limit:    limit,
-		Offset:   offset,
+		// The upstream that answered, and the conditional forwarder that
+		// routed it (see store.QueryLogQuery).
+		Upstream:  strings.TrimSpace(q.Get("upstream")),
+		Forwarder: strings.TrimSpace(q.Get("forwarder")),
+		Nodes:     parseNodes(r),
+		SinceMs:   sinceMs,
+		Sort:      strings.TrimSpace(q.Get("sort")),
+		Desc:      q.Get("desc") == "true" || q.Get("desc") == "1",
+		Limit:     limit,
+		Offset:    offset,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

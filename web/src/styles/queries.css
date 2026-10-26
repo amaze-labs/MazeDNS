@@ -47,6 +47,16 @@
 .pg-queries .q-table td.lead .domain {
   color: var(--text);
 }
+/* Upstream: the server, and under it the conditional forwarder that routed it. */
+.pg-queries .q-table td.up {
+  white-space: nowrap;
+}
+.pg-queries .q-table td.up small {
+  display: block;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.2;
+}
 .pg-queries .q-table td.res {
   white-space: nowrap;
 }

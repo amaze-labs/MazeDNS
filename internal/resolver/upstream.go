@@ -214,6 +214,18 @@ func (u *dohUpstream) String() string {
 	return p.Scheme + "://" + p.Host + p.Path
 }
 
+// upstreamLabel names an upstream in the query log and metrics: its spec as the
+// operator configured it (String normalises it, and drops a DoT server name),
+// except that a DoH URL keeps only scheme, host and path — credentials or a
+// token in it must not reach the log.
+func upstreamLabel(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if !strings.HasPrefix(spec, "https://") {
+		return spec
+	}
+	return (&dohUpstream{url: spec}).String()
+}
+
 func ensurePort(addr, defPort string) string {
 	if _, _, err := net.SplitHostPort(addr); err == nil {
 		return addr

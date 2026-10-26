@@ -81,6 +81,12 @@ type QueryEvent struct {
 	Category string
 	Rcode    string
 	Elapsed  time.Duration
+	// Upstream is the upstream that answered a forwarded query, labelled as
+	// configured (see upstreamLabel), and Forwarder the suffix of the
+	// conditional forwarder that routed it ("" = the default upstreams). Both
+	// are empty when the query did not go upstream (cache, block, rewrite, …).
+	Upstream  string
+	Forwarder string
 }
 
 // ForwardGroup routes a domain suffix to a specific set of upstreams (split-horizon).
@@ -160,11 +166,20 @@ type condForward struct {
 	suffix    string
 	dotSuffix string // "." + suffix, precomputed for subdomain matching on the hot path
 	ups       []Upstream
+	labels    []string // upstreamLabel of each of ups
+}
+
+// route is which upstream answered a forwarded query (QueryEvent.Upstream and
+// .Forwarder). Its strings are the runtime's own labels: naming the upstream
+// costs no allocation on the hot path.
+type route struct {
+	upstream, forwarder string
 }
 
 // runtime is the swappable operational state derived from Settings.
 type runtime struct {
 	defaultUpstreams []Upstream
+	defaultLabels    []string // upstreamLabel of each of defaultUpstreams
 	conditional      []condForward
 	rate             *rateLimiter
 	blockMode        string
@@ -318,9 +333,10 @@ func New(opts Options) *Resolver {
 // own network timeout, so an upstream we already failed over from does not keep
 // a socket open for the whole query budget; the last one — with nothing left to
 // fail over to — keeps the full budget. Hedged lists (per == 0) use the full
-// budget for every upstream, as before.
-func (r *Resolver) parseUpstreams(specs []string, per time.Duration, used map[string]Upstream) []Upstream {
+// budget for every upstream, as before. It returns each upstream's label too.
+func (r *Resolver) parseUpstreams(specs []string, per time.Duration, used map[string]Upstream) ([]Upstream, []string) {
 	out := make([]Upstream, 0, len(specs))
+	labels := make([]string, 0, len(specs))
 	for i, s := range specs {
 		timeout := r.timeout
 		if per > 0 && per < timeout && i < len(specs)-1 {
@@ -330,6 +346,7 @@ func (r *Resolver) parseUpstreams(specs []string, per time.Duration, used map[st
 		if u, ok := r.upstreams[key]; ok { // unchanged: keep its warm connections
 			used[key] = u
 			out = append(out, u)
+			labels = append(labels, upstreamLabel(s))
 			continue
 		}
 		u, err := ParseUpstream(s, timeout)
@@ -343,8 +360,9 @@ func (r *Resolver) parseUpstreams(specs []string, per time.Duration, used map[st
 		}
 		used[key] = u
 		out = append(out, u)
+		labels = append(labels, upstreamLabel(s))
 	}
-	return out
+	return out, labels
 }
 
 // ApplySettings rebuilds and atomically swaps the operational runtime.
@@ -369,13 +387,14 @@ func (r *Resolver) ApplySettings(s Settings) {
 	}
 	r.upMu.Lock()
 	used := map[string]Upstream{}
-	rt.defaultUpstreams = r.parseUpstreams(s.Upstreams, per, used)
+	rt.defaultUpstreams, rt.defaultLabels = r.parseUpstreams(s.Upstreams, per, used)
 	for _, f := range s.Forwarders {
 		suffix := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(f.Suffix), "."))
 		if suffix == "" {
 			continue
 		}
-		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: r.parseUpstreams(f.Upstreams, per, used)})
+		ups, labels := r.parseUpstreams(f.Upstreams, per, used)
+		rt.conditional = append(rt.conditional, condForward{suffix: suffix, dotSuffix: "." + suffix, ups: ups, labels: labels})
 	}
 	r.upstreams = used // upstreams no longer listed are dropped (and garbage-collected)
 	r.upMu.Unlock()
@@ -525,7 +544,8 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 		clientDO = o.Do()
 	}
 
-	resp, action, category := r.Resolve(req, client)
+	var via route
+	resp, action, category := r.resolve(req, client, &via)
 	r.finalize(resp, clientEDNS, clientDO)
 	// Cap UDP replies at the fragmentation-safe size (1232). Answers up to that —
 	// the vast majority — go out untouched in a single datagram; only genuinely
@@ -541,12 +561,18 @@ func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 		resp.Truncate(largeUDPSize)
 	}
 	_ = w.WriteMsg(resp)
-	r.record(req, resp, action, category, client, start)
+	r.record(req, resp, action, category, client, via, start)
 }
 
 // Resolve runs the full pipeline and returns the response, the action taken, and
 // the block category (only set for "blocked").
 func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, string) {
+	return r.resolve(req, client, nil)
+}
+
+// resolve is Resolve that also sets *via (when not nil) to the upstream that
+// answered a forwarded query.
+func (r *Resolver) resolve(req *dns.Msg, client string, via *route) (*dns.Msg, string, string) {
 	r.stats.Total.Add(1)
 	if len(req.Question) == 0 {
 		m := new(dns.Msg)
@@ -644,7 +670,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	}
 	// Coalesce concurrent misses for the same question into one upstream exchange;
 	// the shared result is cached once and copied per caller below.
-	resp, rtt, err := r.sf.Do(forwardKey(q, wantSigned), func() (*dns.Msg, time.Duration, error) {
+	resp, rtt, answered, err := r.sf.Do(forwardKey(q, wantSigned), func() (*dns.Msg, time.Duration, route, error) {
 		return r.forwardAndCache(rt, req, q, name, wantSigned)
 	})
 	if err != nil || resp == nil {
@@ -656,7 +682,10 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	}
 	r.stats.Forwarded.Add(1)
 	if r.metrics != nil {
-		r.metrics.UpstreamDuration.Observe(rtt.Seconds())
+		r.metrics.ObserveUpstream(answered.upstream, rtt)
+	}
+	if via != nil {
+		*via = answered
 	}
 	// The forwarded message may be shared with other coalesced callers, so copy it
 	// before we (and Handle) mutate Id / EDNS / truncate it.
@@ -665,7 +694,7 @@ func (r *Resolver) Resolve(req *dns.Msg, client string) (*dns.Msg, string, strin
 	return resp, "forward", ""
 }
 
-func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, start time.Time) {
+func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, via route, start time.Time) {
 	if len(req.Question) == 0 {
 		return
 	}
@@ -700,6 +729,7 @@ func (r *Resolver) record(req, resp *dns.Msg, action, category, client string, s
 		*ev = QueryEvent{
 			TS: start, Client: client, Name: q.Name, QType: dns.TypeToString[q.Qtype],
 			Action: action, Category: category, Rcode: rcode, Elapsed: time.Since(start),
+			Upstream: via.upstream, Forwarder: via.forwarder,
 		}
 		r.onQuery(ev)
 		queryEventPool.Put(ev)
@@ -727,25 +757,31 @@ func (r *Resolver) refreshStale(rt *runtime, req *dns.Msg, q dns.Question, name 
 	}
 	go func() {
 		defer r.refreshing.Delete(key)
-		r.sf.Do(key, func() (*dns.Msg, time.Duration, error) {
+		r.sf.Do(key, func() (*dns.Msg, time.Duration, route, error) {
 			return r.forwardAndCache(rt, rc, q, name, wantSigned)
 		})
 	}()
 }
 
 // forwardAndCache runs one upstream exchange for a single-flight leader: it
-// caches a successful answer and records the outcome for Health.
-func (r *Resolver) forwardAndCache(rt *runtime, req *dns.Msg, q dns.Question, name string, wantSigned bool) (*dns.Msg, time.Duration, error) {
-	m, rtt, err := r.forward(rt, req, upstreamsFor(rt, name))
+// caches a successful answer and records the outcome for Health. It returns
+// which upstream answered.
+func (r *Resolver) forwardAndCache(rt *runtime, req *dns.Msg, q dns.Question, name string, wantSigned bool) (*dns.Msg, time.Duration, route, error) {
+	ups, labels, forwarder := upstreamsFor(rt, name)
+	m, rtt, idx, err := r.forward(rt, req, ups)
 	if err != nil || m == nil {
 		r.health.forwardFailed(err)
-		return m, rtt, err
+		return m, rtt, route{}, err
 	}
 	touch(&r.health.lastFwdOK, time.Now())
 	if rt.cache != nil {
 		rt.cache.Set(q, wantSigned, m)
 	}
-	return m, rtt, err
+	via := route{forwarder: forwarder}
+	if idx >= 0 && idx < len(labels) {
+		via.upstream = labels[idx]
+	}
+	return m, rtt, via, err
 }
 
 // conditionalFor returns the most specific conditional forwarder matching name
@@ -761,11 +797,13 @@ func conditionalFor(rt *runtime, name string) (condForward, bool) {
 	return condForward{}, false
 }
 
-func upstreamsFor(rt *runtime, name string) []Upstream {
+// upstreamsFor returns the upstreams that serve name, their labels, and the
+// suffix of the conditional forwarder they belong to ("" = the defaults).
+func upstreamsFor(rt *runtime, name string) ([]Upstream, []string, string) {
 	if cf, ok := conditionalFor(rt, name); ok {
-		return cf.ups
+		return cf.ups, cf.labels, cf.suffix
 	}
-	return rt.defaultUpstreams
+	return rt.defaultUpstreams, rt.defaultLabels, ""
 }
 
 func (r *Resolver) rewriteResponse(req *dns.Msg, q dns.Question, rrs []RewriteRR) *dns.Msg {

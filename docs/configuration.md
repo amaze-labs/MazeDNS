@@ -265,7 +265,7 @@ What each component exposes (all prefixed `mazedns_`, plus the standard `go_*` a
 | Metric | Where | Meaning |
 |---|---|---|
 | `queries_total{action}` | agent | Queries answered, by action (forward, cache, blocked, …) |
-| `upstream_duration_seconds` | agent | Upstream round-trip time (histogram) |
+| `upstream_duration_seconds{upstream}` | agent | Upstream round-trip time (histogram), by the upstream that answered, as configured |
 | `upstream_tcp_fallback_total` | agent | Truncated UDP answers retried over TCP |
 | `querylog_dropped_total` | agent | Query-log entries dropped because the buffer was full |
 | `last_query_timestamp_seconds`, `last_forward_{success,error}_timestamp_seconds`, `cluster_last_sync_{success,error}_timestamp_seconds` | agent | Liveness timestamps (see troubleshooting) |

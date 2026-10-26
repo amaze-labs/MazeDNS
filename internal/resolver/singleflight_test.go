@@ -24,10 +24,10 @@ func TestSingleflightCoalesces(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			msg, _, _ := g.Do("k", func() (*dns.Msg, time.Duration, error) {
+			msg, _, _, _ := g.Do("k", func() (*dns.Msg, time.Duration, route, error) {
 				calls.Add(1)
 				time.Sleep(40 * time.Millisecond) // hold the slot so the others pile up
-				return new(dns.Msg), 0, nil
+				return new(dns.Msg), 0, route{}, nil
 			})
 			results[i] = msg
 		}(i)
@@ -49,7 +49,7 @@ func TestSingleflightCoalesces(t *testing.T) {
 func TestSingleflightReleasesKey(t *testing.T) {
 	var g singleflight
 	var calls atomic.Int32
-	fn := func() (*dns.Msg, time.Duration, error) { calls.Add(1); return new(dns.Msg), 0, nil }
+	fn := func() (*dns.Msg, time.Duration, route, error) { calls.Add(1); return new(dns.Msg), 0, route{}, nil }
 	g.Do("k", fn)
 	g.Do("k", fn)
 	if got := calls.Load(); got != 2 {

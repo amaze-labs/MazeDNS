@@ -24,6 +24,20 @@ func TestLiveFilterAndTap(t *testing.T) {
 			t.Errorf("%+v.Match = %v, want %v", tc.f, got, tc.want)
 		}
 	}
+	fwd := store.QueryLogEntry{Name: "db.corp.internal", Action: "forward", Upstream: "10.0.0.53", Forwarder: "corp.internal"}
+	for _, tc := range []struct {
+		f    LiveFilter
+		want bool
+	}{
+		{LiveFilter{Upstream: "10.0.0.53"}, true},
+		{LiveFilter{Upstream: "10.0.0.53", Forwarder: "corp.internal"}, true},
+		{LiveFilter{Upstream: "10.0.0.53", Forwarder: "lab.internal"}, false},
+		{LiveFilter{Upstream: "1.1.1.1"}, false},
+	} {
+		if got := tc.f.Match(fwd); got != tc.want {
+			t.Errorf("%+v.Match(forwarded) = %v, want %v", tc.f, got, tc.want)
+		}
+	}
 
 	// The same viewers in any order, duplicates included, give one version.
 	a, b := LiveFilter{Domain: "a"}, LiveFilter{Action: "blocked"}

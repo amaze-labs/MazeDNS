@@ -169,21 +169,33 @@ func (s *Store) moveVerdictContentCategories() error {
 // UnlabelledQuery is a query-log row still labelled "other" (OtherQueries).
 type UnlabelledQuery struct {
 	ID     int64
+	TS     int64
 	Name   string
 	Action string
 }
 
+// otherQueriesSQL is OtherQueries' statement, with or without the page bound.
+// It orders by (ts, id), which the (content_category, ts) index already holds
+// (an index ends with the rowid), so a page reads only its own rows: ordering
+// by id alone sorted every "other" row in the window for every page.
+func otherQueriesSQL(paged bool) string {
+	q := `SELECT id, ts, name, action FROM query_log WHERE content_category = ? AND ts >= ?`
+	if paged {
+		q += ` AND (ts, id) < (?, ?)`
+	}
+	return q + ` ORDER BY ts DESC, id DESC LIMIT ?`
+}
+
 // OtherQueries returns up to limit query-log rows labelled "other" since
-// sinceMs with an id below beforeID (0 = no bound), newest first — a page of
-// the rows RelabelContent may move once their domain gets a category.
-func (s *Store) OtherQueries(sinceMs, beforeID int64, limit int) ([]UnlabelledQuery, error) {
-	q := `SELECT id, name, action FROM query_log WHERE content_category = ? AND ts >= ?`
+// sinceMs, newest first, starting below the (beforeTS, beforeID) of the last
+// row of the previous page (beforeID 0 = first page) — a page of the rows
+// RelabelContent may move once their domain gets a category.
+func (s *Store) OtherQueries(sinceMs, beforeTS, beforeID int64, limit int) ([]UnlabelledQuery, error) {
 	args := []any{categories.Other, sinceMs}
 	if beforeID > 0 {
-		q += ` AND id < ?`
-		args = append(args, beforeID)
+		args = append(args, beforeTS, beforeID)
 	}
-	rows, err := s.read.Query(q+` ORDER BY id DESC LIMIT ?`, append(args, limit)...)
+	rows, err := s.read.Query(otherQueriesSQL(beforeID > 0), append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +203,7 @@ func (s *Store) OtherQueries(sinceMs, beforeID int64, limit int) ([]UnlabelledQu
 	var out []UnlabelledQuery
 	for rows.Next() {
 		var u UnlabelledQuery
-		if err := rows.Scan(&u.ID, &u.Name, &u.Action); err != nil {
+		if err := rows.Scan(&u.ID, &u.TS, &u.Name, &u.Action); err != nil {
 			return nil, err
 		}
 		out = append(out, u)

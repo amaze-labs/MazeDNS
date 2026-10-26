@@ -150,6 +150,13 @@ func TestRewriteNamesScoping(t *testing.T) {
 		if err := st.InsertNodeQueryLog(node, entries); err != nil {
 			t.Fatal(err)
 		}
+		// Which node serves a client comes from the client rollup.
+		for more := true; more; {
+			var err error
+			if more, err = st.RollupAdvance(1000); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	e := newTestEnricher(t, st)
 	check := func(stage, ip, name string, aliases []string) {

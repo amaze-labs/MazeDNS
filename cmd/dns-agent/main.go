@@ -104,6 +104,8 @@ func main() {
 				Category:  ev.Category,
 				Rcode:     ev.Rcode,
 				ElapsedMS: float64(ev.Elapsed.Microseconds()) / 1000.0,
+				Upstream:  ev.Upstream,
+				Forwarder: ev.Forwarder,
 			}
 			qlog.Write(e)
 			liveTap.Write(e)

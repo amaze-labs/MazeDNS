@@ -35,6 +35,7 @@ type sfCall struct {
 	wg  sync.WaitGroup
 	msg *dns.Msg
 	rtt time.Duration
+	via route
 	err error
 }
 
@@ -55,7 +56,7 @@ func (g *singleflight) shardFor(key string) *sfShard {
 // Do runs fn for key, deduplicating concurrent calls. The returned *dns.Msg is
 // shared with other waiters, so callers MUST treat it as read-only (copy before
 // mutating).
-func (g *singleflight) Do(key string, fn func() (*dns.Msg, time.Duration, error)) (*dns.Msg, time.Duration, error) {
+func (g *singleflight) Do(key string, fn func() (*dns.Msg, time.Duration, route, error)) (*dns.Msg, time.Duration, route, error) {
 	s := g.shardFor(key)
 	s.mu.Lock()
 	if s.m == nil {
@@ -64,20 +65,20 @@ func (g *singleflight) Do(key string, fn func() (*dns.Msg, time.Duration, error)
 	if c, ok := s.m[key]; ok {
 		s.mu.Unlock()
 		c.wg.Wait()
-		return c.msg, c.rtt, c.err
+		return c.msg, c.rtt, c.via, c.err
 	}
 	c := &sfCall{}
 	c.wg.Add(1)
 	s.m[key] = c
 	s.mu.Unlock()
 
-	c.msg, c.rtt, c.err = fn()
+	c.msg, c.rtt, c.via, c.err = fn()
 	c.wg.Done()
 
 	s.mu.Lock()
 	delete(s.m, key)
 	s.mu.Unlock()
-	return c.msg, c.rtt, c.err
+	return c.msg, c.rtt, c.via, c.err
 }
 
 // forwardKey identifies a forward request the same way the cache keys an entry

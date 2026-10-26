@@ -33,6 +33,7 @@ import { useCountUp, useFirstPaint } from '../motion'
 import { useClientNames } from '../useClientNames'
 import ClientLabel from './ClientLabel'
 import { CategoryBars, useCategories } from '../categories'
+import { UpstreamBars, upstreamHint } from '../upstreams'
 import '../styles/overview.css'
 
 const ONLINE_WINDOW = 120
@@ -448,6 +449,7 @@ export default function Dashboard() {
   const byNodeData = (ins?.by_node ?? [])
     .filter((n) => n.total > 0)
     .map((n) => ({ name: n.node, value: n.total, fill: nodeColor(n.node) }))
+  const byUpstream = (ins?.by_upstream ?? []).filter((u) => u.count > 0)
 
   // ---- clients ----
   const clientRows = ins?.clients ?? []
@@ -480,9 +482,16 @@ export default function Dashboard() {
   const animLat = useFirstPaint(latData.length > 0)
 
   // ---- flow hints ----
+  // Forwarded: where the window's forwards actually went; until agents report
+  // it, the configured default upstreams.
+  const sentTo = upstreamHint(ins?.by_upstream ?? [])
   const flowHint: Record<string, string> = {
     cached: 'reused answers',
-    forwarded: upstreams && upstreams.length > 0 ? `to ${upstreams.slice(0, 2).map((u) => u.replace(/:53$/, '')).join(', ')}${upstreams.length > 2 ? ` +${upstreams.length - 2}` : ''}` : 'to upstream resolvers',
+    forwarded: sentTo
+      ? `to ${sentTo}`
+      : upstreams && upstreams.length > 0
+      ? `to ${upstreams.slice(0, 2).map((u) => u.replace(/:53$/, '')).join(', ')}${upstreams.length > 2 ? ` +${upstreams.length - 2}` : ''}`
+      : 'to upstream resolvers',
     blocked:
       // Lists from MAZEDNS_BLOCKLIST_FILES block too but aren't in the API, so
       // "0 lists, 0 rules" would contradict a non-zero blocked count.
@@ -994,7 +1003,10 @@ export default function Dashboard() {
           <div className="card-head">
             <div>
               <h2>Distribution</h2>
-              <p className="sub">Share of the window's queries{byNodeData.length > 1 ? ' by agent and' : ''} by how they were answered.</p>
+              <p className="sub">
+                Share of the window's queries{byNodeData.length > 1 ? ' by agent and' : ''} by how they were answered
+                {byUpstream.length > 0 ? ', and which upstream answered the forwarded ones' : ''}.
+              </p>
             </div>
           </div>
           {!ins ? (
@@ -1008,6 +1020,12 @@ export default function Dashboard() {
             <div className="ov-donuts">
               {byNodeData.length > 1 && <Donut title="By agent" data={byNodeData} />}
               <Donut title="By answer" data={sourceData} />
+              {byUpstream.length > 0 && (
+                <div className="ov-donut">
+                  <h3>By upstream</h3>
+                  <UpstreamBars rows={byUpstream} />
+                </div>
+              )}
             </div>
           )}
         </section>

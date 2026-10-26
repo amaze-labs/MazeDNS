@@ -68,7 +68,7 @@ func bothStrategies(t *testing.T, fn func(t *testing.T, r *Resolver, rt *runtime
 
 func TestForwardSingleUpstream(t *testing.T) {
 	bothStrategies(t, func(t *testing.T, r *Resolver, rt *runtime) {
-		resp, _, err := r.forward(rt, newReq(), []Upstream{&fakeUpstream{name: "a"}})
+		resp, _, _, err := r.forward(rt, newReq(), []Upstream{&fakeUpstream{name: "a"}})
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -86,7 +86,7 @@ func TestForwardPrimaryWins(t *testing.T) {
 			&fakeUpstream{name: "primary"},
 			&fakeUpstream{name: "slow", delay: 200 * time.Millisecond},
 		}
-		resp, _, err := r.forward(rt, newReq(), ups)
+		resp, _, _, err := r.forward(rt, newReq(), ups)
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -103,7 +103,7 @@ func TestForwardFailoverOnError(t *testing.T) {
 			&fakeUpstream{name: "dead", err: errors.New("boom")},
 			&fakeUpstream{name: "backup"},
 		}
-		resp, _, err := r.forward(rt, newReq(), ups)
+		resp, _, _, err := r.forward(rt, newReq(), ups)
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -121,7 +121,7 @@ func TestForwardHedgeBeatsSlowPrimary(t *testing.T) {
 		&fakeUpstream{name: "fast", delay: 10 * time.Millisecond},
 	}
 	start := time.Now()
-	resp, _, err := r.forward(&runtime{hedged: true}, newReq(), ups)
+	resp, _, _, err := r.forward(&runtime{hedged: true}, newReq(), ups)
 	if err != nil {
 		t.Fatalf("forward: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestForwardFailoverOnSoftFailure(t *testing.T) {
 					&fakeUpstream{name: "broken", rcode: rcode},
 					&fakeUpstream{name: "backup"},
 				}
-				resp, _, err := r.forward(rt, newReq(), ups)
+				resp, _, _, err := r.forward(rt, newReq(), ups)
 				if err != nil {
 					t.Fatalf("forward: %v", err)
 				}
@@ -165,7 +165,7 @@ func TestForwardAllServfail(t *testing.T) {
 			&fakeUpstream{name: "a", rcode: dns.RcodeServerFailure},
 			&fakeUpstream{name: "b", rcode: dns.RcodeServerFailure},
 		}
-		resp, _, err := r.forward(rt, newReq(), ups)
+		resp, _, _, err := r.forward(rt, newReq(), ups)
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -184,7 +184,7 @@ func TestForwardAllSoftFailPrefersServfail(t *testing.T) {
 			&fakeUpstream{name: "b", rcode: dns.RcodeServerFailure},
 			&fakeUpstream{name: "c", rcode: dns.RcodeRefused},
 		}
-		resp, _, err := r.forward(rt, newReq(), ups)
+		resp, _, _, err := r.forward(rt, newReq(), ups)
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestForwardNXDOMAINWinsImmediately(t *testing.T) {
 			&fakeUpstream{name: "slow", delay: 300 * time.Millisecond},
 		}
 		start := time.Now()
-		resp, _, err := r.forward(rt, newReq(), ups)
+		resp, _, _, err := r.forward(rt, newReq(), ups)
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -223,7 +223,7 @@ func TestForwardAllFail(t *testing.T) {
 			&fakeUpstream{name: "a", err: errors.New("a")},
 			&fakeUpstream{name: "b", err: errors.New("b")},
 		}
-		if _, _, err := r.forward(rt, newReq(), ups); err == nil {
+		if _, _, _, err := r.forward(rt, newReq(), ups); err == nil {
 			t.Fatal("expected an error when all upstreams fail")
 		}
 	})
@@ -231,7 +231,7 @@ func TestForwardAllFail(t *testing.T) {
 
 func TestForwardNoUpstreams(t *testing.T) {
 	bothStrategies(t, func(t *testing.T, r *Resolver, rt *runtime) {
-		if _, _, err := r.forward(rt, newReq(), nil); !errors.Is(err, errNoUpstreams) {
+		if _, _, _, err := r.forward(rt, newReq(), nil); !errors.Is(err, errNoUpstreams) {
 			t.Fatalf("err = %v, want errNoUpstreams", err)
 		}
 	})

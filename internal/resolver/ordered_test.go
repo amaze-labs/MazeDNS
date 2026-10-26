@@ -65,7 +65,7 @@ func TestOrderedNeverContactsSecondaryWhenPrimaryAnswers(t *testing.T) {
 		logged(log, fakeUpstream{name: "secondary"}),
 	}
 	for range 3 {
-		resp, _, err := r.forward(&runtime{upstreamTimeout: time.Second}, newReq(), ups)
+		resp, _, _, err := r.forward(&runtime{upstreamTimeout: time.Second}, newReq(), ups)
 		if err != nil {
 			t.Fatalf("forward: %v", err)
 		}
@@ -88,7 +88,7 @@ func TestHedgedContactsSecondaryWhenPrimaryIsSlow(t *testing.T) {
 		logged(log, fakeUpstream{name: "primary", delay: 4 * hedgeDelay}),
 		logged(log, fakeUpstream{name: "secondary", delay: 8 * hedgeDelay}),
 	}
-	if _, _, err := r.forward(&runtime{hedged: true}, newReq(), ups); err != nil {
+	if _, _, _, err := r.forward(&runtime{hedged: true}, newReq(), ups); err != nil {
 		t.Fatalf("forward: %v", err)
 	}
 	if got := log.get(); !equalNames(got, []string{"primary", "secondary"}) {
@@ -106,7 +106,7 @@ func TestOrderedFailoverOnTimeout(t *testing.T) {
 		logged(log, fakeUpstream{name: "backup"}),
 	}
 	start := time.Now()
-	resp, _, err := r.forward(&runtime{upstreamTimeout: 100 * time.Millisecond}, newReq(), ups)
+	resp, _, _, err := r.forward(&runtime{upstreamTimeout: 100 * time.Millisecond}, newReq(), ups)
 	if err != nil {
 		t.Fatalf("forward: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestOrderedFailsOverOneAtATime(t *testing.T) {
 		logged(log, fakeUpstream{name: "unused"}),
 	}
 	start := time.Now()
-	resp, _, err := r.forward(&runtime{upstreamTimeout: time.Second}, newReq(), ups)
+	resp, _, _, err := r.forward(&runtime{upstreamTimeout: time.Second}, newReq(), ups)
 	if err != nil {
 		t.Fatalf("forward: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestOrderedRespectsOverallBudget(t *testing.T) {
 		ups = append(ups, logged(log, fakeUpstream{name: n, delay: 2 * time.Second}))
 	}
 	start := time.Now()
-	_, _, err := r.forward(&runtime{upstreamTimeout: 100 * time.Millisecond}, newReq(), ups)
+	_, _, _, err := r.forward(&runtime{upstreamTimeout: 100 * time.Millisecond}, newReq(), ups)
 	if !errors.Is(err, errUpstreamTimeout) {
 		t.Fatalf("err = %v, want errUpstreamTimeout", err)
 	}
@@ -181,7 +181,7 @@ func TestOrderedLastUpstreamGetsRemainingBudget(t *testing.T) {
 		&fakeUpstream{name: "dead", err: errors.New("boom")},
 		&fakeUpstream{name: "slow", delay: 300 * time.Millisecond},
 	}
-	resp, _, err := r.forward(&runtime{upstreamTimeout: 100 * time.Millisecond}, newReq(), ups)
+	resp, _, _, err := r.forward(&runtime{upstreamTimeout: 100 * time.Millisecond}, newReq(), ups)
 	if err != nil {
 		t.Fatalf("forward: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestOrderedAcceptsLateAnswer(t *testing.T) {
 		&fakeUpstream{name: "late", delay: 200 * time.Millisecond},
 		&fakeUpstream{name: "dead", err: errors.New("boom")},
 	}
-	resp, _, err := r.forward(&runtime{upstreamTimeout: 50 * time.Millisecond}, newReq(), ups)
+	resp, _, _, err := r.forward(&runtime{upstreamTimeout: 50 * time.Millisecond}, newReq(), ups)
 	if err != nil {
 		t.Fatalf("forward: %v", err)
 	}

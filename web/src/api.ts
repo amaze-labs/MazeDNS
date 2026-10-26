@@ -22,6 +22,11 @@ export interface QueryLogEntry {
   // What the domain is (social, shopping, …); '' for entries logged before
   // categories existed. `category` is the block reason.
   content_category: string
+  // The upstream that answered a forwarded query, as configured, and the
+  // conditional forwarder (suffix) that routed it. Absent for other results
+  // and for agents too old to report them.
+  upstream?: string
+  forwarder?: string
 }
 
 // A domain category (see /api/categories): the taxonomy entry, how many domains
@@ -468,6 +473,14 @@ export interface WindowTotals {
   errors: number
 }
 
+// UpstreamStat is the forwarded queries one upstream answered in the window.
+export interface UpstreamStat {
+  forwarder: string // conditional forwarder suffix ('' = the default upstreams)
+  upstream: string // as configured ('' = an agent too old to report it)
+  count: number
+  avg_latency_ms: number
+}
+
 export interface Insights {
   unique_clients: number
   avg_latency_ms: number
@@ -476,6 +489,7 @@ export interface Insights {
   top_blocked: DomainStat[]
   qtypes: TypeStat[]
   by_node: NodeQueries[]
+  by_upstream?: UpstreamStat[] // absent from an older control plane
   totals: WindowTotals
 }
 
@@ -696,6 +710,8 @@ export const api = {
       qtype?: string
       category?: string
       content?: string
+      upstream?: string
+      forwarder?: string
       sort?: string
       desc?: boolean
       hours?: number
@@ -708,6 +724,8 @@ export const api = {
     if (opts.qtype) p.set('qtype', opts.qtype)
     if (opts.category) p.set('category', opts.category)
     if (opts.content) p.set('content', opts.content)
+    if (opts.upstream) p.set('upstream', opts.upstream)
+    if (opts.forwarder) p.set('forwarder', opts.forwarder)
     if (opts.sort) p.set('sort', opts.sort)
     if (opts.desc) p.set('desc', 'true')
     if (opts.nodes && opts.nodes.length) p.set('nodes', opts.nodes.join(','))

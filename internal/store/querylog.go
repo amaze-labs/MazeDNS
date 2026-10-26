@@ -23,6 +23,12 @@ type QueryLogEntry struct {
 	// ContentCategory is what the domain is (social, shopping, …), labelled on
 	// the control plane as the entry arrives; Category is the block reason.
 	ContentCategory string `json:"content_category"`
+	// Upstream is the upstream that answered a forwarded query, as configured,
+	// and Forwarder the conditional forwarder's suffix that routed it ("" =
+	// the default upstreams). Empty for other actions, and for entries from an
+	// agent too old to report them.
+	Upstream  string `json:"upstream,omitempty"`
+	Forwarder string `json:"forwarder,omitempty"`
 }
 
 // InsertQueryLogBatch writes multiple entries in a single transaction.
@@ -35,14 +41,15 @@ func (s *Store) InsertQueryLogBatch(entries []QueryLogEntry) error {
 		return err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms) VALUES(?,?,?,?,?,?,?,?)`)
+		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, upstream, forwarder)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS); err != nil {
+		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, e.Upstream, e.Forwarder); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -61,15 +68,15 @@ func (s *Store) InsertNodeQueryLog(node string, entries []QueryLogEntry) error {
 		return err
 	}
 	stmt, err := tx.Prepare(
-		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category)
-		 VALUES(?,?,?,?,?,?,?,?,?,?)`)
+		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category, upstream, forwarder)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, node, e.ContentCategory); err != nil {
+		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, node, e.ContentCategory, e.Upstream, e.Forwarder); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -85,7 +92,7 @@ func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64,
 		limit = 5000
 	}
 	rows, err := s.read.Query(
-		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category, upstream, forwarder
 		 FROM query_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterID, limit)
 	if err != nil {
 		return nil, afterID, err
@@ -95,7 +102,7 @@ func (s *Store) QueryLogSince(afterID int64, limit int) ([]QueryLogEntry, int64,
 	maxID := afterID
 	for rows.Next() {
 		var e QueryLogEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node, &e.ContentCategory); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node, &e.ContentCategory, &e.Upstream, &e.Forwarder); err != nil {
 			return nil, afterID, err
 		}
 		if e.ID > maxID {
@@ -132,17 +139,21 @@ func (s *Store) CountQueryLog() (int64, error) {
 
 // QueryLogQuery describes a filtered, sorted, paginated query-log lookup.
 type QueryLogQuery struct {
-	Search   string   // substring match on name or client
-	Action   string   // exact action filter ("" = all)
-	QType    string   // exact query-type filter ("" = all)
-	Category string   // exact block-reason category filter ("" = all)
-	Content  string   // exact content-category filter ("" = all)
-	Nodes    []string // node filter (empty = all)
-	SinceMs  int64    // only entries with ts >= SinceMs (0 = no lower bound)
-	Sort     string   // column key (see queryLogSortColumns); default newest-first
-	Desc     bool     // sort descending
-	Limit    int
-	Offset   int
+	Search   string // substring match on name or client
+	Action   string // exact action filter ("" = all)
+	QType    string // exact query-type filter ("" = all)
+	Category string // exact block-reason category filter ("" = all)
+	Content  string // exact content-category filter ("" = all)
+	// Upstream filters on the upstream that answered ("" = all), and Forwarder
+	// further on the conditional forwarder that routed it ("" = any).
+	Upstream  string
+	Forwarder string
+	Nodes     []string // node filter (empty = all)
+	SinceMs   int64    // only entries with ts >= SinceMs (0 = no lower bound)
+	Sort      string   // column key (see queryLogSortColumns); default newest-first
+	Desc      bool     // sort descending
+	Limit     int
+	Offset    int
 }
 
 // queryLogSortColumns whitelists the user-facing sort keys -> SQL columns, so the
@@ -158,6 +169,7 @@ var queryLogSortColumns = map[string]string{
 	"rcode":    "rcode",
 	"ms":       "elapsed_ms",
 	"node":     "node",
+	"upstream": "upstream",
 }
 
 // SearchQueryLog returns a filtered, sorted page of query-log entries plus the
@@ -196,6 +208,14 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 		conds = append(conds, "content_category = ?")
 		args = append(args, q.Content)
 	}
+	if q.Upstream != "" {
+		conds = append(conds, "upstream = ?")
+		args = append(args, q.Upstream)
+		if q.Forwarder != "" {
+			conds = append(conds, "forwarder = ?")
+			args = append(args, q.Forwarder)
+		}
+	}
 	if len(q.Nodes) > 0 {
 		ph := make([]string, len(q.Nodes))
 		for i, n := range q.Nodes {
@@ -228,7 +248,7 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 		return nil, 0, err
 	}
 	rows, err := s.read.Query(
-		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category
+		`SELECT id, ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category, upstream, forwarder
 		 FROM query_log`+where+orderBy+` LIMIT ? OFFSET ?`,
 		append(args, q.Limit, q.Offset)...)
 	if err != nil {
@@ -238,7 +258,7 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 	var out []QueryLogEntry
 	for rows.Next() {
 		var e QueryLogEntry
-		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node, &e.ContentCategory); err != nil {
+		if err := rows.Scan(&e.ID, &e.TS, &e.Client, &e.Name, &e.QType, &e.Action, &e.Category, &e.Rcode, &e.ElapsedMS, &e.Node, &e.ContentCategory, &e.Upstream, &e.Forwarder); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, e)

@@ -143,6 +143,10 @@ func (e *Exporter) ship(ctx context.Context, cfg Config) (int, error) {
 			"content_category": q.ContentCategory,
 			"rcode":            q.Rcode,
 			"elapsed_ms":       q.ElapsedMS,
+			// Which upstream answered a forwarded query, and the conditional
+			// forwarder that routed it ('' = the default upstreams).
+			"upstream":  q.Upstream,
+			"forwarder": q.Forwarder,
 		})
 	}
 

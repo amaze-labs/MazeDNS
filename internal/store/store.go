@@ -214,6 +214,18 @@ CREATE TABLE IF NOT EXISTS category_rollup (
 	blocked  INTEGER NOT NULL,
 	PRIMARY KEY (hour, node, category)
 ) WITHOUT ROWID;
+-- upstream_rollup: per-minute, per-node forwarded queries by the upstream that
+-- answered (forwarder = the conditional forwarder's suffix, '' for the default
+-- upstreams, and upstream '' for an agent too old to report it), with a latency sum.
+CREATE TABLE IF NOT EXISTS upstream_rollup (
+	bucket    INTEGER NOT NULL,   -- unix minute = ts/60000
+	node      TEXT NOT NULL,
+	forwarder TEXT NOT NULL,
+	upstream  TEXT NOT NULL,
+	cnt       INTEGER NOT NULL,
+	lat_sum   REAL NOT NULL,
+	PRIMARY KEY (bucket, node, forwarder, upstream)
+) WITHOUT ROWID;
 -- category_overrides: an operator's category for a registered domain, which
 -- wins over every automatic source.
 CREATE TABLE IF NOT EXISTS category_overrides (
@@ -460,6 +472,10 @@ func (s *Store) migrate() error {
 		// database doesn't know, and whether it was asked yet.
 		`ALTER TABLE classifications ADD COLUMN content_category TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE classifications ADD COLUMN content_checked INTEGER NOT NULL DEFAULT 0`,
+		// The upstream that answered a forwarded query, and the conditional
+		// forwarder that routed it; '' for entries logged before.
+		`ALTER TABLE query_log ADD COLUMN upstream TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE query_log ADD COLUMN forwarder TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)

@@ -70,6 +70,17 @@ func (s *Store) RollupAdvance(batch int) (more bool, err error) {
 		return false, err
 	}
 	if _, err = tx.Exec(
+		`INSERT INTO upstream_rollup(bucket, node, forwarder, upstream, cnt, lat_sum)
+		 SELECT ts/60000, node, forwarder, upstream, COUNT(*), COALESCE(SUM(elapsed_ms), 0)
+		 FROM query_log WHERE id > ? AND id <= ? AND action = 'forward'
+		 GROUP BY ts/60000, node, forwarder, upstream
+		 ON CONFLICT(bucket, node, forwarder, upstream) DO UPDATE SET
+		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+		cursor, upto); err != nil {
+		_ = tx.Rollback()
+		return false, err
+	}
+	if _, err = tx.Exec(
 		`INSERT INTO meta(key, value) VALUES(?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, rollupCursorKey, upto); err != nil {
 		_ = tx.Rollback()
@@ -87,6 +98,9 @@ func (s *Store) PruneRollups(beforeMs int64) error {
 		return err
 	}
 	if _, err := s.db.Exec(`DELETE FROM category_rollup WHERE hour < ?`, beforeMs/3600000); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM upstream_rollup WHERE bucket < ?`, beforeMs/60000); err != nil {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM client_rollup WHERE hour < ?`, beforeMs/3600000)
@@ -338,6 +352,42 @@ func (s *Store) RollupTopClients(sinceMs int64, limit int, nodes []string) ([]Cl
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UpstreamStat is the forwarded queries one upstream answered in a window.
+type UpstreamStat struct {
+	Forwarder    string  `json:"forwarder"` // conditional forwarder suffix ("" = default upstreams)
+	Upstream     string  `json:"upstream"`  // as configured ("" = not reported)
+	Count        int64   `json:"count"`
+	AvgLatencyMS float64 `json:"avg_latency_ms"`
+}
+
+// RollupByUpstream returns forwarded queries per (forwarder, upstream) since
+// sinceMs from the upstream rollup, busiest first.
+func (s *Store) RollupByUpstream(sinceMs int64, nodes []string) ([]UpstreamStat, error) {
+	nf, nargs := nodeFilterSQL(nodes)
+	rows, err := s.read.Query(
+		`SELECT forwarder, upstream, SUM(cnt), SUM(lat_sum)
+		 FROM upstream_rollup WHERE bucket >= ?`+nf+`
+		 GROUP BY forwarder, upstream ORDER BY SUM(cnt) DESC, forwarder, upstream`,
+		append([]any{sinceMs / 60000}, nargs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UpstreamStat
+	for rows.Next() {
+		var u UpstreamStat
+		var latSum float64
+		if err := rows.Scan(&u.Forwarder, &u.Upstream, &u.Count, &latSum); err != nil {
+			return nil, err
+		}
+		if u.Count > 0 {
+			u.AvgLatencyMS = latSum / float64(u.Count)
+		}
+		out = append(out, u)
 	}
 	return out, rows.Err()
 }

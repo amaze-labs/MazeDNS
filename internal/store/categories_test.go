@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -181,5 +182,74 @@ func TestMoveVerdictContentCategories(t *testing.T) {
 		if got[d] != want {
 			t.Errorf("%s: (category, content) = %v, want %v", d, got[d], want)
 		}
+	}
+}
+
+// OtherQueries pages through "other" rows newest first, each exactly once,
+// even when a page boundary falls inside a run of equal timestamps.
+func TestOtherQueriesPaging(t *testing.T) {
+	s := openCatStore(t)
+	now := time.Now().UnixMilli()
+	var entries []QueryLogEntry
+	for i := range 25 {
+		cat := "other"
+		if i%5 == 0 {
+			cat = "social" // not "other": never returned
+		}
+		entries = append(entries, QueryLogEntry{TS: now - int64(i/4)*1000, Name: "x.example.com.", Action: "forward", ContentCategory: cat})
+	}
+	entries = append(entries, QueryLogEntry{TS: now - 2*time.Hour.Milliseconds(), Name: "old.example.com.", Action: "forward", ContentCategory: "other"})
+	if err := s.InsertNodeQueryLog("w1", entries); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int64]bool{}
+	var beforeTS, beforeID int64
+	var last UnlabelledQuery
+	for page := 0; ; page++ {
+		rows, err := s.OtherQueries(now-time.Hour.Milliseconds(), beforeTS, beforeID, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if seen[r.ID] {
+				t.Fatalf("page %d: id %d returned twice", page, r.ID)
+			}
+			if page > 0 || len(seen) > 0 {
+				if r.TS > last.TS || (r.TS == last.TS && r.ID > last.ID) {
+					t.Fatalf("page %d: (%d, %d) after (%d, %d): not newest first", page, r.TS, r.ID, last.TS, last.ID)
+				}
+			}
+			seen[r.ID], last = true, r
+		}
+		if len(rows) < 3 {
+			break
+		}
+		beforeTS, beforeID = last.TS, last.ID
+	}
+	if len(seen) != 20 {
+		t.Errorf("returned %d rows, want the 20 recent \"other\" ones", len(seen))
+	}
+}
+
+// Each page must walk the (content_category, ts) index in order: a sort would
+// re-read every "other" row in the window for every page.
+func TestOtherQueriesUsesIndexOrder(t *testing.T) {
+	s := openCatStore(t)
+	rows, err := s.read.Query(`EXPLAIN QUERY PLAN `+otherQueriesSQL(true), "other", 0, 1, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if all := strings.Join(plan, "\n"); strings.Contains(all, "TEMP B-TREE") || !strings.Contains(all, "idx_query_log_ccat_ts") {
+		t.Fatalf("plan:\n%s", all)
 	}
 }

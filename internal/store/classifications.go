@@ -369,9 +369,11 @@ func (s *Store) countClassificationsBy(column string) (map[string]int, error) {
 // ClientNodes maps each client IP to the node that served it the most queries
 // since sinceMs, so reverse-DNS can pick that node's local resolver (nodes can be
 // in different sites). The master's own entries (node "") are reported as "master".
+// It reads the per-hour client rollup (whole hours, so the window starts at
+// sinceMs' hour): counting the raw log scanned every query of the window.
 func (s *Store) ClientNodes(sinceMs int64) (map[string]string, error) {
 	rows, err := s.read.Query(
-		`SELECT client, node, COUNT(*) c FROM query_log WHERE ts >= ? GROUP BY client, node`, sinceMs)
+		`SELECT client, node, SUM(cnt) c FROM client_rollup WHERE hour >= ? GROUP BY client, node`, sinceMs/3600000)
 	if err != nil {
 		return nil, err
 	}

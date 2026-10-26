@@ -115,9 +115,9 @@ func (c *Categorizer) Relabel(since time.Time) (int, error) {
 	}
 	known := map[string]string{} // name -> category, per pass
 	moved := 0
-	var before int64
+	var beforeTS, beforeID int64
 	for page := 0; page < relabelMaxPages; page++ {
-		rows, err := c.st.OtherQueries(since.UnixMilli(), before, relabelPage)
+		rows, err := c.st.OtherQueries(since.UnixMilli(), beforeTS, beforeID, relabelPage)
 		if err != nil {
 			return moved, err
 		}
@@ -144,7 +144,8 @@ func (c *Categorizer) Relabel(since time.Time) (int, error) {
 		if len(rows) < relabelPage {
 			break
 		}
-		before = rows[len(rows)-1].ID
+		last := rows[len(rows)-1]
+		beforeTS, beforeID = last.TS, last.ID
 	}
 	return moved, nil
 }

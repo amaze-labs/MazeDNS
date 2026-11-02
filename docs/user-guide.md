@@ -433,7 +433,7 @@ rewrite, cache, and forwarding are unaffected; blocking resumes automatically.
 
 ## Clustering operations
 
-![Resolvers, grouped by site](images/agents.png)
+![Resolvers, grouped by site](images/resolvers.png)
 
 The control plane is the source of truth; each resolver pulls rules + rewrites over an
 authenticated snapshot and applies them live. The control plane never answers DNS,
@@ -454,7 +454,7 @@ so its dashboard/classifier load can't affect resolver latency.
 - **Node health** — the Resolvers page shows each node's address, status, version,
   sync state and counters; open a resolver for its details.
 
-  ![A resolver's details](images/agent-detail.png)
+  ![A resolver's details](images/resolver-detail.png)
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
 - **Removing resolvers** — *Remove & revoke* tombstones the node so the still-running
@@ -634,7 +634,7 @@ the bottom and the rest under **More**.
 
 | Overview | More | Resolvers |
 |---|---|---|
-| ![Overview on a phone](images/mobile-overview.png) | ![The More menu](images/mobile-more.png) | ![Resolvers on a phone](images/mobile-agents.png) |
+| ![Overview on a phone](images/mobile-overview.png) | ![The More menu](images/mobile-more.png) | ![Resolvers on a phone](images/mobile-resolvers.png) |
 
 ## Seeing real client IPs
 

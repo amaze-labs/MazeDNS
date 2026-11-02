@@ -62,7 +62,7 @@ from their last copy if the control plane goes away. Group them into sites with
 a role each, put one in maintenance to drain it, and see at a glance which
 resolvers are healthy, in sync and up to date.
 
-![Resolvers in sites](docs/images/agents.png)
+![Resolvers in sites](docs/images/resolvers.png)
 
 ### And everything around it
 

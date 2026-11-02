@@ -5,10 +5,9 @@ import Modal from './Modal'
 import { Skel, SkelList } from './Skeleton'
 import { useIsAdmin } from './ScopePicker'
 import { useTable, Th, Pager, TableStatusRow, type SortAccessors } from './tableKit'
-import { agentOutdated, latestAgent, versionKnown } from '../agentVersion'
+import { agentOutdated, latestAgent, nodeOnline, versionKnown } from '../agentVersion'
 import '../styles/agents.css'
 
-const ONLINE_WINDOW = 120 // seconds
 const IMAGE = 'ghcr.io/amaze-labs/mazedns-resolver:latest'
 const RATE_HOURS = 1 // window behind the per-agent q/s and latency figures
 
@@ -69,7 +68,7 @@ function CodeBlock({ label, text }: { label: string; text: string }) {
   )
 }
 
-const ONLINE = (n: Node) => !!n.last_seen && Date.now() / 1000 - n.last_seen < ONLINE_WINDOW
+const ONLINE = (n: Node) => nodeOnline(n)
 const SERVING = (n: Node) => ONLINE(n) && n.approved && !n.maintenance
 const BEHIND = (n: Node) => n.approved && !!n.expected_version && n.version !== n.expected_version
 
@@ -99,8 +98,11 @@ const ENROLL_COLS: SortAccessors<EnrollKey> = {
   created: (k) => k.created_at,
 }
 
-// outdated: the agent's code is older than the latest agent code (see agentVersion.ts).
-const outdated = (n: Node, cp?: CPVersion) => agentOutdated(n.app_version, cp?.version, cp?.agent_build)
+// outdated: the agent is online and its code is older than the latest agent
+// code (see agentVersion.ts). An offline agent's version is only the last one it
+// reported, so it is never flagged: updating the running ones must clear the
+// warning.
+const outdated = (n: Node, cp?: CPVersion) => ONLINE(n) && agentOutdated(n.app_version, cp?.version, cp?.agent_build)
 
 type CPVersion = { version: string; agent_build?: string; config_version: string }
 type Rate = { qps?: number; ms?: number }
@@ -1382,7 +1384,8 @@ function AgentDrawer({
           <dt>Version</dt>
           <dd>
             {node.app_version || <span className="muted">unknown — predates version reporting</span>}
-            {node.app_version && versionKnown(cpVer?.version) && (
+            {node.app_version && !ONLINE(node) && <span className="muted"> (last reported)</span>}
+            {node.app_version && ONLINE(node) && versionKnown(cpVer?.version) && (
               outdated(node, cpVer ?? undefined) ? (
                 <span className="tag warn ag-tag-gap" title={`The latest resolver code is release ${cpVer!.agent_build || cpVer!.version}`}>
                   update available

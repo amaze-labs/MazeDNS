@@ -303,3 +303,25 @@ func TestMFAGuessLimitAcrossChallenges(t *testing.T) {
 		t.Fatalf("after %d guesses: %d %s", mfaCodeLimit, rr.Code, rr.Body)
 	}
 }
+
+// Sign-in calls sweep the login limiter with their own (shorter) window; they
+// must not reset the per-account count of code guesses.
+func TestMFAGuessLimitSurvivesLoginSweeps(t *testing.T) {
+	s, _ := newAuthServer(t)
+	s.applyCPSettings(store.CPSettings{SessionTTLSec: 3600, LoginRateAttempts: 100, LoginRateWindowSec: 1})
+	c := &mfaClient{t: t, s: s}
+	c.login("admin", "correcthorse7")
+	c.enroll() // one guess
+	for i := 1; i < mfaCodeLimit; i++ {
+		if !s.mfaRate.allow("1", mfaCodeLimit, mfaCodeWindow) {
+			t.Fatalf("guess %d refused early", i+1)
+		}
+	}
+	// Let the 1 s login window lapse, then sign in, which sweeps loginRate.
+	time.Sleep(1100 * time.Millisecond)
+	_, out := c.login("admin", "correcthorse7")
+	rr, _ := c.do(s.mfaVerify, "/api/auth/mfa/verify", jsonBody(map[string]string{"challenge": out["challenge"].(string), "code": "000000"}))
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("guess limit reset by a sign-in: %d", rr.Code)
+	}
+}

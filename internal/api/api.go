@@ -66,7 +66,11 @@ type Server struct {
 	joinTokenHash       string                  // hash of the configured deprecated join_token ("" = none); see SetJoinToken
 	// Login rate limiting (finding #2). loginRate keys fixed windows by IP and by
 	// username; the limits are live-applied from CPSettings via applyCPSettings.
-	loginRate     *keyedLimiter
+	loginRate *keyedLimiter
+	// mfaRate limits TOTP code guesses per account (mfa.go). It is its own
+	// limiter: keyedLimiter drops windows older than the caller's window, so
+	// sharing loginRate would let a login call (shorter window) reset it.
+	mfaRate       *keyedLimiter
 	loginLimitMu  sync.RWMutex
 	loginAttempts int
 	loginWindow   time.Duration
@@ -149,6 +153,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 	s.setupDone.Store(true) // no gating unless main calls EnableSetupMode
 	// Login rate limiting seeded to the default; live-updated via applyCPSettings.
 	s.loginRate = newKeyedLimiter()
+	s.mfaRate = newKeyedLimiter()
 	s.loginAttempts = defaultLoginRateAttempts
 	s.loginWindow = defaultLoginRateWindow
 	mux := http.NewServeMux()

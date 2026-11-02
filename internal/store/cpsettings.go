@@ -54,6 +54,10 @@ type CPSettings struct {
 	// disables it. Seeded to 10 attempts / 60s.
 	LoginRateAttempts  int `json:"login_rate_attempts"`
 	LoginRateWindowSec int `json:"login_rate_window_sec"`
+	// RequireMFA makes TOTP two-factor sign-in mandatory for local (password)
+	// accounts: one without it must set it up right after its next password
+	// sign-in. SSO accounts are left to the identity provider.
+	RequireMFA bool `json:"require_mfa"`
 	// Metrics scrape token: when set, GET /metrics on the control plane requires
 	// "Authorization: Bearer <token>". Stored hashed (sha256) with a display prefix;
 	// the raw token is shown once at generation and never returned. Empty = /metrics

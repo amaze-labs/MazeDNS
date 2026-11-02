@@ -243,7 +243,21 @@ CREATE TABLE IF NOT EXISTS users (
 	avatar_url TEXT NOT NULL DEFAULT '',
 	avatar_data TEXT NOT NULL DEFAULT '',
 	password_hash TEXT NOT NULL DEFAULT '',
-	updated_at INTEGER NOT NULL
+	updated_at INTEGER NOT NULL,
+	totp_secret TEXT NOT NULL DEFAULT '',
+	totp_pending TEXT NOT NULL DEFAULT '',
+	totp_last_step INTEGER NOT NULL DEFAULT 0,
+	recovery_codes TEXT NOT NULL DEFAULT ''
+);
+-- mfa_challenges: a password sign-in waiting for its second factor (kind
+-- verify) or for the account to set one up (kind setup). Keyed by the hash of
+-- the token like sessions, short-lived and single-use.
+CREATE TABLE IF NOT EXISTS mfa_challenges (
+	token      TEXT PRIMARY KEY,
+	user_id    INTEGER NOT NULL,
+	kind       TEXT NOT NULL,
+	attempts   INTEGER NOT NULL DEFAULT 0,
+	expires_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
 	token TEXT PRIMARY KEY,
@@ -476,6 +490,13 @@ func (s *Store) migrate() error {
 		// forwarder that routed it; '' for entries logged before.
 		`ALTER TABLE query_log ADD COLUMN upstream TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE query_log ADD COLUMN forwarder TEXT NOT NULL DEFAULT ''`,
+		// TOTP two-factor sign-in for local accounts: the confirmed secret, one
+		// being set up, the last accepted time step (replay guard) and the
+		// recovery codes' hashes (JSON array). An empty secret means MFA is off.
+		`ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN totp_pending TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("migrate alter: %w", err)

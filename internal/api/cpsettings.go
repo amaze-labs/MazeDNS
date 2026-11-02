@@ -220,6 +220,9 @@ func cpSettingsDiff(a, b store.CPSettings) string {
 	if a.QueryLog != b.QueryLog {
 		ch = append(ch, fmt.Sprintf("query_log=%t", b.QueryLog))
 	}
+	if a.RequireMFA != b.RequireMFA {
+		ch = append(ch, fmt.Sprintf("require_mfa=%t", b.RequireMFA))
+	}
 	if a.LoginRateAttempts != b.LoginRateAttempts || a.LoginRateWindowSec != b.LoginRateWindowSec {
 		ch = append(ch, fmt.Sprintf("login_rate=%d/%ds", b.LoginRateAttempts, b.LoginRateWindowSec))
 	}

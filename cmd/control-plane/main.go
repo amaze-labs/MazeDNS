@@ -421,7 +421,8 @@ func buildOIDC(ctx context.Context, o store.OIDCSettings) (*auth.OIDCProvider, e
 //	control-plane reset-admin [--config path] [--username name] [--password pw]
 //
 // It creates the admin if none exists, or resets an existing user to admin with a
-// new password. A missing password is generated and printed once.
+// new password and two-factor sign-in off. A missing password is generated and
+// printed once.
 func resetAdminCmd(args []string) {
 	fs := flag.NewFlagSet("reset-admin", flag.ExitOnError)
 	cfgPath := fs.String("config", "configs/mazedns.yaml", "path to the YAML config file")
@@ -474,6 +475,16 @@ func resetAdminCmd(args []string) {
 		}
 		if existing.Role != "admin" {
 			_ = st.UpdateUserRole(existing.ID, "admin")
+		}
+		// Break-glass means the authenticator may be gone too: clear two-factor
+		// sign-in (set up again at the next sign-in if the policy requires it).
+		if m, _ := st.GetMFA(existing.ID); m != nil && m.Secret != "" {
+			if err := st.DisableTOTP(existing.ID); err != nil {
+				slog.Error("reset two-factor sign-in", "err", err)
+				os.Exit(1)
+			}
+			_ = st.DeleteMFAChallengesForUser(existing.ID)
+			slog.Info("two-factor sign-in turned off", "username", *username)
 		}
 		slog.Info("admin password reset", "username", *username)
 	} else {

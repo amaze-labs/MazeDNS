@@ -1,6 +1,6 @@
 // Command control-plane runs the MazeDNS control plane: the HTTP API, web UI,
 // auth, domain classifier, list refresher, cluster coordination, and dashboard
-// aggregation. It never serves DNS — every query is answered by the dns-agent
+// aggregation. It never serves DNS — every query is answered by the dns-resolver
 // fleet — so control-plane load (dashboards, stats, classification) cannot affect
 // resolver latency.
 package main
@@ -501,7 +501,7 @@ func warnRemovedBootstrapNodes(spec string) bool {
 	if strings.TrimSpace(spec) == "" {
 		return false
 	}
-	slog.Warn("MAZEDNS_CLUSTER_BOOTSTRAP_NODES was removed and is ignored — create an enrollment key in the UI (or via the admin API) and pass it to agents as MAZEDNS_JOIN_TOKEN")
+	slog.Warn("MAZEDNS_CLUSTER_BOOTSTRAP_NODES was removed and is ignored — create an enrollment key in the UI (or via the admin API) and pass it to resolvers as MAZEDNS_JOIN_TOKEN")
 	return true
 }
 
@@ -524,7 +524,7 @@ func importDeprecatedJoinToken(st *store.Store, token string) {
 		return
 	}
 	slog.Warn("cluster.join_token / MAZEDNS_JOIN_TOKEN is deprecated: imported as a never-expiring enrollment key " +
-		"(manage and revoke it under Agents → Enrollment keys in the UI)")
+		"(manage and revoke it under Resolvers → Enrollment keys in the UI)")
 }
 
 // dataDir is where the control plane keeps downloaded data (the category
@@ -547,27 +547,29 @@ const agentOnlineWindow = 120 * time.Second
 // agents it serves, the query log they ship, the category database and the
 // classifier's verdicts. (Query counts are the agents' — see their metrics.)
 func registerControlPlaneMetrics(mx *metrics.Metrics, st *store.Store, apiSrv *api.Server, catDB *categories.Holder) {
-	mx.RegisterLabeledGauge("agents", "Enrolled agents by state: online (seen in the last 2 minutes), offline, or pending approval.", "state",
-		func() map[string]float64 {
-			out := map[string]float64{"online": 0, "offline": 0, "pending": 0}
-			nodes, err := st.ListNodes()
-			if err != nil {
-				return out
-			}
-			now := time.Now()
-			for _, n := range nodes {
-				switch {
-				case !n.Approved:
-					out["pending"]++
-				case n.LastSeen > 0 && now.Sub(time.Unix(n.LastSeen, 0)) < agentOnlineWindow:
-					out["online"]++
-				default:
-					out["offline"]++
-				}
-			}
+	byState := func() map[string]float64 {
+		out := map[string]float64{"online": 0, "offline": 0, "pending": 0}
+		nodes, err := st.ListNodes()
+		if err != nil {
 			return out
-		})
-	mx.RegisterCounter("querylog_ingested_total", "Query-log entries received from agents.",
+		}
+		now := time.Now()
+		for _, n := range nodes {
+			switch {
+			case !n.Approved:
+				out["pending"]++
+			case n.LastSeen > 0 && now.Sub(time.Unix(n.LastSeen, 0)) < agentOnlineWindow:
+				out["online"]++
+			default:
+				out["offline"]++
+			}
+		}
+		return out
+	}
+	mx.RegisterLabeledGauge("resolvers", "Enrolled resolvers by state: online (seen in the last 2 minutes), offline, or pending approval.", "state", byState)
+	// The pre-rename name, kept so existing dashboards and alerts keep working.
+	mx.RegisterLabeledGauge("agents", "Deprecated, use mazedns_resolvers (same values); removed in the next major release.", "state", byState)
+	mx.RegisterCounter("querylog_ingested_total", "Query-log entries received from resolvers.",
 		func() float64 { return float64(apiSrv.QueryLogIngested()) })
 	mx.RegisterLabeledGauge("classifications", "Classifier verdicts by status (suggested, auto, approved, rejected, clean).", "status",
 		func() map[string]float64 {

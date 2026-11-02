@@ -1,4 +1,4 @@
-// Command dns-agent runs a MazeDNS resolver node (the data plane): it serves DNS
+// Command dns-resolver runs a MazeDNS resolver node (the data plane): it serves DNS
 // (UDP/TCP, optionally DoT/DoH), replicates its filtering config from the control
 // plane, ships its query log and stats back, and exposes only /healthz, /readyz
 // and /metrics over HTTP. It carries no dashboard, auth, or classifier, so nothing
@@ -51,6 +51,12 @@ const nodeIDMeta = "node_id"
 // so the node keeps reaching the control plane even if DNS/hostname later breaks.
 const cpIPMeta = "cp_ip"
 
+// oldName reports whether the binary was started under its pre-rename name,
+// dns-agent (still shipped as a symlink in the image, see the Dockerfile).
+func oldName(arg0 string) bool {
+	return filepath.Base(arg0) == "dns-agent"
+}
+
 func main() {
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
 	healthcheck := flag.Bool("healthcheck", false, "query this node's /readyz and exit 0 (ready) or 1 (not ready); for container health checks")
@@ -73,7 +79,10 @@ func main() {
 	for _, d := range cfg.Deprecations {
 		slog.Warn(d)
 	}
-	slog.Info("MazeDNS dns-agent starting", "version", version.Short())
+	slog.Info("MazeDNS resolver starting", "version", version.Short())
+	if oldName(os.Args[0]) {
+		slog.Warn("the dns-agent binary name is deprecated and will be removed in the next major release; run dns-resolver instead")
+	}
 
 	st, err := boot.OpenStore(cfg)
 	if err != nil {
@@ -220,7 +229,7 @@ func main() {
 	ready := &readiness{res: res, srv: dnsSrv, sync: syncHealth}
 	httpSrv := healthServer(net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port)), mx, ready)
 	go func() {
-		slog.Info("MazeDNS agent HTTP starting (healthz + readyz + metrics)", "addr", httpSrv.Addr)
+		slog.Info("MazeDNS resolver HTTP starting (healthz + readyz + metrics)", "addr", httpSrv.Addr)
 		if e := httpSrv.ListenAndServe(); e != nil && e != http.ErrServerClosed {
 			slog.Error("http server stopped", "err", e)
 		}
@@ -433,7 +442,7 @@ func hintUnresolvableCP(err error, pinnedIP string) {
 	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
-		slog.Warn("control-plane hostname did not resolve — if this agent is the only DNS on its network, "+
+		slog.Warn("control-plane hostname did not resolve — if this resolver is the only DNS on its network, "+
 			"pin the control plane's IP with MAZEDNS_CP_IP (TLS still verifies the URL host)", "host", dnsErr.Name)
 	}
 }

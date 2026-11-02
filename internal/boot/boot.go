@@ -1,4 +1,4 @@
-// Package boot holds startup helpers shared by the control-plane and dns-agent
+// Package boot holds startup helpers shared by the control-plane and dns-resolver
 // entrypoints: logging, GC tuning, store opening, config→resolver conversions,
 // and the filtering/rewrite policy builder.
 package boot

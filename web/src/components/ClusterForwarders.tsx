@@ -88,7 +88,7 @@ export default function ClusterForwarders({ reload = 0 }: { reload?: number }) {
 
   const saveEdit = async (f: Forwarder, raw: string, s: Scope) => {
     const ups = splitUpstreams(raw)
-    if (ups.length === 0) throw new Error('Enter at least one resolver')
+    if (ups.length === 0) throw new Error('Enter at least one upstream')
     await api.updateForwarder(f.id, ups, f.enabled, s.scope_type, s.scope_values)
     setEditing(null)
     load()
@@ -117,7 +117,7 @@ export default function ClusterForwarders({ reload = 0 }: { reload?: number }) {
             <input className="mono" placeholder="corp.internal" value={suffix} onChange={(e) => setSuffix(e.target.value)} />
           </label>
           <label className="field">
-            <span>Resolvers</span>
+            <span>Upstreams</span>
             <input
               className="mono"
               placeholder="10.0.0.2:53, 10.0.0.3:53"
@@ -144,7 +144,7 @@ export default function ClusterForwarders({ reload = 0 }: { reload?: number }) {
           <thead>
             <tr>
               <Th table={table} col="suffix">Domain</Th>
-              <Th table={table} col="upstreams">Resolvers</Th>
+              <Th table={table} col="upstreams">Upstreams</Th>
               <Th table={table} col="scope">Scope</Th>
               <th>{admin ? <span className="sr-only">Enabled</span> : 'Status'}</th>
               {admin && <th></th>}
@@ -192,7 +192,7 @@ export default function ClusterForwarders({ reload = 0 }: { reload?: number }) {
               </tr>
             ))}
             <TableStatusRow loading={!loaded} error={err} empty={fwds.length === 0} colSpan={admin ? 5 : 4}>
-              No forwarding rules. Every name goes to the normal upstream resolvers.
+              No forwarding rules. Every name goes to the normal upstreams.
             </TableStatusRow>
           </tbody>
         </table>
@@ -208,7 +208,7 @@ export default function ClusterForwarders({ reload = 0 }: { reload?: number }) {
               rule and add a new one.
             </>
           }
-          fieldLabel="Resolvers (comma-separated)"
+          fieldLabel="Upstreams (comma-separated)"
           fieldPlaceholder="10.0.0.2:53, 10.0.0.3:53"
           initialText={editing.upstreams.join(', ')}
           initialScope={{ scope_type: editing.scope_type || 'all', scope_values: editing.scope_values ?? [] }}

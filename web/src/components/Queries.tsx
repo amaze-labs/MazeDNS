@@ -358,8 +358,8 @@ export default function Queries() {
       </header>
       <p className="intro">
         {live
-          ? `Queries appear within about a second of an agent answering them, newest first; the last ${LIVE_CAP.toLocaleString()} are kept. Click one to see why it was answered that way. Agents running an older version don't stream.`
-          : 'Every query your agents answered. Click one to see why it was answered that way, and allow or block the domain from there.'}
+          ? `Queries appear within about a second of a resolver answering them, newest first; the last ${LIVE_CAP.toLocaleString()} are kept. Click one to see why it was answered that way. Resolvers running an older version don't stream.`
+          : 'Every query your resolvers answered. Click one to see why it was answered that way, and allow or block the domain from there.'}
       </p>
       {err && !live && <div className="error">{err}</div>}
 
@@ -430,7 +430,7 @@ export default function Queries() {
                   <th>Result</th>
                   <th className="hide-sm">Category</th>
                   <th>Client</th>
-                  <th>Agent</th>
+                  <th>Resolver</th>
                   <th className="hide-sm">Upstream</th>
                   <th className="num">Latency</th>
                 </tr>
@@ -444,7 +444,7 @@ export default function Queries() {
                     Category
                   </Th>
                   <Th table={sorter} col="client">Client</Th>
-                  <Th table={sorter} col="node">Agent</Th>
+                  <Th table={sorter} col="node">Resolver</Th>
                   <Th table={sorter} col="upstream" className="hide-sm">
                     Upstream
                   </Th>
@@ -705,22 +705,22 @@ function explain(e: QueryLogEntry, rule: Rule | undefined, cats: CategoryList | 
       return {
         kind: '',
         title: 'Forwarded upstream',
-        text: `It wasn’t blocked, answered by a local record or cached, so the agent asked ${
+        text: `It wasn’t blocked, answered by a local record or cached, so the resolver asked ${
           e.upstream
             ? `${upstreamName(e.upstream)}${e.forwarder ? ` (the conditional forwarder for ${e.forwarder})` : ''}`
-            : 'an upstream resolver'
+            : 'an upstream server'
         }. ${answered}`,
       }
     case 'cache':
-      return { kind: 'ok', title: 'Answered from cache', text: `The agent still had the answer from an earlier upstream lookup. ${answered}` }
+      return { kind: 'ok', title: 'Answered from cache', text: `The resolver still had the answer from an earlier upstream lookup. ${answered}` }
     case 'rewrite':
       return { kind: 'warn', title: 'Local DNS', text: `One of your local records answers this name instead of asking upstream. ${answered}` }
     case 'authoritative':
-      return { kind: 'ok', title: 'Answered from a local zone', text: `The agent is authoritative for this name and answered it itself. ${answered}` }
+      return { kind: 'ok', title: 'Answered from a local zone', text: `The resolver is authoritative for this name and answered it itself. ${answered}` }
     case 'error':
-      return { kind: 'bad', title: 'Lookup failed', text: `The upstream resolvers didn’t answer in time (or the query was malformed), so the agent replied ${e.rcode || 'with an error'}.` }
+      return { kind: 'bad', title: 'Lookup failed', text: `The upstreams didn’t answer in time (or the query was malformed), so the resolver replied ${e.rcode || 'with an error'}.` }
     case 'refused':
-      return { kind: 'warn', title: 'Refused', text: 'The client went over the per-client rate limit, so the agent refused the query.' }
+      return { kind: 'warn', title: 'Refused', text: 'The client went over the per-client rate limit, so the resolver refused the query.' }
     default:
       return { kind: '', title: resultOf(e.action).label, text: answered }
   }
@@ -867,7 +867,7 @@ function QueryDrawer({
           <dd>{e.rcode || '—'}</dd>
           <dt>Latency</dt>
           <dd>{fmtMs(e.elapsed_ms)}</dd>
-          <dt>Agent</dt>
+          <dt>Resolver</dt>
           <dd>
             {e.node || 'master'}
             {node?.site ? <span className="muted"> ({node.site})</span> : null}

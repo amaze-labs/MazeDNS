@@ -133,7 +133,7 @@ export default function Clients() {
         {nodeNames.length > 0 && <NodeFilter options={nodeNames} selected={focus} onChange={setFocus} color={nodeColor} sites={siteGroups(nodes)} />}
       </header>
       <p className="intro">
-        Devices that asked your agents for names. Give a device a name once and it shows up everywhere: queries, charts and
+        Devices that asked your resolvers for names. Give a device a name once and it shows up everywhere: queries, charts and
         logs.
       </p>
       {err && <div className="error">{err}</div>}

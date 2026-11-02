@@ -577,7 +577,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       <header className="page-head">
         <h1>Settings</h1>
       </header>
-      <p className="intro">Saved in the database and pushed to every agent within a few seconds. No restarts.</p>
+      <p className="intro">Saved in the database and pushed to every resolver within a few seconds. No restarts.</p>
     </>
   )
 
@@ -709,15 +709,15 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const resolverView = (
     <>
       <Group
-        title="Upstream resolvers"
+        title="Upstream servers"
         desc={
           hedged
-            ? 'Where agents send queries they can’t answer from cache. The first is asked; if it is slow, the rest race it.'
-            : 'Where agents send queries they can’t answer from cache. Tried top to bottom.'
+            ? 'Where resolvers send queries they can’t answer from cache. The first is asked; if it is slow, the rest race it.'
+            : 'Where resolvers send queries they can’t answer from cache. Tried top to bottom.'
         }
       >
         {rawUpstreams ? (
-          <Field label="One resolver per line" hint="Formats: 1.1.1.1, 1.1.1.1:5353, tls://1.1.1.1:853#cloudflare-dns.com, https://dns.quad9.net/dns-query">
+          <Field label="One upstream per line" hint="Formats: 1.1.1.1, 1.1.1.1:5353, tls://1.1.1.1:853#cloudflare-dns.com, https://dns.quad9.net/dns-query">
             <textarea
               rows={Math.max(4, upRows.length + 1)}
               value={upstreams}
@@ -733,7 +733,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               return (
                 <div className={`up${open ? ' open' : ''}`} key={i} data-upstream-row={i}>
                   <div className="up-line">
-                    <span className="ord" title={i === 0 ? 'Primary resolver' : `Fallback ${i}`}>
+                    <span className="ord" title={i === 0 ? 'Primary upstream' : `Fallback ${i}`}>
                       {i + 1}
                     </span>
                     <span className={`proto ${r.proto === 'plain' ? 'plain' : 'enc'}`}>{PROTO_LABEL[r.proto]}</span>
@@ -742,7 +742,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                       className="addr"
                       onClick={() => setEditing(open && editing === i ? null : i)}
                       aria-expanded={open}
-                      title="Edit this resolver"
+                      title="Edit this upstream"
                     >
                       <span className={`a${isEmptyRow(r) ? ' unset' : ''}`}>{d.addr}</span>
                       <small>{d.sub}</small>
@@ -754,7 +754,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                         data-move={-1}
                         onClick={() => moveRow(i, -1)}
                         disabled={i === 0}
-                        aria-label={`Move resolver ${i + 1} up`}
+                        aria-label={`Move upstream ${i + 1} up`}
                         title="Move up"
                       >
                         ↑
@@ -765,12 +765,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                         data-move={1}
                         onClick={() => moveRow(i, 1)}
                         disabled={i === upRows.length - 1}
-                        aria-label={`Move resolver ${i + 1} down`}
+                        aria-label={`Move upstream ${i + 1} down`}
                         title="Move down"
                       >
                         ↓
                       </button>
-                      <button type="button" className="del" onClick={() => delRow(i)} aria-label={`Remove resolver ${i + 1}`} title="Remove">
+                      <button type="button" className="del" onClick={() => delRow(i)} aria-label={`Remove upstream ${i + 1}`} title="Remove">
                         ✕
                       </button>
                     </span>
@@ -848,7 +848,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <div className="presets">
           {!rawUpstreams && (
             <button type="button" className="btn sm" onClick={addRow}>
-              Add resolver
+              Add upstream
             </button>
           )}
           <span className="muted">or use a preset:</span>
@@ -894,7 +894,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             </select>
           </Field>
           {!hedged && (
-            <Field label="Timeout per resolver (ms)">
+            <Field label="Timeout per upstream (ms)">
               <input
                 type="number"
                 min={100}
@@ -908,8 +908,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </div>
         <p className="hint">
           {hedged
-            ? 'Lowest latency, but queries reach several resolvers and which one answers is not predictable. Also applies to conditional forwarders with more than one upstream.'
-            : 'How long one resolver may take before the next is tried (default 1500 ms); the last one gets the rest of the 5 s query budget. Also applies to conditional forwarders with more than one upstream.'}
+            ? 'Lowest latency, but queries reach several upstreams and which one answers is not predictable. Also applies to conditional forwarders with more than one upstream.'
+            : 'How long one upstream may take before the next is tried (default 1500 ms); the last one gets the rest of the 5 s query budget. Also applies to conditional forwarders with more than one upstream.'}
         </p>
       </Group>
 
@@ -917,8 +917,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         title="Conditional forwarders"
         desc={
           <>
-            Send a domain to specific resolvers — your router for <code>home.lan</code>, the office DNS for{' '}
-            <code>corp.internal</code>. Pushed to the agents in scope, overriding an agent's own forwarder for the same
+            Send a domain to specific DNS servers — your router for <code>home.lan</code>, the office DNS for{' '}
+            <code>corp.internal</code>. Pushed to the resolvers in scope, overriding a resolver's own forwarder for the same
             domain. Changes apply as soon as you make them.
           </>
         }
@@ -933,7 +933,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
               </b>
               <p>
                 {legacyFwd.map((g) => `${g.suffix} → ${(g.upstreams || []).join(', ')}`).join(' · ')}. They were kept on
-                the control plane, which answers no queries. Move them to the list below to forward them on every agent,
+                the control plane, which answers no queries. Move them to the list below to forward them on every resolver,
                 or remove them.
               </p>
               {!readonly && (
@@ -981,7 +981,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
       <Group title="Cache" desc="Answers are reused until their TTL runs out.">
         <Toggle
-          label="Cache answers on every agent"
+          label="Cache answers on every resolver"
           desc="Turn off only to debug; every query then goes upstream."
           checked={s.cache.enabled}
           onChange={(v) => patchCache({ enabled: v })}
@@ -1112,7 +1112,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       <InfoIcon />
       <div>
         <b>Only administrators can see access settings</b>
-        <p>Sign-in methods, sessions and agent enrollment policy are visible to the admin role.</p>
+        <p>Sign-in methods, sessions and resolver enrollment policy are visible to the admin role.</p>
       </div>
     </div>
   ) : !cp ? (
@@ -1295,10 +1295,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         <p className="hint">Failed and successful sign-ins are throttled per source address and per username.</p>
       </Group>
 
-      <Group title="New agents" desc="What happens when an agent enrolls with a valid key.">
+      <Group title="New resolvers" desc="What happens when a resolver enrolls with a valid key.">
         <Toggle
-          label="Ask me before a new agent serves DNS"
-          desc="It shows up under Agents waiting for approval."
+          label="Ask me before a new resolver serves DNS"
+          desc="It shows up under Resolvers waiting for approval."
           checked={cp.require_approval}
           onChange={(v) => setCp({ ...cp, require_approval: v })}
         />
@@ -1321,8 +1321,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </Field>
         </div>
         <Field
-          label="Address agents use to reach this control plane"
-          hint="Optional. Leave empty to use the address agents enrolled with."
+          label="Address resolvers use to reach this control plane"
+          hint="Optional. Leave empty to use the address resolvers enrolled with."
         >
           <input
             className="mono"
@@ -1389,7 +1389,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </li>
         </ul>
         <p className="hint">
-          To block whole types on every agent (adult, gambling, social…), go to{' '}
+          To block whole types on every resolver (adult, gambling, social…), go to{' '}
           <a
             href="/filtering?tab=categories"
             onClick={(e) => {
@@ -1751,8 +1751,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             label="Export metrics"
             desc={
               <>
-                Each agent pushes its own Prometheus metrics to <code>/api/v1/import/prometheus</code>, labelled with
-                its instance, so nothing has to scrape every agent. Changes apply on the next push.
+                Each resolver pushes its own Prometheus metrics to <code>/api/v1/import/prometheus</code>, labelled with
+                its instance, so nothing has to scrape every resolver. Changes apply on the next push.
               </>
             }
             checked={vm.enabled}
@@ -1909,7 +1909,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         </div>
       </Group>
 
-      <Group title="Change history" desc="Recorded admin actions on settings, people and agents, newest first.">
+      <Group title="Change history" desc="Recorded admin actions on settings, people and resolvers, newest first.">
         {auditErr ? (
           <div className="error">
             <span className="grow">Couldn't load the history: {auditErr}</span>
@@ -2028,7 +2028,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
                   )}
                 </span>
               ) : savedNote ? (
-                <span className="ok-text grow">Saved and pushed to agents.</span>
+                <span className="ok-text grow">Saved and pushed to resolvers.</span>
               ) : (
                 <span className="muted grow">No unsaved changes</span>
               )}

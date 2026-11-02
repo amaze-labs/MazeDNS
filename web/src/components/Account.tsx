@@ -242,8 +242,8 @@ export default function Account({
           </div>
           <p className="muted small role-note">
             {me?.role === 'admin'
-              ? 'Administrators can change settings, rules, agents and people.'
-              : 'Viewers see everything but can’t change settings, rules or agents.'}
+              ? 'Administrators can change settings, rules, resolvers and people.'
+              : 'Viewers see everything but can’t change settings, rules or resolvers.'}
           </p>
           <div className="pic-actions">
             {me?.can_upload_avatar ? (
@@ -331,7 +331,7 @@ export default function Account({
           <div className="people-head">
             <div>
               <h2 className="section">People</h2>
-              <p className="section">Viewers see everything but can’t change settings, rules or agents.</p>
+              <p className="section">Viewers see everything but can’t change settings, rules or resolvers.</p>
             </div>
             <span className="spacer" />
             {!adding && (

@@ -374,7 +374,7 @@ func Load(path string) (Config, error) {
 	}
 	if yaml.Unmarshal(data, &probe) == nil && probe.Cluster.Enabled != nil {
 		cfg.Deprecations = append(cfg.Deprecations,
-			"config: cluster.enabled was removed and is ignored — clustering is automatic (an agent joins when cp_url and a credential are set)")
+			"config: cluster.enabled was removed and is ignored — clustering is automatic (a resolver joins when cp_url and a credential are set)")
 	}
 	dir := filepath.Dir(path)
 	for i, f := range cfg.Filter.BlocklistFiles {
@@ -465,7 +465,7 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_CLUSTER_ENABLED"); v != "" {
 		cfg.Deprecations = append(cfg.Deprecations,
-			"env: MAZEDNS_CLUSTER_ENABLED was removed and is ignored — clustering is automatic (an agent joins when MAZEDNS_CP_URL and a credential are set)")
+			"env: MAZEDNS_CLUSTER_ENABLED was removed and is ignored — clustering is automatic (a resolver joins when MAZEDNS_CP_URL and a credential are set)")
 	}
 	if v := os.Getenv("MAZEDNS_CLASSIFIER_ENABLED"); v == "true" || v == "1" {
 		cfg.Classifier.Enabled = true

@@ -4,7 +4,7 @@
 #
 # The control plane runs the API, web UI, auth, domain classifier, cluster
 # coordination, and dashboard aggregation. It NEVER serves DNS — every query is
-# answered by the dns-agent fleet — so this file has no listen/upstreams/cache/
+# answered by the resolvers (dns-resolver) — so this file has no listen/upstreams/cache/
 # filter sections. Any resolver setting omitted here falls back to a harmless
 # built-in default (the control plane just doesn't use it).
 #
@@ -49,7 +49,7 @@ cluster:                       # control-plane side of config replication
   # key as MAZEDNS_JOIN_TOKEN to join. The policy fields below are seed-only —
   # edit them under Settings → Access → Cluster policy.
   join_token: ""               # DEPRECATED: if set, auto-imported once as a never-expiring enrollment key on boot (prefer the UI).
-  require_approval: false      # hold self-enrolled agents until an admin approves them
+  require_approval: false      # hold self-enrolled resolvers until an admin approves them
   key_max_age: 720h            # rotate a node's key once older than this (default 720h/30d)
   key_grace: 15m               # how long the previous key stays valid after a rotation
 

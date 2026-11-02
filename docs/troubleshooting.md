@@ -2,11 +2,12 @@
 
 Symptom → fix. Diagnostics use `docker`, `kubectl`, and `dig`. Replace
 `mazedns-agent` / `mazedns-control-plane` with your container names (the fast-deploy
-compose names them `mazedns-agent` and `mazedns-control-plane`).
+compose names them `mazedns-agent` and `mazedns-control-plane`; the resolver's
+container keeps its pre-rename name so existing deployments don't change).
 
-- [An agent doesn't appear on the Agents page](#an-agent-doesnt-appear-on-the-agents-page)
-- [The agent won't start / can't bind port 53](#the-agent-wont-start--cant-bind-port-53)
-- [DNS doesn't resolve through the agent](#dns-doesnt-resolve-through-the-agent)
+- [A resolver doesn't appear on the Resolvers page](#a-resolver-doesnt-appear-on-the-resolvers-page)
+- [The resolver won't start / can't bind port 53](#the-resolver-wont-start--cant-bind-port-53)
+- [DNS doesn't resolve through the resolver](#dns-doesnt-resolve-through-the-resolver)
 - [The dashboard shows only one client](#the-dashboard-shows-only-one-client)
 - [High DNS latency on a busy host, even at low CPU](#high-dns-latency-on-a-busy-host-even-at-low-cpu)
 - [~5-second latency spikes from Alpine/musl containers](#5-second-latency-spikes-from-alpinemusl-containers)
@@ -17,9 +18,9 @@ compose names them `mazedns-agent` and `mazedns-control-plane`).
 
 ---
 
-## An agent doesn't appear on the Agents page
+## A resolver doesn't appear on the Resolvers page
 
-Check the agent's logs:
+Check the resolver's logs:
 
 ```bash
 docker logs mazedns-agent --tail 50          # or: kubectl logs -n mazedns ds/dns-agent
@@ -27,23 +28,23 @@ docker logs mazedns-agent --tail 50          # or: kubectl logs -n mazedns ds/dn
 
 Common causes:
 
-- **Enrollment key mismatch or missing.** The agent's `MAZEDNS_JOIN_TOKEN` must be a
-  valid enrollment key created on the control plane (Agents → Enrollment keys).
+- **Enrollment key mismatch or missing.** The resolver's `MAZEDNS_JOIN_TOKEN` must be a
+  valid enrollment key created on the control plane (Resolvers → Enrollment keys).
   Clustering has no enable flag — the control plane always serves cluster
-  endpoints, and the agent joins automatically once `MAZEDNS_CP_URL` and a
+  endpoints, and the resolver joins automatically once `MAZEDNS_CP_URL` and a
   credential (an enrollment key, or a per-node key via `MAZEDNS_NODE_KEY`) are set.
-  If neither is set the agent runs standalone and never appears in the cluster.
+  If neither is set the resolver runs standalone and never appears in the cluster.
 - **Can't reach the control plane.** The logs show the CP hostname failing to
-  resolve or connect. If the agent is the only DNS on its network it can't resolve
+  resolve or connect. If the resolver is the only DNS on its network it can't resolve
   the CP's FQDN — pin the IP with `MAZEDNS_CP_IP=<cp-ip>` (TLS still verifies the
-  URL host). See [install.md](install.md#reaching-the-control-plane-from-an-agent).
+  URL host). See [install.md](install.md#reaching-the-control-plane-from-a-resolver).
 - **Pending approval.** With **require approval** on (Settings → Access → Cluster
-  policy), the node is created *pending* — approve it on the Agents page before it
+  policy), the node is created *pending* — approve it on the Resolvers page before it
   serves.
 
-## The agent won't start / can't bind port 53
+## The resolver won't start / can't bind port 53
 
-The agent image binds `53` as a non-root user via a file capability, so this
+The resolver image binds `53` as a non-root user via a file capability, so this
 normally just works. If the logs show a bind/permission error:
 
 - **Port already in use on the host.** Another DNS service already owns `:53` — a
@@ -60,31 +61,31 @@ docker ps --filter name=mazedns-agent          # is it running / restarting?
 docker logs mazedns-agent --tail 20            # look for "listener up ... addr=:53"
 ```
 
-## DNS doesn't resolve through the agent
+## DNS doesn't resolve through the resolver
 
-Query the agent directly:
+Query the resolver directly:
 
 ```bash
-dig @<agent-host> example.com            # host-network / mapped :53
-dig @<agent-host> -p 5353 example.com    # if you mapped a non-standard host port
-dig @<agent-host> doubleclick.net        # should be blocked
+dig @<resolver-host> example.com            # host-network / mapped :53
+dig @<resolver-host> -p 5353 example.com    # if you mapped a non-standard host port
+dig @<resolver-host> doubleclick.net        # should be blocked
 ```
 
 - **No answer at all** → the port isn't reachable (firewall, wrong host port, or the
-  agent isn't listening — see above).
-- **Resolves but nothing is blocked** → the agent has no rules yet. Confirm it's
-  enrolled (Agents page) and that blocklists/deny rules exist under the control plane.
+  resolver isn't listening — see above).
+- **Resolves but nothing is blocked** → the resolver has no rules yet. Confirm it's
+  enrolled (Resolvers page) and that blocklists/deny rules exist under the control plane.
   A brand-new deployment ships no default blocklist.
 - **`SERVFAIL`** → the node may be in maintenance/drain, or all upstreams are failing.
-  Check **Settings → Upstream resolvers** and the agent logs for `forward failed`.
-  `dig @<agent-host> probe.mazedns.internal` tells the two apart: the agent answers
+  Check **Settings → Resolver → Upstream servers** and the resolver logs for `forward failed`.
+  `dig @<resolver-host> probe.mazedns.internal` tells the two apart: the resolver answers
   that name itself (`127.0.0.1`), so it resolves whenever the listener works, even
   with every upstream down.
 
 ## The dashboard shows only one client
 
 Docker's NAT rewrites the source IP of queries that arrive through a published port
-(`-p 53:53`), so every client looks like the Docker gateway. Run the agent with
+(`-p 53:53`), so every client looks like the Docker gateway. Run the resolver with
 **host networking** (Linux) to preserve real client IPs — see
 [user-guide.md](user-guide.md#seeing-real-client-ips). Docker Desktop (macOS/Windows)
 can't pass the original client IP through its VM.
@@ -119,8 +120,8 @@ printf 'net.core.rmem_max=16777216\nnet.core.rmem_default=4194304\nnet.core.wmem
 sudo sysctl --system
 ```
 
-The agent shares the host network namespace under `network_mode: host`, so these
-host sysctls apply to it. The agent already spreads the UDP read loop across cores
+The resolver shares the host network namespace under `network_mode: host`, so these
+host sysctls apply to it. The resolver already spreads the UDP read loop across cores
 by default (one `SO_REUSEPORT` socket per available CPU, capped at 8). If that
 causes trouble on a given host — e.g. uneven load distribution or memory pressure
 from the per-socket 8 MiB buffers — pin it with `MAZEDNS_UDP_LISTENERS` (set `1`
@@ -130,7 +131,7 @@ for a single socket, or an explicit count).
 
 ```bash
 B=$(ssh host 'netstat -su' | awk '/receive buffer errors/{print $1}')
-for i in $(seq 1 400); do dig @<agent-host> h$i-$RANDOM.example.com +tries=1 +time=2 >/dev/null 2>&1 & done; wait
+for i in $(seq 1 400); do dig @<resolver-host> h$i-$RANDOM.example.com +tries=1 +time=2 >/dev/null 2>&1 & done; wait
 A=$(ssh host 'netstat -su' | awk '/receive buffer errors/{print $1}')
 echo "receive buffer errors delta: $((A-B))"   # want 0
 ```
@@ -145,7 +146,7 @@ timeout. Independent of MazeDNS.
 
 **Fix (any one):**
 
-- Add a resolver option to the *client* container:
+- Add a `resolv.conf` option to the *client* container:
   ```yaml
   dns_opt: ["single-request-reopen"]   # docker compose
   ```
@@ -179,7 +180,7 @@ The resolver already caps the EDNS/UDP size at the fragmentation-safe 1232 bytes
 strips DNSSEC records for clients that didn't ask for them. If cache-cold signed
 domains are still slow, prefer **DoT upstreams** — large/validated answers travel over
 a pooled TLS connection, avoiding UDP fragmentation and per-query handshakes. Set them
-in **Settings → Upstream resolvers**:
+in **Settings → Resolver → Upstream servers**:
 
 ```
 tls://1.1.1.1:853#cloudflare-dns.com
@@ -188,7 +189,7 @@ tls://9.9.9.9:853#dns.quad9.net
 
 MazeDNS forwards DNSSEC rather than validating locally: it can force the DO bit
 upstream and passes the AD flag through, so validation is your **upstream's** job.
-Checking `dig @<agent-host> dnssec-failed.org` therefore tests the upstream — with a
+Checking `dig @<resolver-host> dnssec-failed.org` therefore tests the upstream — with a
 validating upstream (Cloudflare, Quad9) it returns **SERVFAIL**, and if it resolves,
 the upstream isn't validating.
 
@@ -196,15 +197,15 @@ the upstream isn't validating.
 
 MazeDNS records per-query processing time. Compare it against what clients feel:
 
-- **Queries** page → pick the affected agent at the top → sort by `ms`.
-- From a client: `dig @<agent-host> example.com` and read `Query time`.
+- **Queries** page → pick the affected resolver at the top → sort by `ms`.
+- From a client: `dig @<resolver-host> example.com` and read `Query time`.
 
 If MazeDNS's `ms` is **low** but the client's query time is **high**, the problem is
 the **path** (UDP buffers / conntrack / NAT) covered above — not the resolver.
 
 ## DNS seems broken during or after a WAN outage
 
-When the internet (or the VPN to the control plane) drops, an agent is built to:
+When the internet (or the VPN to the control plane) drops, a resolver is built to:
 
 - keep answering **local records** (rewrites, zones) and blocking from its own
   database, with no WAN and no control plane;
@@ -217,20 +218,20 @@ A restart should never be needed. Before restarting, find out which case you are
 
 ```bash
 # 1. Does the resolver answer? (built in, needs no upstream; try UDP and TCP)
-dig @<agent-host> probe.mazedns.internal
-dig @<agent-host> probe.mazedns.internal +tcp
+dig @<resolver-host> probe.mazedns.internal
+dig @<resolver-host> probe.mazedns.internal +tcp
 # 2. Do local records answer?
-dig @<agent-host> <a-local-rewrite>
-# 3. Can the agent's host reach the upstreams at all?
+dig @<resolver-host> <a-local-rewrite>
+# 3. Can the resolver's host reach the upstreams at all?
 dig @1.1.1.1 example.com
-# 4. What does the agent itself report? (run on the agent's host)
-curl -s http://127.0.0.1:<agent-http-port>/readyz
+# 4. What does the resolver itself report? (run on the resolver's host)
+curl -s http://127.0.0.1:<resolver-http-port>/readyz
 # or, from any host, inside the container:
-docker exec <agent-container> /usr/local/bin/dns-agent -healthcheck
+docker exec <resolver-container> /usr/local/bin/dns-resolver -healthcheck
 ```
 
-`/readyz` returns 200 when the agent answers the probe over UDP **and** TCP and is
-not in maintenance, 503 otherwise. Asked from the agent's own host (or inside its
+`/readyz` returns 200 when the resolver answers the probe over UDP **and** TCP and is
+not in maintenance, 503 otherwise. Asked from the resolver's own host (or inside its
 container), its JSON body also reports when a query was last answered, when
 forwarding last succeeded and failed (with the error), and when the control plane
 was last reached. Any other caller gets the same status code with only the
@@ -249,17 +250,17 @@ local records. The same timestamps are exported on `/metrics` as
   upstreams are down. Restarting will not help; it comes back on its own.
 - **Everything answers from `dig`, but clients still fail** → look at which DNS
   server the clients actually use. A common trap is **split DNS**: the router
-  hands out a second resolver (often itself) that answers your local names with
+  hands out a second DNS server (often itself) that answers your local names with
   their *public* IPs, or not at all. Clients that fail over to it during an
-  outage stop reaching local services. Give clients only MazeDNS agents as
-  resolvers, or make the router forward your local domains to them.
+  outage stop reaching local services. Give clients only MazeDNS resolvers as
+  their DNS servers, or make the router forward your local domains to them.
 
 ### Health checks and watchdogs
 
 `/healthz` is **liveness** only: the process is up and serving HTTP. It does not
 check DNS. Use `/readyz` for DNS readiness.
 
-The agent image has a built-in Docker `HEALTHCHECK` (`dns-agent -healthcheck`,
+The resolver image has a built-in Docker `HEALTHCHECK` (`dns-resolver -healthcheck`,
 which calls `/readyz`), so `docker ps` shows `healthy` / `unhealthy`. Docker
 **does not restart** an unhealthy container by itself, and `restart: unless-stopped`
 only covers a process that exits. If you want automatic restarts, use an external

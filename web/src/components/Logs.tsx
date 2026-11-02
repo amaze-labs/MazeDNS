@@ -173,8 +173,8 @@ export default function Logs() {
         </button>
       </header>
       <p className="intro">
-        Recent process logs from the control plane and every agent. They live in memory only, and agent lines arrive with
-        the agent's next poll — up to 30 seconds late.
+        Recent process logs from the control plane and every resolver. They live in memory only, and resolver lines arrive with
+        the resolver's next poll — up to 30 seconds late.
       </p>
 
       <div className="toolbar lg-toolbar">
@@ -272,7 +272,7 @@ export default function Logs() {
             ) : source === CONTROL_PLANE || source === ALL ? (
               'No log lines yet.'
             ) : (
-              `No lines received from ${sourceNode?.name ?? 'this agent'} yet. Agents ship logs on their poll cycle, and older agent versions don't ship them at all.`
+              `No lines received from ${sourceNode?.name ?? 'this resolver'} yet. Resolvers ship logs on their poll cycle, and older resolver versions don't ship them at all.`
             )}
           </div>
         )}

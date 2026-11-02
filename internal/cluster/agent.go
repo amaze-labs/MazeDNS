@@ -193,7 +193,7 @@ func masterTransport(masterIP string) http.RoundTripper {
 
 // Run runs a sync+ship cycle immediately, then every interval until cancelled.
 func (a *Agent) Run(ctx context.Context) {
-	slog.Info("cluster agent started", "master", a.masterURL, "interval", a.interval)
+	slog.Info("cluster sync started", "master", a.masterURL, "interval", a.interval)
 	// Behind a TLS reverse proxy the master URL must be the proxy (https, no
 	// direct API port). A plain-http master URL either won't reach a proxy-only
 	// deployment or ships the node key in cleartext (see FIND-02).

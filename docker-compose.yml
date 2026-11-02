@@ -1,13 +1,13 @@
 # Dev compose: builds the two images locally and runs a full cluster — a
-# control-plane (dashboard/API on :8080, no DNS) plus two DNS agents that
+# control-plane (dashboard/API on :8080, no DNS) plus two DNS resolvers that
 # self-enroll with an enrollment key and serve DNS.
 #
 #   make compose-dev            # or: docker compose up --build
 #
 # The control plane imports the dev MAZEDNS_JOIN_TOKEN below as an enrollment key;
-# the agents present it to auto-join and appear on the Agents page with no manual key
+# the resolvers present it to auto-join and appear on the Resolvers page with no manual key
 # handling (the control plane rotates each node's key for you). Manage enrollment
-# keys in the UI (Agents → Enrollment keys). The dev token is NOT secret.
+# keys in the UI (Resolvers → Enrollment keys). The dev token is NOT secret.
 
 name: mazedns
 
@@ -23,14 +23,14 @@ services:
       MAZEDNS_API_ADDRESS: "0.0.0.0"          # bind the UI/API inside the container
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       # The control plane always serves cluster endpoints (clustering has no enable
-      # flag). Dev seed: imported once as an enrollment key so the agents below can
+      # flag). Dev seed: imported once as an enrollment key so the resolvers below can
       # join. Complete the first-boot setup wizard first (no token — open the UI;
-      # until then the API, including agent enrollment, is locked). After the wizard
-      # the two agents auto-join and demo traffic flows.
+      # until then the API, including resolver enrollment, is locked). After the wizard
+      # the two resolvers auto-join and demo traffic flows.
       MAZEDNS_JOIN_TOKEN: "dev-join-token"
       # Dev-only blocklist so the demo traffic shows blocked/category stats. The
       # production image ships no blocklist. (The control plane doesn't resolve,
-      # but it seeds the shared rule set the agents replicate.)
+      # but it seeds the shared rule set the resolvers replicate.)
       MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
       - "8080:8080"     # web UI + API
@@ -38,12 +38,12 @@ services:
       - control-plane-data:/data
       - ./dev/blocklist.hosts:/etc/mazedns/dev-blocklist.hosts:ro
 
-  agent-a:
+  resolver-a:
     build:
       context: .
-      target: dns-agent
-    image: mazedns-agent:dev
-    container_name: mazedns-agent-a
+      target: dns-resolver
+    image: mazedns-resolver:dev
+    container_name: mazedns-resolver-a
     restart: unless-stopped
     depends_on: [control-plane]
     environment:
@@ -51,22 +51,22 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_CP_URL: "http://control-plane:8080"
       MAZEDNS_JOIN_TOKEN: "dev-join-token"
-      MAZEDNS_NODE_NAME: "agent-a"
+      MAZEDNS_NODE_NAME: "resolver-a"
       MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
-      - "5311:53/udp"   # agent-a resolver (host 5311 -> container 53)
+      - "5311:53/udp"   # resolver-a resolver (host 5311 -> container 53)
       - "5311:53/tcp"
-      - "9091:8080"       # agent-a /metrics + /healthz
+      - "9091:8080"       # resolver-a /metrics + /healthz
     volumes:
-      - agent-a-data:/data
+      - resolver-a-data:/data
       - ./dev/blocklist.hosts:/etc/mazedns/dev-blocklist.hosts:ro
 
-  agent-b:
+  resolver-b:
     build:
       context: .
-      target: dns-agent
-    image: mazedns-agent:dev
-    container_name: mazedns-agent-b
+      target: dns-resolver
+    image: mazedns-resolver:dev
+    container_name: mazedns-resolver-b
     restart: unless-stopped
     depends_on: [control-plane]
     environment:
@@ -74,18 +74,18 @@ services:
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_CP_URL: "http://control-plane:8080"
       MAZEDNS_JOIN_TOKEN: "dev-join-token"
-      MAZEDNS_NODE_NAME: "agent-b"
+      MAZEDNS_NODE_NAME: "resolver-b"
       MAZEDNS_BLOCKLIST_FILES: "/etc/mazedns/dev-blocklist.hosts"
     ports:
-      - "5312:53/udp"   # agent-b resolver (host 5312 -> container 53)
+      - "5312:53/udp"   # resolver-b resolver (host 5312 -> container 53)
       - "5312:53/tcp"
-      - "9092:8080"       # agent-b /metrics + /healthz
+      - "9092:8080"       # resolver-b /metrics + /healthz
     volumes:
-      - agent-b-data:/data
+      - resolver-b-data:/data
       - ./dev/blocklist.hosts:/etc/mazedns/dev-blocklist.hosts:ro
 
   # ── Traffic generators ──────────────────────────────────────────────────
-  # Each client queries an agent directly over the compose network, so the
+  # Each client queries a resolver directly over the compose network, so the
   # resolver sees the client container's own IP (distinct per client) — that's
   # what populates the per-client dashboard metrics. They also hit blocklisted
   # domains so blocked/category stats fill in.
@@ -94,9 +94,9 @@ services:
     image: mazedns-traffic:dev
     container_name: mazedns-client-home
     restart: unless-stopped
-    depends_on: [agent-a]
+    depends_on: [resolver-a]
     environment:
-      TARGET: agent-a
+      TARGET: resolver-a
       SLEEP: "2"
       DOMAINS: "google.com youtube.com github.com wikipedia.org netflix.com doubleclick.net ads.example.com"
 
@@ -105,9 +105,9 @@ services:
     image: mazedns-traffic:dev
     container_name: mazedns-client-office
     restart: unless-stopped
-    depends_on: [agent-a]
+    depends_on: [resolver-a]
     environment:
-      TARGET: agent-a
+      TARGET: resolver-a
       SLEEP: "5"
       DOMAINS: "microsoft.com slack.com atlassian.com zoom.us googleadservices.com tracking.example.org example.com"
 
@@ -116,13 +116,13 @@ services:
     image: mazedns-traffic:dev
     container_name: mazedns-client-site-b
     restart: unless-stopped
-    depends_on: [agent-b]
+    depends_on: [resolver-b]
     environment:
-      TARGET: agent-b
+      TARGET: resolver-b
       SLEEP: "6"
       DOMAINS: "spotify.com twitch.tv linkedin.com ads.example.com bbc.co.uk"
 
 volumes:
   control-plane-data:
-  agent-a-data:
-  agent-b-data:
+  resolver-a-data:
+  resolver-b-data:

@@ -14,7 +14,7 @@ How to build MazeDNS from source and hack on it.
 ```
 cmd/
   control-plane/   # control-plane binary: UI + API + auth + classifier + cluster
-  dns-agent/       # dns-agent binary: resolver + config replication + /metrics
+  dns-resolver/    # dns-resolver binary: DNS + config replication + /metrics
 internal/
   resolver/        # DNS hot path: server, cache lookups, upstreams, hedging, serve-stale
   cache/           # TTL-aware sharded response cache
@@ -37,14 +37,14 @@ docs/              # documentation (operator docs at the top, this folder for de
 
 | Target | What it does |
 |---|---|
-| `make run-agent` | Run a dns-agent locally on `:5300` (`MAZEDNS_LISTEN_PORT=5300`, so no root is needed to bind — the default port is `53`). |
+| `make run-resolver` | Run a resolver locally on `:5300` (`MAZEDNS_LISTEN_PORT=5300`, so no root is needed to bind — the default port is `53`). |
 | `make run-cp` | Build the frontend and run the control plane with the embedded UI on `:8080` (no DNS). |
 | `make web` | `npm install` + `npm run build` the frontend into `web/dist`. |
-| `make build` | Build the lean `dns-agent` binary (no UI) into `bin/`. |
+| `make build` | Build the lean `dns-resolver` binary (no UI) into `bin/`. |
 | `make build-cp` | Build the frontend, then the `control-plane` binary with the UI embedded (`-tags embed_dist`). |
 | `make test` | `go test ./...`. |
 | `make vet` / `make fmt` / `make tidy` | `go vet`, `gofmt -s -w`, `go mod tidy`. |
-| `make docker` | Build both container images (`--target control-plane` and `--target dns-agent`). |
+| `make docker` | Build both container images (`--target control-plane` and `--target dns-resolver`, tagged as `mazedns-resolver` and `mazedns-agent`). |
 | `make compose-dev` | Build + run the dev cluster: control plane on `:8080` + two agents + traffic generators. |
 | `make compose-cp` | Build + run just the control plane. |
 | `make compose-prod` | Run [`docker-compose.prod.yml`](../../docker-compose.prod.yml) (pulls the published images). |
@@ -55,14 +55,14 @@ docs/              # documentation (operator docs at the top, this folder for de
 ```bash
 make run-cp          # control plane + UI on http://127.0.0.1:8080
 # in another shell — an agent that self-enrolls and serves DNS on :5300
-MAZEDNS_CP_URL=http://127.0.0.1:8080 MAZEDNS_JOIN_TOKEN=dev-token make run-agent
+MAZEDNS_CP_URL=http://127.0.0.1:8080 MAZEDNS_JOIN_TOKEN=dev-token make run-resolver
 
 dig @127.0.0.1 -p 5300 example.com        # resolves
 dig @127.0.0.1 -p 5300 doubleclick.net    # blocked (once a blocklist/deny rule exists)
 ```
 
 An agent with no `MAZEDNS_CP_URL` runs standalone (resolves + filters from its own
-local config). The default DNS port is `53`; `make run-agent` binds `5300` so you
+local config). The default DNS port is `53`; `make run-resolver` binds `5300` so you
 don't need root — override with `MAZEDNS_LISTEN_PORT`.
 
 ### Frontend dev with hot reload
@@ -88,7 +88,7 @@ One multi-stage [`Dockerfile`](../../Dockerfile) produces both images, selected 
 
 ```bash
 docker build --target control-plane -t mazedns-control-plane .
-docker build --target dns-agent     -t mazedns-agent .
+docker build --target dns-resolver  -t mazedns-resolver .
 # or: make docker
 ```
 
@@ -118,6 +118,7 @@ go test -bench . -benchmem ./internal/resolver/ ./internal/cache/ ./internal/fil
    version is derived from them;
 2. publishes **both** `ghcr.io/amaze-labs/mazedns-control-plane` and
    `ghcr.io/amaze-labs/mazedns-agent` as `:<version>` and `:latest`, **multi-arch**
+   (the resolver digest is tagged in `ghcr.io/amaze-labs/mazedns-resolver` too)
    (`linux/amd64` + `linux/arm64`). If anything that ends up in the binaries changed
    since the previous release (`cmd`, `internal`, `web`, `configs`, `go.mod`, `go.sum`,
    `Dockerfile`, `.dockerignore`), both images are rebuilt; otherwise (docs, CI) the
@@ -131,9 +132,12 @@ the original org). The two images are always rebuilt or retagged together so the
 report the same version: the Cluster page flags an agent as outdated when its app
 version differs from the control plane's.
 
-The matrix axis `image` is the Dockerfile **target** (`control-plane`, `dns-agent`);
-the published name comes from the separate `suffix` value, which is why the agent
-image is `mazedns-agent` while its build target stays `dns-agent`.
+The matrix axis `image` is the Dockerfile **target** (`control-plane`, `dns-resolver`);
+the published name comes from the separate `suffix` value, plus an optional `alias`
+repository that gets the same tags. The resolver is pushed to `mazedns-agent` and
+aliased as `mazedns-resolver`: the pipeline reads the previous release's build label
+from `mazedns-agent`, which has every release. Swap the two (or drop the alias) at
+the next major release, when the old name goes away.
 
 `release.yml` is separate and manual: it builds the standalone binaries and
 publishes them as the rolling `latest` GitHub Release.

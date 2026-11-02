@@ -69,7 +69,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           </ul>
           <p className="muted">
             All of these are looked up on the control plane, so labelling sends nothing out. Overview → By category, Queries and
-            Clients show the result; Filtering → Categories blocks whole types on every agent.
+            Clients show the result; Filtering → Categories blocks whole types on every resolver.
           </p>
         </div>
 
@@ -77,12 +77,12 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           <h3>Risk: from a query to a verdict</h3>
           <div className="flow">
             <Step n={1}>
-              A client asks an agent for a name. The agent <b>answers right away</b> from its rules, cache or upstream: classification
+              A client asks a resolver for a name. The resolver <b>answers right away</b> from its rules, cache or upstream: classification
               never delays a query.
             </Step>
             <Arrow />
             <Step n={2}>
-              The agent ships the query to the control plane with its query log, where its <b>traffic type</b> is labelled from
+              The resolver ships the query to the control plane with its query log, where its <b>traffic type</b> is labelled from
               local data (above).
             </Step>
             <Arrow />
@@ -119,7 +119,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
             <Arrow />
             <Step n={7} tone="warn">
               The <b>enforcement mode</b> decides what a block candidate does: wait in Filtering → Review for you (Suggest), or block at
-              once on every agent (Auto-block).
+              once on every resolver (Auto-block).
             </Step>
           </div>
         </div>
@@ -309,7 +309,7 @@ export default function ClassifierHelp({ onClose }: { onClose: () => void }) {
           <h3>Deciding on a domain</h3>
           <dl className="kv help-kv">
             <dt>Block</dt>
-            <dd>Enforce it. The block reaches every agent.</dd>
+            <dd>Enforce it. The block reaches every resolver.</dd>
             <dt>Allow</dt>
             <dd>Never block this domain and stop suggesting it.</dd>
             <dt>Dismiss</dt>

@@ -190,14 +190,16 @@ func (c *Checker) fetch(ctx context.Context) ([]Release, error) {
 
 // unchanged matches a release-notes image line that only got the version
 // stamped: "`ghcr.io/amaze-labs/mazedns-agent:0.137.0` (unchanged since 0.136.6)".
-var unchanged = regexp.MustCompile("mazedns-(control-plane|agent):[^`\\s]*`?\\s*\\(unchanged since v?([0-9]+\\.[0-9]+\\.[0-9]+)\\)")
+var unchanged = regexp.MustCompile("mazedns-(control-plane|agent|resolver):[^`\\s]*`?\\s*\\(unchanged since v?([0-9]+\\.[0-9]+\\.[0-9]+)\\)")
 
 // builtAt is the release an image's code in release v comes from, read from
 // v's notes: v itself unless they say the image is unchanged since an earlier
-// one (releases before per-image builds rebuilt both).
+// one (releases before per-image builds rebuilt both). "agent" also matches the
+// mazedns-resolver line: it is the same image under its new name, and notes
+// list both while the old name is still published.
 func builtAt(notes, image, v string) string {
 	for _, m := range unchanged.FindAllStringSubmatch(notes, -1) {
-		if m[1] == image {
+		if m[1] == image || (image == "agent" && m[1] == "resolver") {
 			return m[2]
 		}
 	}

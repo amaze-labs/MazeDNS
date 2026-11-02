@@ -150,3 +150,17 @@ func TestEffectiveVMExport(t *testing.T) {
 		t.Errorf("not able to relay yet: %+v", v)
 	}
 }
+
+func TestOldName(t *testing.T) {
+	for arg0, want := range map[string]bool{
+		"/usr/local/bin/dns-agent":    true,
+		"dns-agent":                   true,
+		"/usr/local/bin/dns-resolver": false,
+		"./dns-resolver":              false,
+		"/tmp/go-build123/exe/main":   false,
+	} {
+		if got := oldName(arg0); got != want {
+			t.Errorf("oldName(%q) = %v, want %v", arg0, got, want)
+		}
+	}
+}

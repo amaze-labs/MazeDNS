@@ -146,7 +146,7 @@ type publicReport struct {
 
 // ServeHTTP answers /readyz. The status code is the same for every caller; the
 // detailed report (timestamps, errors) only goes to requests from this host —
-// `dns-agent -healthcheck`, or curl on the agent's host / in its container.
+// `dns-resolver -healthcheck`, or curl on the resolver's host / in its container.
 func (rd *readiness) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rep := rd.check(r.Context())
 	w.Header().Set("Content-Type", "application/json")
@@ -172,7 +172,7 @@ func fromLoopback(r *http.Request) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// runHealthcheck implements `dns-agent -healthcheck` for container health checks
+// runHealthcheck implements `dns-resolver -healthcheck` for container health checks
 // (the image is distroless: no shell or curl). It queries this node's own
 // /readyz over loopback, prints the report, and returns the exit code: 0 ready,
 // 1 not ready or unreachable.

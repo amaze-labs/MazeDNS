@@ -59,7 +59,7 @@ jobs:
             mkdir -p "$stage"
             ext=""; [ "$os" = "windows" ] && ext=".exe"
             echo "==> building ${t}"
-            # control-plane carries the embedded web UI; dns-agent is lean (no UI).
+            # control-plane carries the embedded web UI; dns-resolver is lean (no UI).
             GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
               go build -tags embed_dist -trimpath \
                 -ldflags="-s -w -X 'main.version=${VERSION}'" \
@@ -67,7 +67,14 @@ jobs:
             GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
               go build -trimpath \
                 -ldflags="-s -w -X 'main.version=${VERSION}'" \
-                -o "${stage}/dns-agent${ext}" ./cmd/dns-agent
+                -o "${stage}/dns-resolver${ext}" ./cmd/dns-resolver
+            # dns-agent, the pre-rename name, until the next major release: a
+            # symlink in the tarballs, a copy in the Windows zip.
+            if [ "$os" = "windows" ]; then
+              cp "${stage}/dns-resolver${ext}" "${stage}/dns-agent${ext}"
+            else
+              ln -s dns-resolver "${stage}/dns-agent"
+            fi
             cp configs/mazedns.yaml "${stage}/mazedns.yaml.example"
             [ -f README.md ] && cp README.md "${stage}/" || true
             [ -f LICENSE ] && cp LICENSE "${stage}/" || true
@@ -98,7 +105,7 @@ jobs:
             **Build:** `${{ steps.ver.outputs.version }}`
 
             Pick the archive for your OS/arch below. Verify with `mazedns_checksums.txt`.
-            Each archive contains the `control-plane` and `dns-agent` binaries plus `mazedns.yaml.example`.
+            Each archive contains the `control-plane` and `dns-resolver` binaries plus `mazedns.yaml.example`. `dns-agent` is the resolver under its old name, kept until the next major release.
           files: |
             dist/mazedns_*.tar.gz
             dist/mazedns_*.zip

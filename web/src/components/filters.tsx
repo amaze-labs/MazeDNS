@@ -87,12 +87,12 @@ export function NodeFilter({
   // When the focus set exactly matches a site's members, label it as that site.
   const activeSite = sites?.find((s) => s.members.length > 0 && sameSet(selected, s.members))?.name
   const label = allActive
-    ? 'All agents'
+    ? 'All resolvers'
     : activeSite
     ? `Site: ${activeSite}`
     : selected.length === 1
     ? selected[0]
-    : `${selected.length} agents`
+    : `${selected.length} resolvers`
   const toggle = (n: string) =>
     onChange(selected.includes(n) ? selected.filter((x) => x !== n) : [...selected, n])
   return (
@@ -113,7 +113,7 @@ export function NodeFilter({
           <div className="nodefilter-menu">
             <button type="button" className={`nf-opt ${allActive ? 'sel' : ''}`} onClick={() => onChange([])}>
               <span className="nf-check">{allActive ? '✓' : ''}</span>
-              <span className="nf-name">All agents</span>
+              <span className="nf-name">All resolvers</span>
             </button>
             {sites && sites.length > 0 && (
               <>
@@ -133,7 +133,7 @@ export function NodeFilter({
               </>
             )}
             <div className="nf-divider" />
-            <div className="nf-head">Focus on agents</div>
+            <div className="nf-head">Focus on resolvers</div>
             {options.map((o) => {
               const sel = selected.includes(o)
               return (

@@ -1,18 +1,18 @@
-# MazeDNS — dns-agent example config (pure-binary deployments).
+# MazeDNS — resolver (dns-resolver) example config (pure-binary deployments).
 #
-# Run:  ./dns-agent --config dns-agent.yaml
+# Run:  ./dns-resolver --config dns-resolver.yaml
 #
-# The dns-agent is the data plane: it serves DNS (UDP/TCP, optionally DoT/DoH),
+# The resolver is the data plane: it serves DNS (UDP/TCP, optionally DoT/DoH),
 # replicates its filtering rules from the control plane, and exposes only
 # /healthz + /metrics over HTTP. It has no UI, auth, or classifier — those live
 # on the control plane.
 #
 # Operational settings (upstreams, forwarders, rate_limit, dnssec, cache,
-# filter.block_response) are SEEDED from this file into the agent's local DB on
+# filter.block_response) are SEEDED from this file into the resolver's local DB on
 # first run, then editable per-node. Rules/rewrites are replicated FROM the
 # control plane and are not configured here. File blocklists (filter.blocklist_files)
-# are loaded locally by each agent — they are not replicated, so mount them on
-# every agent that should use them.
+# are loaded locally by each resolver — they are not replicated, so mount them on
+# every resolver that should use them.
 #
 # Most fields can also be set via MAZEDNS_* environment variables (noted inline).
 
@@ -70,7 +70,7 @@ cache:
 filter:
   enabled: true
   block_response: "nxdomain"   # "nxdomain" or "zeroip" (0.0.0.0 / ::)
-  # File blocklists loaded locally by THIS agent (not replicated). Paths are
+  # File blocklists loaded locally by THIS resolver (not replicated). Paths are
   # relative to this config file, or set MAZEDNS_BLOCKLIST_FILES (absolute paths).
   # blocklist_files:
   #   - "blocklist.hosts"
@@ -78,14 +78,14 @@ filter:
 
 api:
   enabled: true
-  # The agent's HTTP surface is only /healthz + /metrics and is UNAUTHENTICATED,
+  # The resolver's HTTP surface is only /healthz + /metrics and is UNAUTHENTICATED,
   # so it binds loopback by default. To let Prometheus scrape it, set this to the
-  # agent's overlay/VPN IP (recommended) or 0.0.0.0 (or MAZEDNS_API_ADDRESS).
+  # resolver's overlay/VPN IP (recommended) or 0.0.0.0 (or MAZEDNS_API_ADDRESS).
   address: "127.0.0.1"
   port: 8080
 
-cluster:                       # agent side of config replication
-  # No enable flag — the agent joins automatically once cp_url + a credential
+cluster:                       # resolver side of config replication
+  # No enable flag — the resolver joins automatically once cp_url + a credential
   # (join_token/node_key) are set; without cp_url it runs standalone.
   cp_url: ""                   # control-plane base URL, e.g. https://dns.example.com (or MAZEDNS_CP_URL)
   join_token: ""               # enrollment key to self-enroll (create one in the control-plane UI: Agents → Enrollment keys).
@@ -93,13 +93,13 @@ cluster:                       # agent side of config replication
   master_ip: ""                # pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still verifies the URL host
   node_name: ""                # INITIAL display label (or MAZEDNS_NODE_NAME; defaults to the hostname).
                                # Identity is a UUID the control plane assigns at first enrollment and the
-                               # agent stores locally — NOT this name. You can rename the node later in the
+                               # resolver stores locally — NOT this name. You can rename the node later in the
                                # UI; changing node_name after enrollment does not create a new node.
   node_key: ""                 # per-node API key — leave empty when using join_token (or MAZEDNS_NODE_KEY)
   interval: "30s"              # snapshot poll interval
 
 database:
-  driver: "sqlite"             # the agent keeps a small local DB for its issued node key + a short query-log buffer
+  driver: "sqlite"             # the resolver keeps a small local DB for its issued node key + a short query-log buffer
   path: "mazedns.db"           # or MAZEDNS_DB_PATH
 
 log:
@@ -107,7 +107,7 @@ log:
   query_log: false             # set true to log every query locally (shipped to the control plane regardless)
 
 metrics:
-  victoria_metrics:            # each agent pushes its own metrics, labelled by instance
+  victoria_metrics:            # each resolver pushes its own metrics, labelled by instance
     enabled: false
     url: "http://victoriametrics:8428"
     interval: "15s"

@@ -1,8 +1,8 @@
 # User guide
 
 Everything you do day-to-day happens in the **control-plane web UI** (default
-`http://<control-plane-host>:8080`). The control plane holds all config; agents
-replicate it automatically. You never edit files on an agent.
+`http://<control-plane-host>:8080`). The control plane holds all config; resolvers
+replicate it automatically. You never edit files on a resolver.
 
 - [Overview](#overview)
 - [Queries and clients](#queries-and-clients)
@@ -30,12 +30,12 @@ replicate it automatically. You never edit files on an agent.
 ![The Overview page](images/overview.png)
 
 **Overview** is the home page. Pick a time window (30 minutes → 15 days) and an
-agent at the top; everything below follows it:
+resolver at the top; everything below follows it:
 
 - the total queries, average latency and clients, and how the queries were
   answered: from cache, forwarded upstream, blocked or rewritten by a local record;
 - **Queries over time**, with the same split;
-- **Agents**: every agent grouped by site, online or not, in sync or not, with its
+- **Resolvers**: every resolver grouped by site, online or not, in sync or not, with its
   load and block rate;
 - **By category**: what the traffic is (social, streaming, work…). Pick a
   category to open its queries;
@@ -48,25 +48,25 @@ The **Protection on** badge and **Pause protection…** next to the title are th
 
 ![The Queries page](images/queries.png)
 
-**Queries** lists individual queries. Filter by agent or site, client, domain,
+**Queries** lists individual queries. Filter by resolver or site, client, domain,
 type, action, category and response code, and sort by processing time (`ms`) to
 find slow lookups. Click a row for its details: how it was answered, by which
-agent and upstream, and the domain's category, which you can **Change** from
+resolver and upstream, and the domain's category, which you can **Change** from
 there.
 
 ![A query's details](images/query-detail.png)
 
-Switch the Queries page to **Live** to watch queries as the agents answer them
+Switch the Queries page to **Live** to watch queries as the resolvers answer them
 (within about a second), newest first — e.g. while debugging a client or checking
 that a new block rule takes effect. Filter by node or site, client (IP or resolved
 name), domain, type, action, classification, and rcode; blocked and rewritten
 queries are highlighted, and clicking a row opens the client's details. The
 browser keeps the last 1000 rows, and the stream pauses while the tab is hidden.
-Agents only send queries while someone is watching them, and only the ones that
+Resolvers only send queries while someone is watching them, and only the ones that
 match the filters. Live is best effort (a slow view drops rows); the stored query
 log is unaffected.
 
-**Clients** lists every device that queried an agent, with its name (see
+**Clients** lists every device that queried a resolver, with its name (see
 [Client names](#client-names)), volume and block rate. Open one to see what it
 uses, per category, and its top and blocked domains; you can give it a name
 there.
@@ -114,37 +114,37 @@ Clients, Live, a client's details) and exported to VictoriaLogs is reduced.
 - **Changing the level.** Raising it also applies it to the history already
   stored (within a minute). Lowering it applies to new queries only: what was
   hidden cannot be brought back.
-- **Agents** delete their local copy of each query once it has been sent to
+- **Resolvers** delete their local copy of each query once it has been sent to
   the control plane, and their `query` process-log lines leave out what the
   level hides.
 
 ## Upstreams, cache, and DNS behavior
 
 Operational DNS settings live under **Settings** and apply live across the cluster
-(no restart): every agent picks them up on its next config poll, and they override
-the agent's own settings. An agent keeps its local settings until its first
+(no restart): every resolver picks them up on its next config poll, and they override
+the resolver's own settings. A resolver keeps its local settings until its first
 successful sync, and keeps the last synced ones if the control plane is unreachable.
-Agents older than the control plane ignore replicated settings until upgraded.
+Resolvers older than the control plane ignore replicated settings until upgraded.
 
-> **Upgrading:** before replicated settings, agents ignored this page and ran the
+> **Upgrading:** before replicated settings, resolvers ignored this page and ran the
 > settings seeded from their own config file. After upgrading, the control plane's
-> settings replace them on every agent, so check this page (e.g. the upstreams)
+> settings replace them on every resolver, so check this page (e.g. the upstreams)
 > before rolling the upgrade out.
 
-- **Upstream resolvers** — plain (`1.1.1.1:53`), DoT
+- **Upstream servers** — plain (`1.1.1.1:53`), DoT
   (`tls://1.1.1.1:853#cloudflare-dns.com`), or DoH (`https://dns.quad9.net/dns-query`).
   Quick-fill buttons are provided; use the ↑/↓ arrows on each row to set the order,
   which is saved exactly as shown. With the default **Ordered** strategy every query
-  goes to the first resolver and the next one is tried only if it times out (the
-  **per-resolver timeout**, default 1500 ms), fails, or answers `SERVFAIL`/`REFUSED`
-  — never in parallel. **Hedged** instead races the remaining resolvers when the first
+  goes to the first upstream and the next one is tried only if it times out (the
+  **per-upstream timeout**, default 1500 ms), fails, or answers `SERVFAIL`/`REFUSED`
+  — never in parallel. **Hedged** instead races the remaining upstreams when the first
   hasn't answered within 30 ms, for lowest latency. Conditional forwarders with
   several upstreams follow the same strategy. See
   [Upstream strategy](configuration.md#upstream-strategy).
 - **Conditional forwarders** — send a domain suffix to specific upstreams
-  (split-horizon), e.g. `corp.internal` → your internal resolver. Each entry can
-  be scoped to every agent, specific sites or specific agents, can be switched off,
-  and is pushed to the agents automatically, overriding a node's own (YAML-seeded)
+  (split-horizon), e.g. `corp.internal` → your internal DNS server. Each entry can
+  be scoped to every resolver, specific sites or specific resolvers, can be switched off,
+  and is pushed to the resolvers automatically, overriding a node's own (YAML-seeded)
   forwarder for the same suffix. Changes here apply at once, without **Save**.
   Older versions also kept a separate list of forwarders on the control plane
   itself; the control plane answers no queries, so those never applied. If any
@@ -156,7 +156,7 @@ Agents older than the control plane ignore replicated settings until upgraded.
 - **Block response** — `nxdomain` (default) or `zeroip` (`0.0.0.0` / `::`).
 
 The config file only *seeds* these on first run; afterwards the database is the
-source of truth and the file is ignored for them. On an agent in a cluster, the
+source of truth and the file is ignored for them. On a resolver in a cluster, the
 control plane's settings take precedence over both.
 
 ## Blocklists and allow/deny rules
@@ -173,10 +173,10 @@ Manage blocking from the UI:
   (exempt a domain from blocking). Allow wins over block.
 
 A domain blocked by a list or a deny rule returns your configured block response.
-Agents pick up changes automatically on their next sync.
+Resolvers pick up changes automatically on their next sync.
 
-File-based blocklists mounted into an agent (`MAZEDNS_BLOCKLIST_FILES`) are loaded
-**locally** on that agent and are not replicated — mount them on every agent that
+File-based blocklists mounted into a resolver (`MAZEDNS_BLOCKLIST_FILES`) are loaded
+**locally** on that resolver and are not replicated — mount them on every resolver that
 should use them.
 
 ## Domain categories
@@ -221,12 +221,12 @@ Where you see them:
 
 ![Filtering → Categories](images/filtering-categories.png)
 
-**Filtering → Categories** blocks whole categories on every agent (parental
-control, a focus policy). Each agent downloads the category database for just
+**Filtering → Categories** blocks whole categories on every resolver (parental
+control, a focus policy). Each resolver downloads the category database for just
 the categories you block — Adult is the largest at about 45 MB of memory, most
 are under 1 MB — and nothing while none is blocked. Your allow rules still win,
 and pausing protection pauses category blocks too. Your overrides and the
-language model's labels apply on the agents as well: overriding a domain out of
+language model's labels apply on the resolvers as well: overriding a domain out of
 a blocked category exempts it.
 
 Categories the database doesn't cover (search, productivity, technology, CDN,
@@ -234,7 +234,7 @@ trackers) block what the built-in list of common platforms, the language model
 and your overrides put there.
 
 `MAZEDNS_CATEGORY_DB=off` turns categories off (on the control plane: no
-labels; on an agent: no category blocking) — for example on a host that can't
+labels; on a resolver: no category blocking) — for example on a host that can't
 reach `dsi.ut-capitole.fr`.
 
 ## Classification: traffic types and risk
@@ -260,7 +260,7 @@ answered at once, and its domain is looked at afterwards.
   hosted provider). Feeds and the trusted list are downloaded; the others receive
   each new domain (AbuseIPDB its address).
 - **When a domain looks risky**: do nothing, **suggest** a block for you to
-  approve, or **block it automatically** on every agent.
+  approve, or **block it automatically** on every resolver.
 - **Keep private**: your own domains, one per line, never looked up by any
   outside service (subdomains included). Names your local records answer, names
   under a conditional forwarder and private-use names (`.lan`, `.home.arpa`,
@@ -286,7 +286,7 @@ so a young but legitimate site is never blocked on its shape alone.
 
 **Filtering → Review** lists the domains the classifier scored, under **To check**
 (block candidates waiting for you), **Auto-blocked**, **Blocked by you**, **Allowed
-by you** and **Clean**. For a candidate, **Block** enforces it on every agent,
+by you** and **Clean**. For a candidate, **Block** enforces it on every resolver,
 **Allow** never blocks it and stops suggesting it, and **Dismiss** hides it this
 once (it may be scored again and come back).
 Open a domain to see why it scored as it did: every signal, the points it cost or
@@ -322,8 +322,8 @@ specific wins (node > site > all); creating two entries that would tie at the
 same specificity is rejected. Entries scoped to a node or site that no longer
 exists are kept but match nothing (flagged with ⚠ in the UI).
 
-Conditional forwarders, which route a whole domain to another resolver with the
-same scoping, are under **Settings → Resolver**. Agents pick changes to either up
+Conditional forwarders, which route a whole domain to another DNS server with the
+same scoping, are under **Settings → Resolver**. Resolvers pick changes to either up
 on their next config poll; the cluster page shows a per-node sync flag (⟳) until
 each node has applied its own expected version.
 
@@ -335,11 +335,11 @@ search is active.
 ### Reverse lookups (PTR) from rewrites
 
 Exact `A`/`AAAA` rewrites also answer reverse lookups for their address:
-with `nas.example.lan → A 192.0.2.10`, `dig -x 192.0.2.10 @<agent>` returns
+with `nas.example.lan → A 192.0.2.10`, `dig -x 192.0.2.10 @<resolver>` returns
 `nas.example.lan` (`2001:db8::10` works the same through `ip6.arpa`). There is
 nothing to configure:
 
-- **Scoping** — each agent derives PTR answers from the rewrites it serves, so
+- **Scoping** — each resolver derives PTR answers from the rewrites it serves, so
   they follow the forward record's scope: a site-scoped rewrite answers reverse
   lookups only on that site's nodes. Disabled and wildcard rewrites imply no PTR.
 - **Several names, one address** — a single PTR is returned, the preferred name:
@@ -370,8 +370,8 @@ so it can reconcile them without touching yours. A rewrite has two more fields:
   `source`.
 
 Neither field changes how a record resolves, its scope, its PTR or the client
-name it gives, and agents never see them: owning a record doesn't resync any
-agent.
+name it gives, and resolvers never see them: owning a record doesn't resync any
+resolver.
 
 **API.** Every row of `GET /api/rewrites` carries both fields (`""` when
 unset). `?source=ipmaze` lists only that integration's rows, `?source=` (empty)
@@ -417,9 +417,9 @@ the UI labels it with a name, taking the first source that knows the IP:
    the client win; if that node serves none for the IP, any enabled rewrite
    naming it is used. Rewrite changes rename clients immediately.
 3. **reverse DNS** — a PTR lookup, for private addresses against the reverse-DNS
-   resolver configured for the client's node, otherwise against the system
-   resolver (cached for an hour, ten minutes when there is no PTR). Pointing that
-   resolver at an agent also picks up the PTRs agents synthesize from rewrites
+   server configured for the client's node, otherwise against the system's
+   DNS (cached for an hour, ten minutes when there is no PTR). Pointing that
+   server at a MazeDNS resolver also picks up the PTRs resolvers synthesize from rewrites
    (see above).
 
 Rewrites come before reverse DNS because they are your own configuration and
@@ -433,37 +433,37 @@ rewrite, cache, and forwarding are unaffected; blocking resumes automatically.
 
 ## Clustering operations
 
-![Agents, grouped by site](images/agents.png)
+![Resolvers, grouped by site](images/agents.png)
 
-The control plane is the source of truth; each agent pulls rules + rewrites over an
+The control plane is the source of truth; each resolver pulls rules + rewrites over an
 authenticated snapshot and applies them live. The control plane never answers DNS,
 so its dashboard/classifier load can't affect resolver latency.
 
-- **Enrollment** — agents self-register with an **enrollment key** (created under
-  Agents → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
-  **Agents** page automatically, no key to copy. Toggle **require approval**
-  (setup wizard, or Settings → Access → Cluster policy) to hold new agents until you
+- **Enrollment** — resolvers self-register with an **enrollment key** (created under
+  Resolvers → Enrollment keys, passed as `MAZEDNS_JOIN_TOKEN`) and appear in the
+  **Resolvers** page automatically, no key to copy. Toggle **require approval**
+  (setup wizard, or Settings → Access → Cluster policy) to hold new resolvers until you
   approve them there — `MAZEDNS_REQUIRE_APPROVAL` only seeds this on first boot.
-- **Per-node keys** — issued automatically when an agent enrolls with a key, and
-  rotated by the control plane. You can also issue one manually on the Agents page
-  (used via `MAZEDNS_NODE_KEY`). An agent whose key was *rotated* re-attaches to the
+- **Per-node keys** — issued automatically when a resolver enrolls with a key, and
+  rotated by the control plane. You can also issue one manually on the Resolvers page
+  (used via `MAZEDNS_NODE_KEY`). A resolver whose key was *rotated* re-attaches to the
   same node by itself; a *revoked* node is refused at re-enrollment until you
-  un-revoke it (see [install.md](install.md#removing-an-agent-revoke-vs-remove-only)).
-- **Sites** — group agents by site, each with a role, and edit a site's name and
+  un-revoke it (see [install.md](install.md#removing-a-resolver-revoke-vs-remove-only)).
+- **Sites** — group resolvers by site, each with a role, and edit a site's name and
   description in place. Scoped records and forwarders target sites.
-- **Node health** — the Agents page shows each node's address, status, version,
-  sync state and counters; open an agent for its details.
+- **Node health** — the Resolvers page shows each node's address, status, version,
+  sync state and counters; open a resolver for its details.
 
-  ![An agent's details](images/agent-detail.png)
+  ![A resolver's details](images/agent-detail.png)
 - **Maintenance/drain** — put a node into maintenance to answer `SERVFAIL` so clients
   fail over to another server while you work on it.
-- **Removing agents** — *Remove & revoke* tombstones the node so the still-running
-  agent can't rejoin; *Remove only* lets it re-enroll as a new node. Revoked agents
-  are listed in a collapsible panel where you can *Un-revoke* (the agent may rejoin
+- **Removing resolvers** — *Remove & revoke* tombstones the node so the still-running
+  resolver can't rejoin; *Remove only* lets it re-enroll as a new node. Revoked resolvers
+  are listed in a collapsible panel where you can *Un-revoke* (the resolver may rejoin
   as a new node) or *Delete forever* (permanently remove the record — rejoining
   would still need a valid enrollment key).
 - **Logs** — the **Logs** page shows recent process logs from the control plane and
-  every agent (admin only). Agents ship new lines with their config poll, so agent
+  every resolver (admin only). Resolvers ship new lines with their config poll, so resolver
   logs can lag by up to ~30s. Logs are kept in a bounded in-memory buffer — history
   is lost on restart; use VictoriaLogs export for durable, searchable query logs.
 
@@ -474,9 +474,9 @@ is shown once and then stored hashed. A revoked, expired or exhausted key can be
 *Deleted* for good (audit-logged); an active key must be revoked first, and the
 deprecated `join_token` can't be deleted while it is still in the config, since
 every boot would import it again as an active key. Multisite networking (e.g. a WireGuard mesh so
-agents reach the control plane privately) is up to you; see
-[install.md](install.md#reaching-the-control-plane-from-an-agent) for pinning the
-control plane's IP when an agent can't resolve its FQDN.
+resolvers reach the control plane privately) is up to you; see
+[install.md](install.md#reaching-the-control-plane-from-a-resolver) for pinning the
+control plane's IP when a resolver can't resolve its FQDN.
 
 ## Authentication and SSO
 
@@ -576,7 +576,7 @@ An integration that syncs records should mark them as its own with `source`; see
 rewrites — as one versioned JSON bundle, and import it back. Import has two modes:
 `merge` (upsert on top of what's there) and `replace` (clear rules and rewrites
 first). A restore applies settings live, reloads the filtering policy, and bumps the
-cluster config version so agents re-sync. The bundle omits users/sessions, the query
+cluster config version so resolvers re-sync. The bundle omits users/sessions, the query
 log, and per-node cluster keys. Rewrites keep their `source` and `external_id`: a
 restored record wins over the one it replaces, owner included.
 
@@ -595,7 +595,7 @@ curl -s -X POST 'http://<control-plane-host>:8080/api/config/import?mode=replace
 **Settings → About & updates** shows the version the control plane runs, whether a
 newer release is out (checked against GitHub releases every 6 hours, or on
 **Check now**) and the
-changelog of every release in between, plus the version each agent runs. Set
+changelog of every release in between, plus the version each resolver runs. Set
 `MAZEDNS_UPDATE_CHECK=off` to stop the check, for example on a host without
 internet access.
 
@@ -606,9 +606,9 @@ internet access.
 The UI adapts to phones and tablets: on a phone, the main pages sit in a tab bar at
 the bottom and the rest under **More**.
 
-| Overview | More | Agents |
+| Overview | More | Resolvers |
 |---|---|---|
-| ![Overview on a phone](images/mobile-overview.png) | ![The More menu](images/mobile-more.png) | ![Agents on a phone](images/mobile-agents.png) |
+| ![Overview on a phone](images/mobile-overview.png) | ![The More menu](images/mobile-more.png) | ![Resolvers on a phone](images/mobile-agents.png) |
 
 ## Seeing real client IPs
 
@@ -616,7 +616,7 @@ The resolver reports each query's source IP as seen on the wire. When you publis
 the DNS port through Docker's NAT (`-p 53:53`), the source is rewritten to the Docker
 gateway, so per-client stats collapse to one client. To preserve real client IPs:
 
-- **Docker (Linux):** run the agent with `network_mode: host` — see
+- **Docker (Linux):** run the resolver with `network_mode: host` — see
   [install.md](install.md#real-client-ips-and-node-ips-host-networking).
 - **Kubernetes:** give the DNS pod `hostNetwork: true`, or expose it via a Service
   with `externalTrafficPolicy: Local`.

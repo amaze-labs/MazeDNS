@@ -174,7 +174,7 @@ function LatencyTooltip({ active, payload, label, hours, color }: any) {
           className="ov-tip-row"
           style={{ ['--k' as any]: p.dataKey === 'overall' ? OVERALL_COLOR : color(p.dataKey) }}
         >
-          <span>{p.dataKey === 'overall' ? 'All agents' : p.dataKey}</span>
+          <span>{p.dataKey === 'overall' ? 'All resolvers' : p.dataKey}</span>
           <b>{fmtMs(p.value)} ms</b>
         </div>
       ))}
@@ -491,7 +491,7 @@ export default function Dashboard() {
       ? `to ${sentTo}`
       : upstreams && upstreams.length > 0
       ? `to ${upstreams.slice(0, 2).map((u) => u.replace(/:53$/, '')).join(', ')}${upstreams.length > 2 ? ` +${upstreams.length - 2}` : ''}`
-      : 'to upstream resolvers',
+      : 'to upstreams',
     blocked:
       // Lists from MAZEDNS_BLOCKLIST_FILES block too but aren't in the API, so
       // "0 lists, 0 rules" would contradict a non-zero blocked count.
@@ -687,14 +687,14 @@ export default function Dashboard() {
           <section className="card flush">
             <div className="card-head ov-nowrap">
               <div>
-                <h2>Agents</h2>
+                <h2>Resolvers</h2>
                 <p className="sub">
                   Clients query these directly · {online} of {agents.length} online
                   {bySite && ` · ${siteRuns.length} ${siteRuns.length === 1 ? 'site' : 'sites'}`}
                 </p>
               </div>
               <span className="spacer" />
-              <a className="btn sm quiet" href="/agents" onClick={go('/agents')}>
+              <a className="btn sm quiet" href="/resolvers" onClick={go('/resolvers')}>
                 Manage
               </a>
             </div>
@@ -719,7 +719,7 @@ export default function Dashboard() {
                   // Under a site header the site would only repeat itself.
                   const where = bySite ? n.role : [n.site || 'No site', n.role].filter(Boolean).join(' · ')
                   return (
-                    <a key={n.id} className="rowitem" href="/agents" onClick={go('/agents')}>
+                    <a key={n.id} className="rowitem" href="/resolvers" onClick={go('/resolvers')}>
                       <span className={`dot ${dot}`} />
                       <div>
                         <div className="title">
@@ -753,7 +753,7 @@ export default function Dashboard() {
                       <div>
                         <b>{site || 'No site'}</b>
                         <span className="muted">
-                          {members.length} {members.length === 1 ? 'agent' : 'agents'}
+                          {members.length} {members.length === 1 ? 'resolver' : 'resolvers'}
                         </span>
                       </div>
                       <div className="ov-agent-num">
@@ -915,11 +915,11 @@ export default function Dashboard() {
           <div className="card-head">
             <div>
               <h2>Latency</h2>
-              <p className="sub">Average time to answer, per bucket{showNodeLines ? ', overall and per agent' : ''}.</p>
+              <p className="sub">Average time to answer, per bucket{showNodeLines ? ', overall and per resolver' : ''}.</p>
             </div>
             <span className="spacer" />
             <div className="legend-keys">
-              <span style={{ ['--k' as any]: OVERALL_COLOR }}>{showNodeLines ? 'All agents' : 'Average'}</span>
+              <span style={{ ['--k' as any]: OVERALL_COLOR }}>{showNodeLines ? 'All resolvers' : 'Average'}</span>
               {showNodeLines &&
                 latNodes.map((n) => (
                   <span key={n} style={{ ['--k' as any]: nodeColor(n) }}>
@@ -1004,7 +1004,7 @@ export default function Dashboard() {
             <div>
               <h2>Distribution</h2>
               <p className="sub">
-                Share of the window's queries{byNodeData.length > 1 ? ' by agent and' : ''} by how they were answered
+                Share of the window's queries{byNodeData.length > 1 ? ' by resolver and' : ''} by how they were answered
                 {byUpstream.length > 0 ? ', and which upstream answered the forwarded ones' : ''}.
               </p>
             </div>
@@ -1018,7 +1018,7 @@ export default function Dashboard() {
             </Load>
           ) : (
             <div className="ov-donuts">
-              {byNodeData.length > 1 && <Donut title="By agent" data={byNodeData} />}
+              {byNodeData.length > 1 && <Donut title="By resolver" data={byNodeData} />}
               <Donut title="By answer" data={sourceData} />
               {byUpstream.length > 0 && (
                 <div className="ov-donut">

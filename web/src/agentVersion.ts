@@ -3,6 +3,16 @@
 // version still runs the latest agent code: agentBuild (from GET /api/version)
 // names the release that agent code comes from.
 
+import type { Node } from './api'
+
+// ONLINE_WINDOW: a node seen within it is online (matches the control plane's
+// metrics). A node's app_version is the last one it reported, so for an offline
+// node (or an orphaned row left by a container recreated without its /data
+// volume) it says nothing about what runs now.
+export const ONLINE_WINDOW = 120 // seconds
+export const nodeOnline = (n: Pick<Node, 'last_seen'>, nowSec = Date.now() / 1000) =>
+  !!n.last_seen && nowSec - n.last_seen < ONLINE_WINDOW
+
 const semver = (v: string): number[] | null => (/^\d+\.\d+\.\d+$/.test(v) ? v.split('.').map(Number) : null)
 
 function before(a: number[], b: number[]): boolean {

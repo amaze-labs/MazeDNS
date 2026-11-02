@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, type Node, type Release, type UpdateStatus } from '../api'
-import { agentOutdated, latestAgent } from '../agentVersion'
+import { agentOutdated, latestAgent, nodeOnline } from '../agentVersion'
 import Spinner from './Spinner'
 import { SkelGroups } from './Skeleton'
 
@@ -123,10 +123,12 @@ export default function About() {
       .catch(() => {})
   }, [])
 
-  // Agents grouped by the version they report.
+  // Online agents grouped by the version they report. An offline agent's version
+  // is the last one it reported, not what runs now, so it isn't listed.
   const byVersion = new Map<string, string[]>()
+  const offline = (nodes ?? []).filter((n) => n.approved && !nodeOnline(n)).length
   for (const n of nodes ?? []) {
-    if (!n.approved) continue
+    if (!n.approved || !nodeOnline(n)) continue
     const v = n.app_version || 'unknown'
     byVersion.set(v, [...(byVersion.get(v) ?? []), n.name])
   }
@@ -232,6 +234,12 @@ export default function About() {
                 </li>
               ))}
             </ul>
+            {offline > 0 && (
+              <p className="hint">
+                {offline === 1 ? '1 offline resolver isn’t' : `${offline} offline resolvers aren’t`} listed: a resolver reports its
+                version when it polls, so an offline one may already run something newer.
+              </p>
+            )}
             {newestAgent && (
               <p className="hint">
                 The latest resolver code is from <b className="mono">{newestAgent}</b>

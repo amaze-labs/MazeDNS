@@ -6,6 +6,7 @@ import Modal from './Modal'
 import Avatar from './Avatar'
 import { fileToAvatar } from '../avatar'
 import { SKIP_AUTOLOGIN_KEY } from './Login'
+import { CodeInput, MFASetupSteps, RecoveryCodes } from './MFA'
 import '../styles/account.css'
 
 const ROLE_LABEL: Record<string, string> = { admin: 'Administrator', readonly: 'Viewer' }
@@ -25,6 +26,149 @@ export function PasswordMeter({ password }: { password: string }) {
       </span>
       <small style={{ color: k }}>{st.label}</small>
     </span>
+  )
+}
+
+// TwoFactorCard is the signed-in local account's two-factor sign-in: set it up,
+// replace the recovery codes, or turn it off (not while the policy requires it).
+function TwoFactorCard({ me, onChange }: { me: SessionUser; onChange?: () => void }) {
+  const [dialog, setDialog] = useState<'' | 'setup' | 'codes' | 'off'>('')
+  const [codes, setCodes] = useState<string[] | null>(null)
+  const [code, setCode] = useState('')
+  const [pw, setPw] = useState('')
+  const [err, setErr] = useState('')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const on = !!me.mfa_enabled
+
+  const open = (d: typeof dialog) => {
+    setDialog(d)
+    setCodes(null)
+    setCode('')
+    setPw('')
+    setErr('')
+    setMsg('')
+  }
+  const close = () => {
+    setDialog('')
+    setCodes(null)
+    onChange?.()
+  }
+  const newCodes = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setErr('')
+    try {
+      setCodes((await api.mfaRecoveryCodes(code)).recovery_codes)
+    } catch (e: any) {
+      setErr(e.message)
+      setCode('')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const turnOff = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setErr('')
+    try {
+      await api.mfaDisable(pw, code)
+      close()
+      setMsg('Two-factor sign-in is off.')
+    } catch (e: any) {
+      setErr(e.message)
+      setCode('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card acct-mfa">
+      <div>
+        <h2>
+          Two-factor sign-in <span className={`tag${on ? ' ok' : ''}`}>{on ? 'On' : 'Off'}</span>
+        </h2>
+        <p className="muted">
+          {on
+            ? 'Signing in asks for a code from your authenticator app after your password.'
+            : me.mfa_required
+            ? 'Required for local accounts on this control plane. You’ll be asked to set it up at your next sign-in, or do it now.'
+            : 'Ask for a code from an authenticator app after your password, so a leaked password alone can’t sign in.'}
+        </p>
+        {msg && <div className="ok-msg">{msg}</div>}
+      </div>
+      <div className="mfa-actions">
+        {on ? (
+          <>
+            <button className="btn sm" onClick={() => open('codes')}>
+              New recovery codes
+            </button>
+            {!me.mfa_required && (
+              <button className="btn sm quiet" onClick={() => open('off')}>
+                Turn off
+              </button>
+            )}
+          </>
+        ) : (
+          <button className="btn primary" onClick={() => open('setup')}>
+            Set up
+          </button>
+        )}
+      </div>
+
+      {dialog === 'setup' && (
+        <Modal kind="dialog" title={codes ? 'Save your recovery codes' : 'Set up two-factor sign-in'} onClose={close}>
+          {codes ? (
+            <RecoveryCodes codes={codes} onDone={close} doneLabel="Done" />
+          ) : (
+            <MFASetupSteps onEnabled={(c) => setCodes(c)} onCancel={close} />
+          )}
+        </Modal>
+      )}
+      {dialog === 'codes' && (
+        <Modal kind="dialog" title="New recovery codes" onClose={close}>
+          {codes ? (
+            <RecoveryCodes codes={codes} onDone={close} doneLabel="Done" />
+          ) : (
+            <form className="mfa-setup" onSubmit={newCodes}>
+              <p className="muted" style={{ margin: 0 }}>
+                Your current recovery codes stop working.
+              </p>
+              {err && <div className="error">{err}</div>}
+              <CodeInput value={code} onChange={setCode} />
+              <div className="mfa-actions">
+                <span className="spacer" />
+                <button type="submit" className="btn primary" disabled={busy || code.length !== 6}>
+                  {busy ? 'Checking…' : 'Make new codes'}
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
+      {dialog === 'off' && (
+        <Modal kind="dialog" title="Turn off two-factor sign-in?" onClose={close}>
+          <form className="mfa-setup" onSubmit={turnOff}>
+            <p className="muted" style={{ margin: 0 }}>
+              Your password alone will sign you in again, and your recovery codes stop working.
+            </p>
+            {err && <div className="error">{err}</div>}
+            <label className="field">
+              <span>Password</span>
+              <input type="password" autoComplete="current-password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} />
+            </label>
+            <CodeInput value={code} onChange={setCode} allowRecovery autoFocus={false} />
+            <div className="mfa-actions">
+              <span className="spacer" />
+              <button type="submit" className="btn danger solid" disabled={busy || !pw || code.trim().length < 6}>
+                {busy ? 'Turning off…' : 'Turn off'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </section>
   )
 }
 
@@ -62,6 +206,7 @@ export default function Account({
   const [resetPw, setResetPw] = useState('')
   const [resetErr, setResetErr] = useState('')
   const [delFor, setDelFor] = useState<User | null>(null)
+  const [mfaResetFor, setMfaResetFor] = useState<User | null>(null)
   const [busy, setBusy] = useState(false)
   // Profile picture: upload (resized in the browser) or remove.
   const fileRef = useRef<HTMLInputElement>(null)
@@ -208,6 +353,23 @@ export default function Account({
     }
   }
 
+  const doMfaReset = async () => {
+    if (!mfaResetFor) return
+    setBusy(true)
+    setUErr('')
+    setUMsg('')
+    try {
+      await api.resetUserMFA(mfaResetFor.id)
+      setUMsg(`Two-factor sign-in reset for ${mfaResetFor.username}. Their sessions were signed out.`)
+      loadUsers()
+    } catch (e: any) {
+      setUErr(e.message)
+    } finally {
+      setBusy(false)
+      setMfaResetFor(null)
+    }
+  }
+
   const signOut = async () => {
     // Keep SSO auto-login from bouncing straight back in after signing out.
     sessionStorage.setItem(SKIP_AUTOLOGIN_KEY, '1')
@@ -313,6 +475,14 @@ export default function Account({
           )}
         </div>
       </section>
+
+      {me && !isSSO && me.source !== 'token' && <TwoFactorCard
+          me={me}
+          onChange={() => {
+            onProfileChange?.()
+            loadUsers() // the people table shows who has it on
+          }}
+        />}
 
       {oidc && me?.role === 'admin' && (
         <>
@@ -422,7 +592,14 @@ export default function Account({
                         <span className={`tag${u.role === 'admin' ? ' ok' : ''}`}>{roleLabel(u.role)}</span>
                       )}
                     </td>
-                    <td className="hide-sm">{sourceLabel(u.source)}</td>
+                    <td className="hide-sm">
+                      {sourceLabel(u.source)}
+                      {u.mfa_enabled && (
+                        <span className="tag ok mfa-tag" title="Two-factor sign-in is on">
+                          2FA
+                        </span>
+                      )}
+                    </td>
                     <td className="actions">
                       {u.source === 'local' && (
                         <button
@@ -434,6 +611,11 @@ export default function Account({
                           }}
                         >
                           Reset password
+                        </button>
+                      )}
+                      {u.source === 'local' && u.mfa_enabled && me?.id !== u.id && (
+                        <button className="btn sm" onClick={() => setMfaResetFor(u)}>
+                          Reset 2FA
                         </button>
                       )}
                       {me?.id !== u.id && (
@@ -487,6 +669,30 @@ export default function Account({
               <PasswordMeter password={resetPw} />
             </label>
           </form>
+        </Modal>
+      )}
+
+      {mfaResetFor && (
+        <Modal
+          kind="dialog"
+          title={`Reset ${mfaResetFor.username}’s two-factor sign-in?`}
+          onClose={() => setMfaResetFor(null)}
+          footer={
+            <>
+              <span className="spacer" />
+              <button className="btn quiet" onClick={() => setMfaResetFor(null)}>
+                Cancel
+              </button>
+              <button className="btn danger solid" onClick={doMfaReset} disabled={busy}>
+                {busy ? 'Resetting…' : 'Reset'}
+              </button>
+            </>
+          }
+        >
+          <p className="muted" style={{ margin: 0 }}>
+            For someone who lost their authenticator and recovery codes. They’re signed out everywhere and sign in with
+            their password alone, or set two-factor sign-in up again if it’s required.
+          </p>
         </Modal>
       )}
 

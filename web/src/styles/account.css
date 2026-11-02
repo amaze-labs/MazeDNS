@@ -163,3 +163,31 @@
 .pg-account-dialog .field > small.bad-text {
   color: var(--block);
 }
+
+/* Two-factor sign-in card (TwoFactorCard). */
+.pg-account .acct-mfa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-top: 16px;
+  padding: 20px 28px;
+}
+.pg-account .acct-mfa h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  margin: 0 0 6px;
+}
+.pg-account .acct-mfa p {
+  margin: 0;
+  max-width: 60ch;
+}
+.pg-account .acct-mfa .ok-msg {
+  margin: 8px 0 0;
+}
+.pg-account .mfa-tag {
+  margin-left: 8px;
+}

@@ -86,18 +86,30 @@ func (m *Manager) OIDC() *OIDCProvider {
 	return m.oidc
 }
 
-// Login verifies a local user and starts a session, returning the token + user.
-func (m *Manager) Login(username, password string) (string, *SessionUser, error) {
+// CheckPassword verifies a local user's password and returns the account
+// without starting a session: the caller decides whether a second factor comes
+// first.
+func (m *Manager) CheckPassword(username, password string) (*store.User, error) {
 	u, err := m.store.GetUserByUsername(username)
 	if err != nil || u == nil || u.PasswordHash == "" {
 		// Verify against a static hash so a missing/passwordless account takes the
 		// same time as a real one (no username-enumeration timing oracle).
 		VerifyDummy(password)
-		return "", nil, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
 	}
 	ok, err := VerifyPassword(u.PasswordHash, password)
 	if err != nil || !ok {
-		return "", nil, ErrInvalidCredentials
+		return nil, ErrInvalidCredentials
+	}
+	return u, nil
+}
+
+// Login verifies a local user and starts a session, returning the token + user.
+// It skips any second factor; the HTTP login goes through CheckPassword.
+func (m *Manager) Login(username, password string) (string, *SessionUser, error) {
+	u, err := m.CheckPassword(username, password)
+	if err != nil {
+		return "", nil, err
 	}
 	return m.StartSession(u.ID, u.Username, u.Role)
 }

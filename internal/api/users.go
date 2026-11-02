@@ -22,8 +22,10 @@ func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
 		users = []store.User{}
 	}
 	ssoAllowed := s.ssoAvatarUpload()
+	mfa, _ := s.store.MFAEnabledUsers()
 	for i := range users {
 		users[i].AvatarURL = effectiveAvatar(&users[i], ssoAllowed)
+		users[i].MFAEnabled = mfa[users[i].ID]
 	}
 	writeJSON(w, http.StatusOK, users)
 }
@@ -181,6 +183,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.DeleteSessionsForUser(id)
+	_ = s.store.DeleteMFAChallengesForUser(id)
 	// Their API tokens could never work again (a token is bound to its creator's
 	// account), so revoke them rather than leave dead rows in the token list.
 	if n, err := s.store.DeleteAPITokensForUser(id); err == nil && n > 0 {

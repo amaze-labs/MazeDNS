@@ -200,6 +200,22 @@ export interface SessionUser {
   avatar_url?: string // the picture to show: an upload, the IdP's, or none
   can_upload_avatar?: boolean // local accounts; SSO ones when allowed
   has_uploaded_avatar?: boolean
+  mfa_enabled?: boolean // two-factor sign-in on (local accounts)
+  mfa_required?: boolean // the policy requires it for local accounts
+}
+
+// A password sign-in that needs its second factor: enter a code ("verify"), or
+// set two-factor sign-in up first because the policy requires it ("setup").
+export interface MFAChallenge {
+  mfa: 'verify' | 'setup'
+  challenge: string
+  expires_in: number
+}
+export const isMFAChallenge = (r: SessionUser | MFAChallenge): r is MFAChallenge => 'mfa' in r
+
+export interface MFASetup {
+  secret: string
+  uri: string // otpauth:// for the QR code
 }
 
 export interface AuthInfo {
@@ -248,6 +264,7 @@ export interface CPSettings {
   key_grace_sec: number
   advertise_addr: string
   login_rate_attempts: number
+  require_mfa?: boolean // two-factor sign-in mandatory for local accounts
   login_rate_window_sec: number
   // Metrics scrape token: hash is never returned (write-only via generate/clear
   // endpoints); prefix is display-safe.
@@ -512,6 +529,7 @@ export interface User {
   source: string
   avatar_url?: string
   updated_at: number
+  mfa_enabled?: boolean
 }
 
 export interface List {
@@ -637,7 +655,29 @@ export const api = {
     return j<SessionUser>(r)
   },
   login: (username: string, password: string) =>
-    fetch('/api/auth/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username, password }) }).then(j<SessionUser>),
+    fetch('/api/auth/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username, password }) }).then(
+      j<SessionUser | MFAChallenge>,
+    ),
+  // Two-factor sign-in. challenge is set during a password sign-in (from login),
+  // left out when a signed-in user manages their own.
+  mfaVerify: (challenge: string, code: string) =>
+    fetch('/api/auth/mfa/verify', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ challenge, code }) }).then(
+      j<SessionUser>,
+    ),
+  mfaSetup: (challenge?: string) =>
+    fetch('/api/auth/mfa/setup', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ challenge }) }).then(
+      j<MFASetup>,
+    ),
+  mfaEnable: (code: string, challenge?: string) =>
+    fetch('/api/auth/mfa/enable', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ code, challenge }) }).then(
+      j<{ recovery_codes: string[]; user?: SessionUser }>,
+    ),
+  mfaDisable: (password: string, code: string) =>
+    fetch('/api/auth/mfa/disable', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ password, code }) }).then(ok),
+  mfaRecoveryCodes: (code: string) =>
+    fetch('/api/auth/mfa/recovery-codes', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ code }) }).then(
+      j<{ recovery_codes: string[] }>,
+    ),
   logout: () => fetch('/api/auth/logout', { method: 'POST' }),
   setAvatar: (image: string) =>
     fetch('/api/auth/avatar', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ image }) }).then(j<{ avatar_url: string }>),
@@ -660,6 +700,7 @@ export const api = {
   resetUserPassword: (id: number, password: string) =>
     fetch(`/api/users/${id}/password`, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ password }) }).then(ok),
   deleteUser: (id: number) => fetch(`/api/users/${id}`, { method: 'DELETE' }).then(ok),
+  resetUserMFA: (id: number) => fetch(`/api/users/${id}/mfa`, { method: 'DELETE' }).then(ok),
 
   // data
   stats: () => fetch('/api/stats').then(j<Stats>),

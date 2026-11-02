@@ -164,6 +164,11 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("GET /api/auth/info", s.authInfo)
 		mux.HandleFunc("POST /api/auth/login", s.login)
 		mux.HandleFunc("POST /api/auth/logout", s.logout)
+		// Second factor of a password sign-in: the challenge from /login stands in
+		// for a session until a code is accepted.
+		mux.HandleFunc("POST /api/auth/mfa/verify", s.mfaVerify)
+		mux.HandleFunc("POST /api/auth/mfa/setup", s.mfaSetup)
+		mux.HandleFunc("POST /api/auth/mfa/enable", s.mfaEnable)
 		mux.HandleFunc("GET /api/auth/me", s.me)
 		mux.HandleFunc("GET /api/auth/oidc/login", s.oidcLogin)
 		mux.HandleFunc("GET /api/auth/oidc/callback", s.oidcCallback)
@@ -257,6 +262,9 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		// Account (self) + user management (admin).
 		mux.HandleFunc("POST /api/auth/password", s.requireSession(roleReadonly, s.changePassword))
+		mux.HandleFunc("POST /api/auth/mfa/disable", s.requireSession(roleReadonly, s.mfaDisable))
+		mux.HandleFunc("POST /api/auth/mfa/recovery-codes", s.requireSession(roleReadonly, s.mfaRegenerateCodes))
+		mux.HandleFunc("DELETE /api/users/{id}/mfa", s.requireSession(roleAdmin, s.resetUserMFA))
 		mux.HandleFunc("PUT /api/auth/avatar", s.requireSession(roleReadonly, s.putAvatar))
 		mux.HandleFunc("DELETE /api/auth/avatar", s.requireSession(roleReadonly, s.deleteAvatar))
 		mux.HandleFunc("GET /api/users/{id}/avatar", s.requireSession(roleReadonly, s.userAvatar))
@@ -1392,14 +1400,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	token, user, err := s.auth.Login(in.Username, in.Password)
+	u, err := s.auth.CheckPassword(in.Username, in.Password)
 	if err != nil {
 		slog.Warn("login failed", "remote", clientIP(r), "user", in.Username)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
-	s.auth.SetCookie(w, r, token)
-	writeJSON(w, http.StatusOK, user)
+	// A second factor comes first when the account has one, or must set one up
+	// (see mfa.go); otherwise the password alone signs in.
+	if s.passwordLoginNeedsMFA(w, r, u) {
+		return
+	}
+	s.startSession(w, r, u)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -1437,6 +1449,10 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		"source": source, "avatar_url": avatar,
 		// Whether this account may upload its own picture, and has one.
 		"can_upload_avatar": canUpload, "has_uploaded_avatar": uploaded,
+		// Two-factor sign-in (local accounts): on for this account, and whether
+		// the policy requires it (then it can't be turned off).
+		"mfa_enabled":  source == "local" && s.mfaEnabled(u.ID),
+		"mfa_required": source == "local" && s.store.LoadCPSettings(cpSettingsDefaults()).RequireMFA,
 	})
 }
 

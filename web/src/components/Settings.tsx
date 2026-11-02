@@ -1293,6 +1293,12 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </Field>
         </div>
         <p className="hint">Failed and successful sign-ins are throttled per source address and per username.</p>
+        <Toggle
+          label="Require two-factor sign-in for local accounts"
+          desc="Accounts without it set it up right after their next password sign-in, and can’t turn it off. Single sign-on accounts follow your identity provider."
+          checked={!!cp.require_mfa}
+          onChange={(v) => setCp({ ...cp, require_mfa: v })}
+        />
       </Group>
 
       <Group title="New resolvers" desc="What happens when a resolver enrolls with a valid key.">

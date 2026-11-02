@@ -495,6 +495,32 @@ shows the exact value to register, and it's logged at startup so you can compare
 first boot and are ignored afterwards — see
 [configuration.md](configuration.md#control-plane).)
 
+### Two-factor sign-in
+
+Local accounts can add a second step after the password: a 6-digit code from an
+authenticator app (TOTP: 1Password, Bitwarden, Google Authenticator, Aegis…).
+
+- **Turn it on** under **Account → Two-factor sign-in → Set up**: scan the QR code
+  (or type the key), then enter the code the app shows. You get **10 recovery
+  codes**, shown once: each signs in once if you lose your phone. **New recovery
+  codes** replaces them (it asks for a current code).
+- **Require it** for every local account with **Require two-factor sign-in for local
+  accounts** under Settings → Access & sign-in → Sessions. Accounts without it are
+  walked through setup right after their next password sign-in, and can't turn it
+  off. SSO accounts are left to your identity provider, and API tokens aren't
+  affected.
+- **Lost the phone and the codes?** An admin uses **Reset 2FA** next to the person
+  under Account → People: it turns two-factor sign-in off and signs them out
+  everywhere. For the last admin, `control-plane reset-admin` on the host resets the
+  password and turns two-factor sign-in off.
+
+Codes are checked within ±30 seconds, so keep the server's and the phone's clocks
+right. Each code works once. A sign-in allows 5 tries over 5 minutes before you have
+to enter the password again. Setups, resets and recovery-code sign-ins are recorded
+in the change history. The TOTP secret is stored in the control plane's database
+as authenticator apps need it (not hashed, unlike passwords and recovery codes), so
+protect database backups like the rest of your credentials.
+
 ## Your account, profile picture and theme
 
 **Account** (your avatar, top right) holds your profile and password and, for

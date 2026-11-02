@@ -18,6 +18,8 @@ type User struct {
 	Subject      string `json:"-"`
 	PasswordHash string `json:"-"`
 	UpdatedAt    int64  `json:"updated_at"`
+	// MFAEnabled is filled in by the API for listings (see MFAEnabledUsers).
+	MFAEnabled bool `json:"mfa_enabled"`
 }
 
 // CountUsers returns the number of users.

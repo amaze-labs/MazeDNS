@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { api } from '../api'
+import { api, isMFAChallenge, type MFAChallenge } from '../api'
+import { CodeInput, MFASetupSteps, RecoveryCodes } from './MFA'
 import '../styles/auth.css'
 
 // Set just before logout so auto-login doesn't immediately bounce the user back
@@ -59,6 +60,11 @@ export default function Login({
   const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  // After a correct password: the second factor still to give (or to set up),
+  // then, after setting one up, the recovery codes to save.
+  const [mfa, setMfa] = useState<MFAChallenge | null>(null)
+  const [code, setCode] = useState('')
+  const [newCodes, setNewCodes] = useState<string[] | null>(null)
 
   // Auto-login: redirect straight to SSO — unless the user just logged out.
   useEffect(() => {
@@ -75,7 +81,12 @@ export default function Login({
     setErr('')
     setBusy(true)
     try {
-      await api.login(username, password)
+      const r = await api.login(username, password)
+      if (isMFAChallenge(r)) {
+        setMfa(r)
+        setPassword('')
+        return
+      }
       onLogin()
     } catch (e: any) {
       setErr(e.message || 'Sign-in failed')
@@ -84,7 +95,77 @@ export default function Login({
     }
   }
 
+  const verify = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!mfa) return
+    setErr('')
+    setBusy(true)
+    try {
+      await api.mfaVerify(mfa.challenge, code)
+      onLogin()
+    } catch (e: any) {
+      setErr(e.message || 'Sign-in failed')
+      setCode('')
+      // An expired or used-up challenge means starting over from the password.
+      if (/sign in again/.test(e.message || '')) setMfa(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const restart = () => {
+    setMfa(null)
+    setCode('')
+    setErr('')
+  }
+
   const passwordOn = !(oidc && passwordDisabled)
+
+  // The second step of a password sign-in replaces the form.
+  let second: JSX.Element | null = null
+  if (newCodes) {
+    second = (
+      <div className="auth-form">
+        <div>
+          <h1>Save your recovery codes</h1>
+          <p className="lede">Two-factor sign-in is on.</p>
+        </div>
+        <RecoveryCodes codes={newCodes} onDone={onLogin} doneLabel="Continue" />
+      </div>
+    )
+  } else if (mfa?.mfa === 'verify') {
+    second = (
+      <form className="auth-form" onSubmit={verify}>
+        <div>
+          <h1>Two-factor sign-in</h1>
+          <p className="lede">Open your authenticator app and enter the code for MazeDNS.</p>
+        </div>
+        {err && <div className="error">{err}</div>}
+        <CodeInput value={code} onChange={setCode} allowRecovery />
+        <button type="submit" className="btn primary block" disabled={busy || code.trim().length < 6}>
+          {busy ? 'Checking…' : 'Verify'}
+        </button>
+        <button type="button" className="btn quiet block" onClick={restart}>
+          Back
+        </button>
+        <p className="foot">Lost your phone? Enter one of your recovery codes, or ask an administrator to reset it.</p>
+      </form>
+    )
+  } else if (mfa?.mfa === 'setup') {
+    second = (
+      <div className="auth-form">
+        <div>
+          <h1>Set up two-factor sign-in</h1>
+          <p className="lede">This control plane requires it for local accounts. It takes a minute.</p>
+        </div>
+        <MFASetupSteps
+          challenge={mfa.challenge}
+          onEnabled={(codes) => setNewCodes(codes)}
+          onCancel={restart}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="auth-login">
@@ -103,18 +184,19 @@ export default function Login({
       </div>
 
       <div className="form-side">
-        <form className="auth-form" onSubmit={submit}>
-          <div>
-            <h1>Sign in</h1>
-            <p className="lede">
-              to the control plane at <span className="mono">{window.location.host}</span>
-            </p>
-          </div>
-          {err && <div className="error">{err}</div>}
-          {oidc && (
-            <a className="btn block" href="/api/auth/oidc/login">
-              Continue with single sign-on
-            </a>
+        {second ?? (
+          <form className="auth-form" onSubmit={submit}>
+            <div>
+              <h1>Sign in</h1>
+              <p className="lede">
+                to the control plane at <span className="mono">{window.location.host}</span>
+              </p>
+            </div>
+            {err && <div className="error">{err}</div>}
+            {oidc && (
+              <a className="btn block" href="/api/auth/oidc/login">
+                Continue with single sign-on
+              </a>
           )}
           {oidc && passwordOn && <div className="or">or with a local account</div>}
           {passwordOn && (
@@ -149,6 +231,7 @@ export default function Login({
             Locked out? Run <code>control-plane reset-admin</code> on the host.
           </p>
         </form>
+        )}
       </div>
     </div>
   )

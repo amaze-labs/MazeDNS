@@ -559,7 +559,7 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "key rotation failed: "+err.Error())
 				return
 			}
-			slog.Info("cluster node reclaimed by name (agent lost its identity — e.g. image update without /data)",
+			slog.Info("cluster node reclaimed by name (resolver lost its identity — e.g. image update without /data)",
 				"id", existing.ID, "name", existing.Name, "enroll_key", ekPrefix, "remote", clientIP(r))
 			_ = s.store.AppendAudit(store.AuditEntry{User: "node:" + existing.Name, Action: "cluster.node.reclaim",
 				Detail: fmt.Sprintf("node %s (%s) identity reclaimed via enrollment key %s from %s", existing.Name, existing.ID, ekPrefix, clientIP(r))})
@@ -570,7 +570,7 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !in.SuffixOK {
-			slog.Warn("cluster enroll: name held by a live node — told agent to retry", "name", name, "remote", clientIP(r))
+			slog.Warn("cluster enroll: name held by a live node — told resolver to retry", "name", name, "remote", clientIP(r))
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error": "node name in use by a live node", "name_in_use": true,
 			})
@@ -613,7 +613,7 @@ func (s *Server) clusterEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("cluster node self-enrolled", "id", id, "name", name, "approved", !s.requireApproval)
 	// cp_address (if the control plane has a configured advertise address) lets the
-	// agent pin the CP's fixed IP for all later polls — see cmd/dns-agent.
+	// agent pin the CP's fixed IP for all later polls — see cmd/dns-resolver.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": name, "key": key, "approved": !s.requireApproval, "cp_address": s.store.MasterAdvertiseAddr(),
 	})
@@ -1006,7 +1006,7 @@ func (s *Server) maybeRotateNodeKey(node *store.Node, viaCurrent bool) string {
 		slog.Warn("cluster key re-issue failed", "id", node.ID, "err", err)
 		return ""
 	}
-	slog.Info("cluster node key re-issued (agent had not adopted the rotated key)", "id", node.ID, "name", node.Name,
+	slog.Info("cluster node key re-issued (resolver had not adopted the rotated key)", "id", node.ID, "name", node.Name,
 		"new_prefix", keyPrefix(newKey))
 	return newKey
 }

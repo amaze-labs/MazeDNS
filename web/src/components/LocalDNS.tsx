@@ -158,8 +158,8 @@ export default function LocalDNS() {
         <h1>Local DNS</h1>
       </header>
       <p className="intro">
-        Answer names on your own network. Records are pushed to every agent; scope one to a site or a single agent for
-        split-horizon answers. To send a whole domain to another resolver, use the conditional forwarders in{' '}
+        Answer names on your own network. Records are pushed to every resolver; scope one to a site or a single resolver for
+        split-horizon answers. To send a whole domain to another DNS server, use the conditional forwarders in{' '}
         <a
           href="/settings?section=resolver"
           onClick={(e) => {
@@ -178,7 +178,7 @@ export default function LocalDNS() {
           <b className="mono">*.lab.lan</b> matches every subdomain, not the bare name
         </span>
         <span>
-          <b>Most specific scope wins:</b> agent › site › everyone
+          <b>Most specific scope wins:</b> resolver › site › everyone
         </span>
         <span>
           <b>A/AAAA records</b> also name the client on every page and answer reverse lookups
@@ -189,7 +189,7 @@ export default function LocalDNS() {
         <SearchBox
           value={search}
           onChange={setSearch}
-          placeholder="Search names, answers, agents, integrations…"
+          placeholder="Search names, answers, resolvers, integrations…"
           maxWidth={460}
         />
         {q && (

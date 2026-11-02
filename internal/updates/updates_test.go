@@ -105,6 +105,7 @@ func TestDisabled(t *testing.T) {
 func TestPerImageBuilds(t *testing.T) {
 	notes := func(cp, agent string) string {
 		return "### Fixes\n- x\n\n**Images:**\n\n- `ghcr.io/amaze-labs/mazedns-control-plane:0.137.1`" + cp +
+			"\n- `ghcr.io/amaze-labs/mazedns-resolver:0.137.1`" + agent +
 			"\n- `ghcr.io/amaze-labs/mazedns-agent:0.137.1`" + agent + "\n"
 	}
 	for _, tc := range []struct {
@@ -114,6 +115,7 @@ func TestPerImageBuilds(t *testing.T) {
 		{"control plane only", notes("", " (unchanged since 0.136.6)"), "0.137.1", "0.136.6"},
 		{"agent only", notes(" (unchanged since 0.137.0)", ""), "0.137.0", "0.137.1"},
 		{"older notes", "### Fixes\n- a\n\n**Images:** `ghcr.io/amaze-labs/mazedns-control-plane:0.137.1`, `ghcr.io/amaze-labs/mazedns-agent:0.137.1`", "0.137.1", "0.137.1"},
+		{"resolver line only", "**Images:**\n\n- `ghcr.io/amaze-labs/mazedns-control-plane:0.137.1`\n- `ghcr.io/amaze-labs/mazedns-resolver:0.137.1` (unchanged since 0.136.9)\n", "0.137.1", "0.136.9"},
 	} {
 		if got := builtAt(tc.notes, "control-plane", "0.137.1"); got != tc.cp {
 			t.Errorf("%s: control plane from %q, want %q", tc.name, got, tc.cp)

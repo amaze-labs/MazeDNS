@@ -10,6 +10,7 @@
 /mazedns
 /control-plane
 /dns-agent
+/dns-resolver
 /bin/
 /dist/
 *.test

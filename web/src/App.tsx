@@ -18,8 +18,8 @@ import { withViewTransition } from './motion'
 import { useNavBadges } from './useNavBadges'
 import { api, UNAUTHORIZED, type SessionUser, type AuthInfo } from './api'
 
-type Tab = 'overview' | 'queries' | 'clients' | 'filtering' | 'local-dns' | 'agents' | 'logs' | 'settings' | 'account'
-const ALL_TABS: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'local-dns', 'agents', 'logs', 'settings', 'account']
+type Tab = 'overview' | 'queries' | 'clients' | 'filtering' | 'local-dns' | 'resolvers' | 'logs' | 'settings' | 'account'
+const ALL_TABS: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'local-dns', 'resolvers', 'logs', 'settings', 'account']
 
 // Navigation presentation: icon + human label per tab. On phones the bottom
 // bar holds the everyday tabs; the rest (`more`) open from its "More" sheet.
@@ -29,7 +29,7 @@ const TAB_META: Record<Tab, { icon: IconName; label: string; more?: boolean }> =
   clients: { icon: 'clients', label: 'Clients' },
   filtering: { icon: 'filtering', label: 'Filtering' },
   'local-dns': { icon: 'local-dns', label: 'Local DNS', more: true },
-  agents: { icon: 'cluster', label: 'Agents', more: true },
+  resolvers: { icon: 'cluster', label: 'Resolvers', more: true },
   logs: { icon: 'logs', label: 'Logs', more: true },
   settings: { icon: 'settings', label: 'Settings', more: true },
   account: { icon: 'account', label: 'Account' },
@@ -39,7 +39,8 @@ const TAB_META: Record<Tab, { icon: IconName; label: string; more?: boolean }> =
 const ALIASES: Record<string, Tab> = {
   '': 'overview',
   dashboard: 'overview',
-  cluster: 'agents',
+  cluster: 'resolvers',
+  agents: 'resolvers',
   requests: 'queries',
   ai: 'filtering',
   rewrites: 'local-dns',
@@ -216,12 +217,12 @@ export default function App() {
   // 'account' is reached from the avatar, not the nav.
   const classifierOn = !!(info.classifier_available && info.classifier_enabled)
   const tabs: Tab[] = ['overview', 'queries', 'clients', 'filtering', 'local-dns']
-  if (clusterOn) tabs.push('agents')
+  if (clusterOn) tabs.push('resolvers')
   // Process logs are admin-only server-side (they can carry client IPs and
   // usernames), so don't offer the tab to readonly users at all.
   if (isAdmin) tabs.push('logs')
   tabs.push('settings')
-  const counts: Partial<Record<Tab, number>> = { agents: badges.agents, filtering: badges.filtering }
+  const counts: Partial<Record<Tab, number>> = { resolvers: badges.agents, filtering: badges.filtering }
 
   // A tab the user can't open (role, cluster off, auth off) falls back to Overview.
   const allowed = tabs.includes(tab) || (tab === 'account' && info.auth_enabled)
@@ -365,7 +366,7 @@ export default function App() {
         {shown === 'clients' && <Clients />}
         {shown === 'filtering' && <Filtering classifier={classifierOn} />}
         {shown === 'local-dns' && <LocalDNS />}
-        {shown === 'agents' && <Cluster />}
+        {shown === 'resolvers' && <Cluster />}
         {shown === 'logs' && <Logs />}
         {shown === 'settings' && <Settings onClassifierChange={() => refresh()} />}
         {shown === 'account' && <Account me={user} oidc={!!info.oidc_enabled} onProfileChange={() => refresh()} />}

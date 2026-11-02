@@ -57,7 +57,7 @@ export default function CategoryBlocking({ canEdit }: { canEdit: boolean }) {
         <div>
           <h2>Block by category</h2>
           <p className="sub">
-            Block every domain in a category on every agent. Your allow rules still win, and pausing protection pauses these too.
+            Block every domain in a category on every resolver. Your allow rules still win, and pausing protection pauses these too.
           </p>
         </div>
       </div>
@@ -67,7 +67,7 @@ export default function CategoryBlocking({ canEdit }: { canEdit: boolean }) {
           : db.updated_at
             ? `Category database (UT1, Université Toulouse Capitole): ${fmtCount(db.domains)} domains, updated ${timeAgo(db.updated_at * 1000)}.`
             : 'The category database hasn’t loaded yet.'}
-        {db.error && <span className="bad-text"> Last refresh failed: {db.error}</span>} Each agent loads only the categories you block
+        {db.error && <span className="bad-text"> Last refresh failed: {db.error}</span>} Each resolver loads only the categories you block
         (Adult is the largest: about 45 MB of memory).
       </p>
       {err && <div className="error">{err}</div>}

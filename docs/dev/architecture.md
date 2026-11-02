@@ -85,7 +85,8 @@ stats and rate limiting only — there are no `clients`/`groups` tables.
 
 MazeDNS separates the **control plane** from the **data plane** so dashboard,
 API, and classifier load can never affect resolver latency. They ship as two
-images (`mazedns-control-plane`, `mazedns-agent`).
+images (`mazedns-control-plane`, `mazedns-resolver`; the latter is also
+published as `mazedns-agent`, its pre-rename name).
 
 - **Control plane** = source of truth (its SQLite/Postgres). It serves the web UI,
   API, auth, classifier, list refresher, cluster coordination, and the
@@ -94,6 +95,12 @@ images (`mazedns-control-plane`, `mazedns-agent`).
   DoT/DoH), replicates its effective filtering config from the control plane, and
   ships its query log + counters back for the dashboard. Agents keep resolving
   from their local copy even if the control plane is unreachable.
+
+> **Naming.** Agents were renamed **resolvers** (issue #80); "upstream" is the
+> word for the servers they forward to. The binary is `cmd/dns-resolver` and the
+> image `mazedns-resolver`, but Go identifiers inside still say *agent*
+> (`internal/cluster/agent.go`, `version.AgentBuild`), and the API and config say
+> *node*. `internal/resolver` is the DNS engine both binaries embed, not the node.
 
 **Replication.** Each agent polls `GET /api/cluster/snapshot` on its interval,
 authenticating with a per-node API key (Bearer). The snapshot carries the rules

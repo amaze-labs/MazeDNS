@@ -1,17 +1,27 @@
 # MazeDNS documentation
 
 MazeDNS runs as two containers: a **control plane** (web UI, API, config — no DNS)
-and one or more **DNS agents** (the resolvers your clients query). Everything below
+and one or more **DNS resolvers** (the DNS servers your clients query). Everything below
 is written for deploying and operating those containers — no source builds required.
 
 ![The MazeDNS overview](images/overview-hero.png)
+
+## Terms
+
+- **Control plane**: the web UI, API and configuration store. It answers no DNS.
+- **Resolver**: a MazeDNS DNS server your clients query. The API and config call
+  each one a *node* (`/api/cluster/nodes`, `MAZEDNS_NODE_KEY`). Earlier releases
+  called resolvers *agents*; the old image and binary names still work for now
+  (see [Renamed artifacts](install.md#renamed-artifacts)).
+- **Upstream**: a DNS server outside MazeDNS (Cloudflare, Quad9, your router…) that
+  resolvers forward queries to. Set under **Settings → Resolver → Upstream servers**.
 
 ## For operators
 
 - **[Install](install.md)** — deploy with Docker/Compose (fast deploy first) or
   Kubernetes.
 - **[Configuration](configuration.md)** — the authoritative reference for every
-  `MAZEDNS_*` environment variable and YAML setting, split by control plane / agent /
+  `MAZEDNS_*` environment variable and YAML setting, split by control plane / resolver /
   shared.
 - **[User guide](user-guide.md)** — the dashboard, blocklists and rules, rewrites
   and local records, running a cluster, authentication and SSO, and backup/restore.
@@ -22,16 +32,16 @@ is written for deploying and operating those containers — no source builds req
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/architecture-dark.png">
-  <img src="images/architecture.png" alt="Clients in each site query a DNS agent on port 53; every agent syncs with one control plane, which you use from a browser">
+  <img src="images/architecture.png" alt="Clients in each site query a MazeDNS resolver on port 53; every resolver syncs with one control plane, which you use from a browser">
 </picture>
 
 - **Control plane** — holds the config and dashboard, coordinates the cluster,
   never answers DNS. Run one.
-- **DNS agent** — serves DNS and replicates its filtering config from the control
+- **DNS resolver** — serves DNS and replicates its filtering config from the control
   plane. Run one or more. Clients point here.
-- **Enrollment** — agents self-register with an **enrollment key** (created in the UI,
+- **Enrollment** — resolvers self-register with an **enrollment key** (created in the UI,
   passed as `MAZEDNS_JOIN_TOKEN`) and receive a per-node key automatically; they then
-  appear on the **Agents** page.
+  appear on the **Resolvers** page.
 - **Bootstrap vs. operational settings** — the database, HTTP/DNS bind addresses &
   ports, TLS, and log level are read from env/YAML on every start; everything else on
   the control plane (auth/SSO, cluster policy, DNS defaults, cache, rate limits, block

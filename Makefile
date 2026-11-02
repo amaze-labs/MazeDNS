@@ -1,8 +1,10 @@
 # MazeDNS — build & dev tasks
 CP_PKG    := ./cmd/control-plane
-AGENT_PKG := ./cmd/dns-agent
+RESOLVER_PKG := ./cmd/dns-resolver
 BIN_DIR   := bin
 CP_IMAGE    ?= ghcr.io/amaze-labs/mazedns-control-plane
+RESOLVER_IMAGE ?= ghcr.io/amaze-labs/mazedns-resolver
+# The pre-rename image name, tagged too until the next major release.
 AGENT_IMAGE ?= ghcr.io/amaze-labs/mazedns-agent
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/IPMaze/MazeDNS/internal/version.Version=$(VERSION)
@@ -36,8 +38,8 @@ web: ## install + build the frontend (web/dist)
 	npm --prefix web run build
 
 .PHONY: build
-build: ## build the dns-agent binary (lean, no UI)
-	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/dns-agent $(AGENT_PKG)
+build: ## build the dns-resolver binary (lean, no UI)
+	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BIN_DIR)/dns-resolver $(RESOLVER_PKG)
 
 .PHONY: build-cp
 build-cp: web ## build the control-plane binary with the embedded web UI
@@ -47,17 +49,20 @@ build-cp: web ## build the control-plane binary with the embedded web UI
 run-cp: web ## run the control plane with the embedded UI (:8080, no DNS)
 	go run -tags embed_dist $(CP_PKG) --config configs/mazedns.yaml
 
-.PHONY: run-agent
-run-agent: ## run a dns-agent (resolver + /metrics, no UI/API) on :5300
-	MAZEDNS_LISTEN_PORT=5300 go run $(AGENT_PKG) --config configs/mazedns.yaml
+.PHONY: run-resolver run-agent
+run-resolver: ## run a resolver (DNS + /metrics, no UI/API) on :5300
+	MAZEDNS_LISTEN_PORT=5300 go run $(RESOLVER_PKG) --config configs/mazedns.yaml
+
+run-agent: run-resolver # pre-rename alias
 
 .PHONY: docker
-docker: ## build both container images (control-plane + dns-agent)
+docker: ## build both container images (control-plane + dns-resolver)
 	docker build --target control-plane --build-arg VERSION=$(VERSION) -t $(CP_IMAGE):$(VERSION) -t $(CP_IMAGE):latest .
-	docker build --target dns-agent     --build-arg VERSION=$(VERSION) -t $(AGENT_IMAGE):$(VERSION) -t $(AGENT_IMAGE):latest .
+	docker build --target dns-resolver  --build-arg VERSION=$(VERSION) -t $(RESOLVER_IMAGE):$(VERSION) -t $(RESOLVER_IMAGE):latest \
+		-t $(AGENT_IMAGE):$(VERSION) -t $(AGENT_IMAGE):latest .
 
 .PHONY: compose-dev
-compose-dev: ## build + run the dev cluster (control plane UI on :8080 + 2 agents)
+compose-dev: ## build + run the dev cluster (control plane UI on :8080 + 2 resolvers)
 	docker compose up --build
 
 .PHONY: compose-cp
@@ -65,7 +70,7 @@ compose-cp: ## build + run only the control plane (UI on :8080)
 	docker compose up --build control-plane
 
 .PHONY: compose-prod
-compose-prod: ## run the production compose (control plane + agent, pulls the images)
+compose-prod: ## run the production compose (control plane + resolver, pulls the images)
 	docker compose -f docker-compose.prod.yml up -d
 
 .PHONY: clean

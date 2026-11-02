@@ -112,25 +112,25 @@ classifier:                    # optional LLM domain classification (master only
   abuseipdb_enabled: false
   abuseipdb_api_key: ""
 
-cluster:                       # control-plane <-> dns-agent config replication
+cluster:                       # control-plane <-> resolver config replication
   # Clustering is automatic — there is no enable flag. The control plane always
-  # serves cluster endpoints; an agent joins whenever cp_url + a credential
+  # serves cluster endpoints; a resolver joins whenever cp_url + a credential
   # (join_token/node_key) are set, otherwise it runs standalone.
   # --- control-plane side ---
   # Enrollment keys are UI-managed (Agents → Enrollment keys), with optional
   # expiry and max-uses. Agents present a key as MAZEDNS_JOIN_TOKEN.
   join_token: ""               # DEPRECATED: if set, auto-imported once as a never-expiring enrollment key (prefer the UI). (or MAZEDNS_JOIN_TOKEN)
-  require_approval: false      # hold self-enrolled agents until an admin approves them (or MAZEDNS_REQUIRE_APPROVAL)
+  require_approval: false      # hold self-enrolled resolvers until an admin approves them (or MAZEDNS_REQUIRE_APPROVAL)
   key_max_age: 720h            # control-plane: rotate a node's key once older than this (default 30d; or MAZEDNS_KEY_MAX_AGE)
   key_grace: 15m               # control-plane: previous key stays valid this long after a rotation (or MAZEDNS_KEY_GRACE)
-  # --- agent side ---
-  cp_url: ""                   # agent: control-plane base URL (or MAZEDNS_CP_URL)
-  master_ip: ""                # agent: pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still uses the URL host
-  node_name: ""                # agent: INITIAL display label (or MAZEDNS_NODE_NAME; defaults to the hostname).
-                               # Node identity is a server-assigned UUID stored locally by the agent, not
+  # --- resolver side ---
+  cp_url: ""                   # resolver: control-plane base URL (or MAZEDNS_CP_URL)
+  master_ip: ""                # resolver: pin the control-plane IP to skip DNS (or MAZEDNS_CP_IP); TLS still uses the URL host
+  node_name: ""                # resolver: INITIAL display label (or MAZEDNS_NODE_NAME; defaults to the hostname).
+                               # Node identity is a server-assigned UUID stored locally by the resolver, not
                                # this name. Rename later in the UI; changing node_name does not re-identify.
-  node_key: ""                 # agent: per-node API key (auto-issued via join_token; or MAZEDNS_NODE_KEY)
-  interval: "30s"              # agent: snapshot poll interval
+  node_key: ""                 # resolver: per-node API key (auto-issued via join_token; or MAZEDNS_NODE_KEY)
+  interval: "30s"              # resolver: snapshot poll interval
 
 database:
   driver: "sqlite"             # "sqlite" (default, embedded) | "postgres" (external)

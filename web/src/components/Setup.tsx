@@ -4,7 +4,7 @@ import { passwordPolicyError } from '../passwordPolicy'
 import { PasswordMeter } from './Account'
 import '../styles/auth.css'
 
-const IMAGE = 'ghcr.io/amaze-labs/mazedns-agent:latest'
+const IMAGE = 'ghcr.io/amaze-labs/mazedns-resolver:latest'
 
 const WarnIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden>
@@ -197,7 +197,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           .filter(Boolean),
         block_response: blockResponse,
       }
-      if (next.upstreams.length === 0) throw new Error('Add at least one upstream resolver.')
+      if (next.upstreams.length === 0) throw new Error('Add at least one upstream.')
       await api.saveSettings(next)
       setDnsDone('saved')
       go(3)
@@ -239,7 +239,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         .then((ns) => new Set(ns.map((n) => n.id)))
         .catch(() => null)
       setWatching(!!baseline.current)
-      const r = await api.createEnrollKey('first-agents', 0, 0)
+      const r = await api.createEnrollKey('first-resolvers', 0, 0)
       setEnrollKey(r.key)
     } catch (e: any) {
       setErr(e.message)
@@ -299,10 +299,10 @@ export default function Setup({ onDone }: { onDone: () => void }) {
           ? `${upstreamSummary}, ${blockResponse === 'nxdomain' ? 'NXDOMAIN' : '0.0.0.0'}`
           : dnsDone === 'skipped'
           ? 'Skipped'
-          : 'Resolvers and blocking',
+          : 'Upstreams and blocking',
     },
     {
-      title: 'First agent',
+      title: 'First resolver',
       sub: agentDone === 'saved' ? (enrollKey ? 'Key created' : 'Saved') : agentDone === 'skipped' ? 'Skipped' : 'Optional',
     },
     { title: 'Done', sub: '' },
@@ -468,11 +468,11 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         {step === 2 && (
           <div>
             <h1>DNS defaults</h1>
-            <p className="lede">Where agents forward what they can’t answer, and what a blocked name returns. You can change both in Settings.</p>
+            <p className="lede">Where resolvers forward what they can’t answer, and what a blocked name returns. You can change both in Settings.</p>
             {err && <div className="error">{err}</div>}
             <section className="block">
               <Field
-                label="Upstream resolvers"
+                label="Upstream servers"
                 hint={
                   <>
                     Comma-separated, tried in order. Encrypted ones work too: <code>tls://1.1.1.1:853#cloudflare-dns.com</code>{' '}
@@ -519,17 +519,17 @@ export default function Setup({ onDone }: { onDone: () => void }) {
 
         {step === 3 && (
           <div>
-            <h1>Start your first agent</h1>
+            <h1>Start your first resolver</h1>
             <p className="lede">
-              The control plane doesn’t answer DNS itself. Run an agent on any host your clients can reach: it joins with
+              The control plane doesn’t answer DNS itself. Run a resolver on any host your clients can reach: it joins with
               an enrollment key and copies these settings.
             </p>
             {err && <div className="error">{err}</div>}
 
             <label className="check-row toggle boxed">
               <span className="t">
-                <b>Ask me before a new agent serves DNS</b>
-                <small>New agents wait under Agents until you approve them. Safer if a key could leak.</small>
+                <b>Ask me before a new resolver serves DNS</b>
+                <small>New resolvers wait under Resolvers until you approve them. Safer if a key could leak.</small>
               </span>
               <input type="checkbox" checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
               <span className="track">
@@ -540,7 +540,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             {!enrollKey ? (
               <section className="block">
                 <p className="muted" style={{ margin: 0 }}>
-                  Make a key to get a ready-to-run command. You can also skip this and add agents later under Agents.
+                  Make a key to get a ready-to-run command. You can also skip this and add resolvers later under Resolvers.
                 </p>
                 <div>
                   <button className="btn" onClick={makeEnrollKey} disabled={busy}>
@@ -552,7 +552,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
               <section className="block">
                 <div className="keybox">
                   <div className="keybox-head">
-                    <span>Run this on the agent’s host</span>
+                    <span>Run this on the resolver’s host</span>
                     <button type="button" className="btn sm" onClick={() => copy('run', runHead + keyText + runTail)}>
                       {copied === 'run' ? 'Copied' : 'Copy'}
                     </button>
@@ -564,7 +564,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                   </pre>
                 </div>
                 <p className="muted small" style={{ margin: 0 }}>
-                  The key is shown once. The <code>/data</code> volume holds the agent’s identity, so keep it across image
+                  The key is shown once. The <code>/data</code> volume holds the resolver’s identity, so keep it across image
                   updates.
                   {cpIP !== host && (
                     <>
@@ -572,7 +572,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                       Replace <code>&lt;control-plane-ip&gt;</code> with this machine’s address.
                     </>
                   )}{' '}
-                  Compose files and per-agent keys are under Agents.
+                  Compose files and per-resolver keys are under Resolvers.
                 </p>
                 {watching &&
                   (joined.length > 0 ? (
@@ -580,7 +580,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                       <CheckIcon />
                       <div>
                         <b>
-                          {joined.length === 1 ? `${joined[0]} joined` : `${joined.length} agents joined`}
+                          {joined.length === 1 ? `${joined[0]} joined` : `${joined.length} resolvers joined`}
                           {requireApproval ? ' and is waiting for approval' : ''}
                         </b>
                         <p>Continue to finish setup.</p>
@@ -590,8 +590,8 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                     <div className="callout">
                       <span className="spin" aria-hidden />
                       <div>
-                        <b>Waiting for an agent…</b>
-                        <p>This updates as soon as one joins. You can also continue and add agents later.</p>
+                        <b>Waiting for a resolver…</b>
+                        <p>This updates as soon as one joins. You can also continue and add resolvers later.</p>
                       </div>
                     </div>
                   ))}
@@ -624,7 +624,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
                 <h1>Single sign-on is ready</h1>
                 <p className="lede">
                   Sign in with your identity provider to finish. <span className="mono">{adminEmail}</span> gets the admin
-                  role; set up DNS and agents after you sign in.
+                  role; set up DNS and resolvers after you sign in.
                 </p>
                 <div className="stage-actions">
                   <a className="btn primary" href="/api/auth/oidc/login">
@@ -635,7 +635,7 @@ export default function Setup({ onDone }: { onDone: () => void }) {
             ) : needsLogin ? (
               <>
                 <h1>Setup complete</h1>
-                <p className="lede">Sign in with the admin account you just created to set up DNS and agents.</p>
+                <p className="lede">Sign in with the admin account you just created to set up DNS and resolvers.</p>
                 <div className="stage-actions">
                   <button className="btn primary" onClick={onDone}>
                     Go to sign-in

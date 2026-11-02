@@ -9,7 +9,7 @@ import { agentOutdated, latestAgent, versionKnown } from '../agentVersion'
 import '../styles/agents.css'
 
 const ONLINE_WINDOW = 120 // seconds
-const IMAGE = 'ghcr.io/amaze-labs/mazedns-agent:latest'
+const IMAGE = 'ghcr.io/amaze-labs/mazedns-resolver:latest'
 const RATE_HOURS = 1 // window behind the per-agent q/s and latency figures
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)) || 'Request failed'
@@ -235,8 +235,8 @@ export default function Cluster() {
   // has actually succeeded.
   const del = async (n: Node, revoke: boolean) => {
     const msg = revoke
-      ? `Remove and revoke agent “${n.name}”? Its identity is tombstoned so the running agent cannot rejoin the cluster — it keeps serving DNS standalone until you stop it or un-revoke.`
-      : `Remove agent “${n.name}” only? A still-running agent may re-enroll as a NEW node. Use this for intentional replacement.`
+      ? `Remove and revoke resolver “${n.name}”? Its identity is tombstoned so the running resolver cannot rejoin the cluster — it keeps serving DNS standalone until you stop it or un-revoke.`
+      : `Remove resolver “${n.name}” only? A still-running resolver may re-enroll as a NEW node. Use this for intentional replacement.`
     if (!window.confirm(msg)) return
     await api.deleteNode(n.id, revoke)
     if (newKey?.name === n.name) setNewKey(null)
@@ -245,7 +245,7 @@ export default function Cluster() {
   }
 
   const unrevoke = async (r: RevokedNode) => {
-    if (!window.confirm(`Un-revoke “${r.name || r.id}”? Its agent can rejoin (as a new node) on its next attempt.`)) return
+    if (!window.confirm(`Un-revoke “${r.name || r.id}”? Its resolver can rejoin (as a new node) on its next attempt.`)) return
     try {
       await api.unrevokeNode(r.id)
       setRevokedErr('')
@@ -257,8 +257,8 @@ export default function Cluster() {
 
   const purgeRevoked = async (r: RevokedNode) => {
     const msg =
-      `Permanently delete revoked agent “${r.name || r.id}”? ` +
-      `Its record disappears from this list and cannot be restored. If the agent is still running somewhere, ` +
+      `Permanently delete revoked resolver “${r.name || r.id}”? ` +
+      `Its record disappears from this list and cannot be restored. If the resolver is still running somewhere, ` +
       `it is no longer blocked — but rejoining still requires a valid enrollment key.`
     if (!window.confirm(msg)) return
     try {
@@ -271,7 +271,7 @@ export default function Cluster() {
   }
 
   const renew = async (n: Node) => {
-    if (!window.confirm(`Rotate the key for “${n.name}”? The running agent adopts the new key on its next poll.`)) return
+    if (!window.confirm(`Rotate the key for “${n.name}”? The running resolver adopts the new key on its next poll.`)) return
     const r = await api.renewNodeKey(n.id)
     setNewKey({ name: n.name, key: r.key })
     load()
@@ -291,7 +291,7 @@ export default function Cluster() {
 
   const toggleMaintenance = async (n: Node) => {
     const on = !n.maintenance
-    if (on && !window.confirm(`Put “${n.name}” into maintenance? It stops serving DNS (SERVFAIL) so clients fail over to another agent.`)) return
+    if (on && !window.confirm(`Put “${n.name}” into maintenance? It stops serving DNS (SERVFAIL) so clients fail over to another resolver.`)) return
     await api.setNodeMaintenance(n.id, on)
     load()
   }
@@ -304,7 +304,7 @@ export default function Cluster() {
   // Approve / reject straight from the "wants to join" card.
   const pendingAction = async (n: Node, what: 'approve' | 'reject') => {
     if (what === 'reject') {
-      const msg = `Reject “${n.name}”? It is removed and its identity revoked, so this agent can't join again unless you un-revoke it.`
+      const msg = `Reject “${n.name}”? It is removed and its identity revoked, so this resolver can't join again unless you un-revoke it.`
       if (!window.confirm(msg)) return
     }
     setPendingBusy(n.id)
@@ -336,7 +336,7 @@ export default function Cluster() {
     }
   }
   const delSite = async (name: string) => {
-    if (!window.confirm(`Delete site “${name}”? Its agents are unassigned (they keep serving DNS).`)) return false
+    if (!window.confirm(`Delete site “${name}”? Its resolvers are unassigned (they keep serving DNS).`)) return false
     await api.deleteSite(name)
     load()
     return true
@@ -349,7 +349,7 @@ export default function Cluster() {
     loadAdmin()
   }
   const revokeEnrollKey = async (k: EnrollKey) => {
-    if (!window.confirm(`Revoke enrollment key “${k.name || k.key_prefix}”? Agents can no longer join with it.`)) return
+    if (!window.confirm(`Revoke enrollment key “${k.name || k.key_prefix}”? Resolvers can no longer join with it.`)) return
     try {
       await api.revokeEnrollKey(k.id)
       setKeysErr('')
@@ -402,7 +402,7 @@ export default function Cluster() {
   return (
     <div className="pg-agents">
       <header className="page-head">
-        <h1>Agents</h1>
+        <h1>Resolvers</h1>
         <span className="spacer" />
         {admin && (
           <>
@@ -410,13 +410,13 @@ export default function Cluster() {
               Add a site
             </button>
             <button className="btn primary" onClick={() => setDeployOpen(true)}>
-              Add an agent
+              Add a resolver
             </button>
           </>
         )}
       </header>
       <p className="intro">
-        Agents answer DNS for your clients and copy their settings from this control plane, which doesn't answer DNS
+        Resolvers answer DNS for your clients and copy their settings from this control plane, which doesn't answer DNS
         itself. They keep resolving from their last copy if the control plane goes away.
       </p>
       {err && (
@@ -432,7 +432,7 @@ export default function Cluster() {
             {loaded ? serving : <Skel w={36} h={24} />}
             {loaded && <small> of {nodes.length}</small>}
           </b>
-          <span>agents serving DNS</span>
+          <span>resolvers serving DNS</span>
         </div>
         <div>
           <b>{loaded ? sitesInUse.length : <Skel w={36} h={24} />}</b>
@@ -440,7 +440,7 @@ export default function Cluster() {
         </div>
         <div>
           <b className={behind > 0 ? 'warn' : ''}>{loaded ? behind : <Skel w={36} h={24} />}</b>
-          <span>{behind === 1 ? 'agent' : 'agents'} behind on config</span>
+          <span>{behind === 1 ? 'resolver' : 'resolvers'} behind on config</span>
         </div>
         <div>
           <b className="ag-ver">{ver?.version || <Skel w={84} h={24} />}</b>
@@ -459,7 +459,7 @@ export default function Cluster() {
         <div className="callout warn">
           <div>
             <b>
-              {stale.length === 1 ? '1 agent needs' : `${stale.length} agents need`} an update: the latest agent code is from{' '}
+              {stale.length === 1 ? '1 resolver needs' : `${stale.length} resolvers need`} an update: the latest resolver code is from{' '}
               {ver!.agent_build || ver!.version}
             </b>
             <p>
@@ -524,12 +524,12 @@ export default function Cluster() {
         )
       ) : nodes.length === 0 && sitesInUse.length === 0 ? (
         <section className="card ag-empty">
-          <h2>No agents yet</h2>
+          <h2>No resolvers yet</h2>
           <p className="muted">
-            Agents do the resolving. {admin ? 'Create an enrollment key and start one with it — ' : ''}
+            Resolvers do the resolving. {admin ? 'Create an enrollment key and start one with it — ' : ''}
             {admin ? (
               <button className="linklike" onClick={() => setDeployOpen(true)}>
-                see how to add an agent
+                see how to add a resolver
               </button>
             ) : (
               'An administrator can add one.'
@@ -556,13 +556,13 @@ export default function Cluster() {
               <div className="ag-site-head">
                 <h2>Not in a site</h2>
                 <small>
-                  {unassigned.length} {unassigned.length === 1 ? 'agent' : 'agents'}
+                  {unassigned.length} {unassigned.length === 1 ? 'resolver' : 'resolvers'}
                 </small>
               </div>
               {sitesInUse.length === 0 && (
                 <p className="ag-site-desc">
-                  Group agents into sites and give each a role (primary, secondary, backup) to record the order clients
-                  fail over in. Roles are advisory: every agent serves DNS.
+                  Group resolvers into sites and give each a role (primary, secondary, backup) to record the order clients
+                  fail over in. Roles are advisory: every resolver serves DNS.
                 </p>
               )}
               <div className="ag-list">{unassigned.map(agentRow)}</div>
@@ -575,7 +575,7 @@ export default function Cluster() {
         <>
           <h2 className="section">Enrollment keys</h2>
           <p className="section">
-            A new agent presents one of these once to join, as <code>MAZEDNS_JOIN_TOKEN</code>. Keys only enroll — they
+            A new resolver presents one of these once to join, as <code>MAZEDNS_JOIN_TOKEN</code>. Keys only enroll — they
             never serve DNS — and the secret is shown only when you create it.
           </p>
           <section className="card flush ag-keys">
@@ -597,10 +597,10 @@ export default function Cluster() {
 
           {(revoked.length > 0 || revokedErr) && (
             <>
-              <h2 className="section">Revoked agents</h2>
+              <h2 className="section">Revoked resolvers</h2>
               <p className="section">
-                These identities are tombstoned: their agents are refused when they try to rejoin. Un-revoke lets one
-                rejoin as a new agent on its next attempt; delete removes the record for good.
+                These identities are tombstoned: their resolvers are refused when they try to rejoin. Un-revoke lets one
+                rejoin as a new resolver on its next attempt; delete removes the record for good.
               </p>
               {revokedErr && (
                 <div className="error" role="alert">
@@ -613,7 +613,7 @@ export default function Cluster() {
                     <table className="stackable">
                       <thead>
                         <tr>
-                          <th>Agent</th>
+                          <th>Resolver</th>
                           <th className="hide-sm">ID</th>
                           <th>Revoked</th>
                           <th></th>
@@ -771,7 +771,7 @@ function AgentRow({
 // siteHealth summarises a site from its agents: how many serve DNS, and the
 // tone of the card (every agent serving, some not, none).
 function siteHealth(members: Node[]): { tone: 'ok' | 'warn' | 'bad' | 'empty'; text: string } {
-  if (members.length === 0) return { tone: 'empty', text: 'No agents' }
+  if (members.length === 0) return { tone: 'empty', text: 'No resolvers' }
   const serving = members.filter(SERVING).length
   const offline = members.filter((n) => !ONLINE(n)).length
   if (serving === members.length) return { tone: 'ok', text: members.length === 1 ? 'Serving' : `All ${members.length} serving` }
@@ -831,7 +831,7 @@ function SiteCard({
       {members.length > 0 && (
         <div className="ag-site-stats">
           <span>
-            <b>{members.length}</b> {members.length === 1 ? 'agent' : 'agents'}
+            <b>{members.length}</b> {members.length === 1 ? 'resolver' : 'resolvers'}
           </span>
           {rate !== null && (
             <span title={`Total over the last ${RATE_HOURS === 1 ? 'hour' : `${RATE_HOURS} hours`}`}>
@@ -839,7 +839,7 @@ function SiteCard({
             </span>
           )}
           {ms !== null && (
-            <span title="Average answer time, weighted by each agent's traffic">
+            <span title="Average answer time, weighted by each resolver's traffic">
               <b>{ms}</b> ms
             </span>
           )}
@@ -850,10 +850,10 @@ function SiteCard({
         {children}
         {members.length === 0 && (
           <div className="ag-list-empty">
-            <span className="muted small">No agents in this site yet.</span>
+            <span className="muted small">No resolvers in this site yet.</span>
             {admin && (
               <button className="btn sm" onClick={onEdit}>
-                Add agents
+                Add resolvers
               </button>
             )}
           </div>
@@ -977,7 +977,7 @@ function SiteDialog({
       <form className="ag-form" onSubmit={submit}>
         {creating && (
           <p className="muted">
-            A site groups the agents that serve one network. Give each agent a role in it — primary, secondary, backup —
+            A site groups the resolvers that serve one network. Give each resolver a role in it — primary, secondary, backup —
             to record the order clients fail over in.
           </p>
         )}
@@ -987,7 +987,7 @@ function SiteDialog({
         </label>
         {clash && <p className="bad-text small">Another site is already called “{trimmed}”.</p>}
         {!creating && trimmed && trimmed !== orig && !clash && (
-          <p className="hint">Its agents and the rewrites and forwarders scoped to “{orig}” move to the new name.</p>
+          <p className="hint">Its resolvers and the rewrites and forwarders scoped to “{orig}” move to the new name.</p>
         )}
         <label className="field">
           <span>
@@ -998,10 +998,10 @@ function SiteDialog({
 
         <div className="ag-members">
           <div className="ag-members-head">
-            <b>Agents</b>
-            <span className="muted small">Roles are advisory: every agent serves DNS.</span>
+            <b>Resolvers</b>
+            <span className="muted small">Roles are advisory: every resolver serves DNS.</span>
           </div>
-          {members.length === 0 && <p className="muted small">No agents in this site yet.</p>}
+          {members.length === 0 && <p className="muted small">No resolvers in this site yet.</p>}
           {members.map((n) => {
             const st = statusOf(n)
             return (
@@ -1025,8 +1025,8 @@ function SiteDialog({
             )
           })}
           {others.length > 0 && (
-            <select className="ag-member-add" aria-label="Add an agent" value={adding} onChange={(e) => add(e.target.value)} disabled={busy}>
-              <option value="">Add an agent…</option>
+            <select className="ag-member-add" aria-label="Add a resolver" value={adding} onChange={(e) => add(e.target.value)} disabled={busy}>
+              <option value="">Add a resolver…</option>
               {others.map((n) => (
                 <option key={n.id} value={n.id}>
                   {n.name}
@@ -1103,7 +1103,7 @@ ${bridgeAlt}`
       MAZEDNS_NODE_NAME: "site-a-1"
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_API_ADDRESS: "0.0.0.0"
-      MAZEDNS_API_PORT: "9090"  # agent /metrics + /healthz (keeps :8080 free on the host)
+      MAZEDNS_API_PORT: "9090"  # resolver /metrics + /healthz (keeps :8080 free on the host)
     volumes:
       - mazedns-agent-data:/data
     # Prefer bridge networking instead? Remove network_mode + MAZEDNS_CP_IP +
@@ -1146,13 +1146,13 @@ ${bridgeAlt}`
   }
 
   return (
-    <Modal title="Add an agent" eyebrow="Deploy a DNS agent" onClose={onClose} size="wide">
+    <Modal title="Add a resolver" eyebrow="Deploy a DNS resolver" onClose={onClose} size="wide">
       <section className="ag-step">
         <h3 className="ag-step-title">
           <span>1</span> Get an enrollment key
         </h3>
         <p className="muted">
-          Agents join with an enrollment key passed as <code>MAZEDNS_JOIN_TOKEN</code>; the secret is only shown when the
+          Resolvers join with an enrollment key passed as <code>MAZEDNS_JOIN_TOKEN</code>; the secret is only shown when the
           key is created.{' '}
           {enrollKey
             ? `The commands below use the key “${enrollKey.name}” you just created.`
@@ -1163,12 +1163,12 @@ ${bridgeAlt}`
 
       <section className="ag-step">
         <h3 className="ag-step-title">
-          <span>2</span> Start the agent
+          <span>2</span> Start the resolver
         </h3>
         <p className="muted">
-          Run the agent image on the machine that should answer DNS. It appears on this page by itself — set{' '}
-          <code>MAZEDNS_REQUIRE_APPROVAL=true</code> on the control plane to hold new agents until you approve them.
-          After joining, each agent authenticates with its own key, which the control plane rotates automatically.
+          Run the resolver image on the machine that should answer DNS. It appears on this page by itself — set{' '}
+          <code>MAZEDNS_REQUIRE_APPROVAL=true</code> on the control plane to hold new resolvers until you approve them.
+          After joining, each resolver authenticates with its own key, which the control plane rotates automatically.
         </p>
         <CodeBlock label="docker run" text={joinRun} />
         <CodeBlock label="docker compose" text={joinCompose} />
@@ -1177,18 +1177,18 @@ ${bridgeAlt}`
       <section className="ag-step">
         <h3>Keep the /data volume</h3>
         <p className="muted">
-          It stores the agent's identity (its ID and rotating key), so a recreated container rejoins at once as the same
-          agent. If the volume is lost anyway, a stable <code>MAZEDNS_NODE_NAME</code> is the safety net: once the old
-          container stops polling (about 2 minutes) the new one reclaims the same agent — its history, site and role —
+          It stores the resolver's identity (its ID and rotating key), so a recreated container rejoins at once as the same
+          resolver. If the volume is lost anyway, a stable <code>MAZEDNS_NODE_NAME</code> is the safety net: once the old
+          container stops polling (about 2 minutes) the new one reclaims the same resolver — its history, site and role —
           instead of appearing as a duplicate.
         </p>
       </section>
 
       <details className="ag-manual">
-        <summary>Prefer a fixed per-agent key? Issue one manually</summary>
+        <summary>Prefer a fixed per-resolver key? Issue one manually</summary>
         <form className="ag-inline-form" onSubmit={issue}>
           <label className="field">
-            <span>Agent name</span>
+            <span>Resolver name</span>
             <input placeholder="site-b" value={manualName} onChange={(e) => setManualName(e.target.value)} />
           </label>
           <button type="submit" className="btn" disabled={manualBusy || !manualName.trim()}>
@@ -1204,7 +1204,7 @@ ${bridgeAlt}`
           <>
             <div className="ok-msg">
               <span>
-                <b>Key for “{manualKey.name}”, shown once.</b> Set it as <code>MAZEDNS_NODE_KEY</code> on the agent.
+                <b>Key for “{manualKey.name}”, shown once.</b> Set it as <code>MAZEDNS_NODE_KEY</code> on the resolver.
               </span>
             </div>
             <CodeBlock label="docker run" text={manualRun} />
@@ -1384,7 +1384,7 @@ function AgentDrawer({
             {node.app_version || <span className="muted">unknown — predates version reporting</span>}
             {node.app_version && versionKnown(cpVer?.version) && (
               outdated(node, cpVer ?? undefined) ? (
-                <span className="tag warn ag-tag-gap" title={`The latest agent code is release ${cpVer!.agent_build || cpVer!.version}`}>
+                <span className="tag warn ag-tag-gap" title={`The latest resolver code is release ${cpVer!.agent_build || cpVer!.version}`}>
                   update available
                 </span>
               ) : (
@@ -1402,7 +1402,7 @@ function AgentDrawer({
             )}
           </dd>
           <dt>Config</dt>
-          <dd title="Whether this agent has applied the rules and records the control plane expects it to run (scoped entries make this differ between agents).">
+          <dd title="Whether this resolver has applied the rules and records the control plane expects it to run (scoped entries make this differ between resolvers).">
             {!node.version ? (
               <span className="muted">none applied yet</span>
             ) : (
@@ -1475,7 +1475,7 @@ function AgentDrawer({
             )}
           </div>
           <p className="hint">
-            Roles are advisory: every agent serves DNS, and clients fail over in the order of their resolver list (DHCP
+            Roles are advisory: every resolver serves DNS, and clients fail over in the order of their DNS server list (DHCP
             or <code>resolv.conf</code>).
           </p>
           {errFor('assign')}
@@ -1486,7 +1486,7 @@ function AgentDrawer({
         <div>
           <div className="ok-msg">
             <span>
-              <b>New key, shown once.</b> The running agent picks it up by itself; for a manually keyed agent set it as{' '}
+              <b>New key, shown once.</b> The running resolver picks it up by itself; for a manually keyed resolver set it as{' '}
               <code>MAZEDNS_NODE_KEY</code> and restart it.
             </span>
           </div>
@@ -1508,8 +1508,8 @@ function AgentDrawer({
                 {node.approved ? 'Hold' : 'Approve'}
               </button>,
               node.approved
-                ? 'Take back admission: the agent stops pulling config and serving until approved again.'
-                : 'Admit this agent so it can pull config and serve DNS.',
+                ? 'Take back admission: the resolver stops pulling config and serving until approved again.'
+                : 'Admit this resolver so it can pull config and serve DNS.',
             )}
             {action(
               'maintenance',
@@ -1522,7 +1522,7 @@ function AgentDrawer({
               </button>,
               node.maintenance
                 ? 'Start answering DNS again.'
-                : 'Answer SERVFAIL so clients move to the next agent — for reboots and upgrades.',
+                : 'Answer SERVFAIL so clients move to the next resolver — for reboots and upgrades.',
             )}
             {renaming ? (
               <form className="ag-action ag-rename" onSubmit={saveRename}>
@@ -1541,7 +1541,7 @@ function AgentDrawer({
                       }
                     }}
                     onFocus={(e) => e.target.select()}
-                    aria-label="Agent name"
+                    aria-label="Resolver name"
                     aria-invalid={actionErr?.at === 'rename'}
                     disabled={busy === 'rename'}
                     autoFocus
@@ -1572,27 +1572,27 @@ function AgentDrawer({
               <button className="btn" disabled={busy === 'renew'} onClick={() => run('renew', onRenew)}>
                 Rotate key
               </button>,
-              'Issue a new node key. The running agent picks it up on its next poll; the old key keeps working for a short grace period.',
+              'Issue a new node key. The running resolver picks it up on its next poll; the old key keeps working for a short grace period.',
             )}
             {action(
               'delete',
               <button className="btn danger" disabled={busy === 'delete'} onClick={() => run('delete', () => onDelete(true))}>
                 Remove &amp; revoke
               </button>,
-              "For a retired or compromised agent: it's removed and can't rejoin with this identity.",
+              "For a retired or compromised resolver: it's removed and can't rejoin with this identity.",
             )}
             {action(
               'delete-only',
               <button className="btn danger" disabled={busy === 'delete-only'} onClick={() => run('delete-only', () => onDelete(false))}>
                 Remove only
               </button>,
-              'Delete the entry but let a running agent enroll again as a new one — for an intentional replacement.',
+              'Delete the entry but let a running resolver enroll again as a new one — for an intentional replacement.',
             )}
           </div>
           <p className="hint">
-            An agent whose <code>/data</code> was wiped enrolls without an identity, so revoking can't match it — and with
+            A resolver whose <code>/data</code> was wiped enrolls without an identity, so revoking can't match it — and with
             the same name it can reclaim this entry once it goes offline. To keep it out, also revoke the enrollment key it
-            holds or require approval for new agents.
+            holds or require approval for new resolvers.
           </p>
         </div>
       )}
@@ -1685,7 +1685,7 @@ function NewEnrollKey({ created, onDismiss }: { created: { name: string; key: st
     <div className="ag-newkey">
       <div className="ok-msg">
         <span className="grow">
-          <b>Enrollment key “{created.name}”, shown once.</b> Use it as <code>MAZEDNS_JOIN_TOKEN</code> on new agents; it
+          <b>Enrollment key “{created.name}”, shown once.</b> Use it as <code>MAZEDNS_JOIN_TOKEN</code> on new resolvers; it
           is stored hashed.
         </span>
         <button className="btn sm quiet" onClick={onDismiss}>
@@ -1778,7 +1778,7 @@ function EnrollKeysTable({
               )
             })}
             <TableStatusRow loading={loading} error={error} empty={table.rows.length === 0} colSpan={6}>
-              No enrollment keys yet. Create one above to let agents join.
+              No enrollment keys yet. Create one above to let resolvers join.
             </TableStatusRow>
           </tbody>
         </table>

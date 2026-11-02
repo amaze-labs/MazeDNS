@@ -71,13 +71,13 @@ function ReleaseItem({ r, current }: { r: Release; current: string }) {
         <b className="mono">{r.version}</b>
         {r.version === current && <span className="tag info">Running</span>}
         {r.agent_build && r.agent_build !== r.version && (
-          <span className="tag" title={`The agent image is ${r.agent_build}'s, with the new version`}>
+          <span className="tag" title={`The resolver image is ${r.agent_build}'s, with the new version`}>
             Control plane only
           </span>
         )}
         {r.control_plane_build && r.control_plane_build !== r.version && (
           <span className="tag" title={`The control plane image is ${r.control_plane_build}'s, with the new version`}>
-            Agents only
+            Resolvers only
           </span>
         )}
         <span className="muted small">{day(r.published_at)}</span>
@@ -198,7 +198,7 @@ export default function About() {
                 <b>How to update</b>
                 <p>
                   Pull <code>{`${IMAGE}:${st.latest}`}</code> (or <code>:latest</code>) and restart the control plane,
-                  then update the agents to the same version if the agents below say so. Settings, rules and history stay
+                  then update the resolvers to the same version if the resolvers below say so. Settings, rules and history stay
                   in the database.
                 </p>
               </div>
@@ -210,9 +210,9 @@ export default function About() {
       {nodes && nodes.length > 0 && (
         <section className="sg">
           <header>
-            <h2>Agents</h2>
+            <h2>Resolvers</h2>
             <p>
-              The version each agent reports. A release rebuilds only what changed, so an agent on an earlier version
+              The version each resolver reports. A release rebuilds only what changed, so a resolver on an earlier version
               is still current when the releases since then only changed the control plane.
             </p>
           </header>
@@ -234,10 +234,10 @@ export default function About() {
             </ul>
             {newestAgent && (
               <p className="hint">
-                The latest agent code is from <b className="mono">{newestAgent}</b>
+                The latest resolver code is from <b className="mono">{newestAgent}</b>
                 {st.latest && newestAgent !== st.latest && <> (the releases after it only changed the control plane)</>}.
                 {st.update_available && versions.some(([v]) => agentOutdated(v === 'unknown' ? '' : v, st.current, newestAgent)) && (
-                  <> Update the control plane to {st.latest} first, then the agents.</>
+                  <> Update the control plane to {st.latest} first, then the resolvers.</>
                 )}
               </p>
             )}

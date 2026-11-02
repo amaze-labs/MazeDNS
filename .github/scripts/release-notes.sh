@@ -65,5 +65,9 @@ if [ -n "$from" ]; then
   }
   printf '**Images:**\n\n'
   image control-plane "${CP_BUILD:-}"
+  image resolver "${AGENT_BUILD:-}"
+  # The same image under its pre-rename name, published until the next major.
+  # Keep this line: control planes before the rename read the agent's build
+  # from it (internal/updates).
   image agent "${AGENT_BUILD:-}"
 fi

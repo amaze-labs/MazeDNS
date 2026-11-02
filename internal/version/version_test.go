@@ -34,4 +34,21 @@ func TestFromEnv(t *testing.T) {
 	if Version != "0.137.0" || AgentBuild != "0.136.4" {
 		t.Fatalf("stamp: got %q %q, want 0.137.0 0.136.4", Version, AgentBuild)
 	}
+
+	// The new name wins over the pre-rename one; either alone is enough.
+	for _, tc := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"MAZEDNS_RESOLVER_BUILD": "0.140.0", "MAZEDNS_AGENT_BUILD": "0.139.0"}, "0.140.0"},
+		{map[string]string{"MAZEDNS_RESOLVER_BUILD": "0.140.0"}, "0.140.0"},
+		{map[string]string{"MAZEDNS_AGENT_BUILD": "0.139.0"}, "0.139.0"},
+		{map[string]string{"MAZEDNS_RESOLVER_BUILD": " ", "MAZEDNS_AGENT_BUILD": "0.139.0"}, "0.139.0"},
+	} {
+		AgentBuild = ""
+		fromEnv(func(k string) string { return tc.env[k] })
+		if AgentBuild != tc.want {
+			t.Errorf("env %v: AgentBuild = %q, want %q", tc.env, AgentBuild, tc.want)
+		}
+	}
 }

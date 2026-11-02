@@ -177,7 +177,7 @@ func (s *Server) clusterMetrics(w http.ResponseWriter, r *http.Request) {
 	if err := metrics.Import(r.Context(), vmRelayClient, cfg, node.Name, bytes.NewReader(body)); err != nil {
 		// The error names the VictoriaMetrics URL (and any credentials in it),
 		// which stays on the control plane: log it here, tell the agent less.
-		slog.Warn("relaying agent metrics to victoriametrics failed", "node", node.Name, "err", err)
+		slog.Warn("relaying resolver metrics to victoriametrics failed", "node", node.Name, "err", err)
 		writeError(w, http.StatusBadGateway, "victoriametrics push failed; see the control plane's log")
 		return
 	}

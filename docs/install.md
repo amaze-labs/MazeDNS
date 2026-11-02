@@ -4,24 +4,31 @@ MazeDNS ships as **two containers**:
 
 - **control-plane** — web UI, API, auth, classifier, cluster coordination. Holds
   the config and dashboard and **does not answer DNS**. Run **one**.
-- **dns-agent** — a resolver node. Serves DNS, replicates its filtering config from
+- **resolver** — serves DNS, replicates its filtering config from
   the control plane, exposes only `/healthz` + `/metrics`. Run **one or more**,
   wherever you want to serve DNS.
 
-Clients point at the **agents**, never at the control plane. Agents keep resolving
+Clients point at the **resolvers**, never at the control plane. Resolvers keep resolving
 from their local copy even if the control plane is briefly unreachable.
 
 Images (multi-arch `linux/amd64` + `linux/arm64`):
 
 ```
 ghcr.io/amaze-labs/mazedns-control-plane:latest
-ghcr.io/amaze-labs/mazedns-agent:latest
+ghcr.io/amaze-labs/mazedns-resolver:latest
 ```
+
+> **Renamed from `mazedns-agent`.** Resolvers used to be called *agents*. The
+> image `ghcr.io/amaze-labs/mazedns-agent` is still published with the same
+> digest, and the `dns-agent` binary still works as an alias, until the next
+> major release. To move over, change only the image name; keep your container,
+> service and volume names so the resolver keeps its identity. See
+> [Renamed artifacts](#renamed-artifacts).
 
 Pick a path:
 
 - [1. Docker / Compose](#1-docker--compose) — the quickest way in.
-- [2. Kubernetes](#2-kubernetes) — control plane as a Deployment, agents as a
+- [2. Kubernetes](#2-kubernetes) — control plane as a Deployment, resolvers as a
   DaemonSet or Deployment.
 
 For every setting referenced below, see **[configuration.md](configuration.md)**.
@@ -59,7 +66,7 @@ docker logs mazedns-control-plane   # confirms setup mode is active; no token ne
 
 Only **bootstrap** options stay in the environment/YAML: the database
 (`MAZEDNS_DB_PATH` / `MAZEDNS_DB_DRIVER` / `MAZEDNS_DB_DSN`), the HTTP bind
-(`MAZEDNS_API_ADDRESS` / `MAZEDNS_API_PORT`), the agent's DNS listener
+(`MAZEDNS_API_ADDRESS` / `MAZEDNS_API_PORT`), the resolver's DNS listener
 (`MAZEDNS_LISTEN_ADDRESS` / `MAZEDNS_LISTEN_PORT`, plus the `dot`/`doh`/`tls`
 YAML sections), and `MAZEDNS_LOG_LEVEL`. Everything else —
 DNS defaults, SSO, metrics export, classifier, cluster policy — is edited live under
@@ -77,33 +84,33 @@ docker compose exec control-plane /control-plane reset-admin --username admin
 
 ## Enrollment in one paragraph
 
-You create **enrollment keys** in the UI (Agents → Enrollment keys), each with an
-optional expiry and maximum number of uses. An agent starts with the control-plane
+You create **enrollment keys** in the UI (Resolvers → Enrollment keys), each with an
+optional expiry and maximum number of uses. A resolver starts with the control-plane
 URL + an enrollment key (passed as `MAZEDNS_JOIN_TOKEN`) + a node name,
 self-registers, and receives a per-node key it stores locally and the control plane
 rotates automatically — it then appears in the **Cluster** tab automatically, with
 no key to copy. (A `MAZEDNS_JOIN_TOKEN` set on the control plane's own config is
 deprecated but still honored: it's imported once as a never-expiring enrollment
 key.) Toggle **require approval** in the setup wizard or under Settings → Access to
-hold new agents until you approve them.
+hold new resolvers until you approve them.
 
-### Removing an agent: revoke vs. remove-only
+### Removing a resolver: revoke vs. remove-only
 
-In the **Cluster** tab, deleting an agent offers two intents:
+In the **Cluster** tab, deleting a resolver offers two intents:
 
 - **Remove and revoke** (default) — tombstones the node's identity. A still-running
-  agent presenting that identity is refused at re-enrollment (it keeps serving DNS
+  resolver presenting that identity is refused at re-enrollment (it keeps serving DNS
   standalone but cannot rejoin), and the attempt consumes **no** enrollment-key use.
-  Use this to decommission or lock out a compromised agent. Reverse it with
-  **Un-revoke** (the agent then rejoins as a *new* node on its next attempt).
-- **Remove only** — deletes the row without a tombstone, so the agent may re-enroll
+  Use this to decommission or lock out a compromised resolver. Reverse it with
+  **Un-revoke** (the resolver then rejoins as a *new* node on its next attempt).
+- **Remove only** — deletes the row without a tombstone, so the resolver may re-enroll
   as a brand-new node. Use it for intentional replacement, and it's also the path a
-  control-plane database reset takes (the CP self-heals every agent back in).
+  control-plane database reset takes (the CP self-heals every resolver back in).
 
 **Residual limitation:** revocation is keyed on the node's stored identity (in its
-`/data`). An agent whose `/data` was **wiped** enrolls with *no* identity, so it
-can't be matched to a tombstone and would join as a new node. To keep such an agent
-out, **revoke the enrollment key it holds** (Agents → Enrollment keys) and/or turn
+`/data`). A resolver whose `/data` was **wiped** enrolls with *no* identity, so it
+can't be matched to a tombstone and would join as a new node. To keep such a resolver
+out, **revoke the enrollment key it holds** (Resolvers → Enrollment keys) and/or turn
 on **require approval** so new joins wait for an admin.
 
 ---
@@ -113,14 +120,14 @@ on **require approval** so new joins wait for an admin.
 ### Fast deploy (recommended)
 
 The repo ships [`docker-compose.prod.yml`](../docker-compose.prod.yml): it pulls
-the published images and runs a control plane plus one DNS agent.
+the published images and runs a control plane plus one DNS resolver.
 
 ```bash
 # The repo is private for now — until it's public, copy docker-compose.prod.yml out
 # of a checkout instead of curl'ing it.
 curl -O https://raw.githubusercontent.com/amaze-labs/MazeDNS/main/docker-compose.prod.yml
 
-# MAZEDNS_CP_IP is REQUIRED: the agent runs with host networking, which has no
+# MAZEDNS_CP_IP is REQUIRED: the resolver runs with host networking, which has no
 # Docker DNS, so it needs the IP where it reaches the control plane (on a single
 # host, that host's own LAN IP). Compose refuses to start without it.
 echo 'MAZEDNS_CP_IP=192.168.1.10' > .env
@@ -132,15 +139,15 @@ Then:
 
 - Open `http://localhost:8080` and complete the wizard (choose local or SSO auth,
   create your admin, DNS defaults, and your first enrollment key).
-- Add the enrollment key it gives you and start the agent. Create more keys anytime
-  under Agents → Enrollment keys:
+- Add the enrollment key it gives you and start the resolver. Create more keys anytime
+  under Resolvers → Enrollment keys:
 
   ```bash
   echo "MAZEDNS_JOIN_TOKEN=<enrollment-key>" >> .env
   docker compose -f docker-compose.prod.yml up -d
   ```
 
-- DNS → the agent listens on the host's `:53` (UDP + TCP). Test it:
+- DNS → the resolver listens on the host's `:53` (UDP + TCP). Test it:
 
   ```bash
   dig @localhost example.com          # resolves
@@ -148,17 +155,17 @@ Then:
   ```
 
 Both containers persist their state in named volumes mounted at `/data`. In a real
-multi-site deployment each agent runs on its own host/site and reaches the control
+multi-site deployment each resolver runs on its own host/site and reaches the control
 plane over your private overlay (VPN/WireGuard) — see
-[Reaching the control plane](#reaching-the-control-plane-from-an-agent) below.
+[Reaching the control plane](#reaching-the-control-plane-from-a-resolver) below.
 
-> The agent image listens on port **53** by default and binds it as a non-root user
+> The resolver image listens on port **53** by default and binds it as a non-root user
 > via a `CAP_NET_BIND_SERVICE` file capability baked into the binary — no root and no
 > `cap_add` needed with Docker's default capabilities.
 
 ### Real client IPs and node IPs (host networking)
 
-The agent in `docker-compose.prod.yml` runs with **`network_mode: host`** (the
+The resolver in `docker-compose.prod.yml` runs with **`network_mode: host`** (the
 recommended production setup): it binds the host's `:53` directly, so the resolver
 sees each client's real source IP (per-client dashboard stats) and the control
 plane records the node's real host IP. With bridge port mapping (`53:53`) instead,
@@ -168,14 +175,14 @@ collapses all clients into one, and nodes show up with bridge addresses like
 
 Host networking has no Compose-provided DNS, so the control plane's IP must be
 pinned with **`MAZEDNS_CP_IP`** (required by the compose file) — see below. The
-agent's HTTP API is moved to `:9090` via `MAZEDNS_API_PORT` so it doesn't collide
+resolver's HTTP API is moved to `:9090` via `MAZEDNS_API_PORT` so it doesn't collide
 with a control plane sharing the host on `:8080`.
 
-### Reaching the control plane from an agent
+### Reaching the control plane from a resolver
 
-An agent needs to reach the control plane's URL (`MAZEDNS_CP_URL`). If the agent is
+A resolver needs to reach the control plane's URL (`MAZEDNS_CP_URL`). If the resolver is
 the **only DNS server on its network**, or runs with `network_mode: host` and has no
-upstream resolver yet, it can't resolve the control plane's hostname at boot. Pin
+upstream yet, it can't resolve the control plane's hostname at boot. Pin
 the IP so DNS is bypassed (TLS still verifies the URL's hostname):
 
 ```yaml
@@ -195,7 +202,7 @@ Alternatives:
 
 - Or point `MAZEDNS_CP_URL` straight at an IP.
 
-When `MAZEDNS_CP_IP` is left empty, the agent auto-learns and pins the address the
+When `MAZEDNS_CP_IP` is left empty, the resolver auto-learns and pins the address the
 control plane advertises at enrollment (`MAZEDNS_ADVERTISE_ADDR` on the control
 plane) and persists it across restarts.
 
@@ -214,7 +221,7 @@ docker run -d --name mazedns-control-plane \
   -e MAZEDNS_DB_PATH=/data/mazedns.db \
   ghcr.io/amaze-labs/mazedns-control-plane:latest
 
-# 2. DNS agent — self-enrolls with an enrollment key, then serves DNS on :53.
+# 2. DNS resolver — self-enrolls with an enrollment key, then serves DNS on :53.
 #    Host networking (recommended): real client IPs in the dashboard and the
 #    node's real host IP at the control plane; MAZEDNS_CP_IP is required because
 #    there is no Docker DNS (it pins the dial — TLS still verifies the URL host).
@@ -227,9 +234,9 @@ docker run -d --name mazedns-agent \
   -e MAZEDNS_DB_PATH=/data/mazedns.db \
   -e MAZEDNS_API_ADDRESS=0.0.0.0 \
   -e MAZEDNS_API_PORT=9090 \
-  ghcr.io/amaze-labs/mazedns-agent:latest
-  # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Agents →
-  # Enrollment keys), not a shared password. It only lets an agent enroll; the
+  ghcr.io/amaze-labs/mazedns-resolver:latest
+  # MAZEDNS_JOIN_TOKEN is an enrollment key you create in the UI (Resolvers →
+  # Enrollment keys), not a shared password. It only lets a resolver enroll; the
   # control plane then issues a per-node key it rotates automatically.
   # MAZEDNS_NODE_NAME is only the initial display label. The control plane assigns
   # the node an immutable UUID at first enrollment (stored on the -v agent-data
@@ -242,16 +249,16 @@ docker run -d --name mazedns-agent \
   # docker bridge IP for all clients and for this node.
 ```
 
-> **Keep the agent's `/data` volume across image updates.** It stores the node's
+> **Keep the resolver's `/data` volume across image updates.** It stores the node's
 > identity (its server-assigned UUID + rotating key), so a recreated container
 > rejoins instantly as the same node. If the volume is lost anyway, a stable and
 > unique `MAZEDNS_NODE_NAME` is the safety net: the new container waits for the
 > old one to be marked offline (~2 minutes) and then **reclaims** the same node —
 > history, site, and role included — instead of duplicating it. Only two *live*
-> agents claiming the same name still produce a de-duplicated `-2` entry.
+> resolvers claiming the same name still produce a de-duplicated `-2` entry.
 
 `MAZEDNS_API_ADDRESS=0.0.0.0` makes the mapped `/healthz` + `/readyz` + `/metrics`
-port reachable from outside the container (it defaults to loopback). The agent
+port reachable from outside the container (it defaults to loopback). The resolver
 image has a built-in Docker health check against `/readyz` (DNS readiness over UDP
 and TCP); see [troubleshooting.md](troubleshooting.md#health-checks-and-watchdogs)
 for what it does and doesn't do. The control plane's `/metrics`
@@ -263,7 +270,7 @@ the Prometheus scrape job.
 
 ## 2. Kubernetes
 
-Run one control-plane Deployment and expose the agents to clients. Apply into a
+Run one control-plane Deployment and expose the resolvers to clients. Apply into a
 dedicated namespace, and adjust the storage class, image tag, and Service type for
 your cluster.
 
@@ -277,7 +284,7 @@ kind: Secret
 metadata: { name: mazedns-secrets, namespace: mazedns }
 type: Opaque
 stringData:
-  # An enrollment key created in the UI (Agents → Enrollment keys). Agents present
+  # An enrollment key created in the UI (Resolvers → Enrollment keys). Resolvers present
   # it to self-enroll; it is never used to serve DNS. (The first admin is created in
   # the setup wizard, not via an env var — there is no admin-password secret.)
   join-token: "<enrollment-key-from-the-wizard>"
@@ -331,19 +338,21 @@ spec:
   # type: LoadBalancer   # or front the UI with an Ingress + TLS
 ```
 
-### DNS agents
+### DNS resolvers
 
-Agents connect back to `control-plane:8080` inside the cluster and serve DNS to
-clients. A **DaemonSet** (one agent per node) is a common fit; a Deployment behind a
+Resolvers connect back to `control-plane:8080` inside the cluster and serve DNS to
+clients. A **DaemonSet** (one resolver per node) is a common fit; a Deployment behind a
 `LoadBalancer` Service also works. Each pod keeps a small local database holding the
-node's identity + key — an agent that loses it re-enrolls with its enrollment key
+node's identity + key — a resolver that loses it re-enrolls with its enrollment key
 and comes back as a *new* node (its old row is orphaned). `emptyDir` is fine if the
 enrollment key is unlimited-use; to keep a stable identity across restarts, mount a
-`PersistentVolumeClaim` for the agent's data directory instead.
+`PersistentVolumeClaim` for the resolver's data directory instead.
 
 ```yaml
 apiVersion: apps/v1
 kind: DaemonSet
+# The DaemonSet keeps its pre-rename name and labels: selectors are immutable,
+# so renaming them would make `kubectl apply` fail on an existing cluster.
 metadata: { name: dns-agent, namespace: mazedns }
 spec:
   selector: { matchLabels: { app: mazedns-agent } }
@@ -352,7 +361,7 @@ spec:
     spec:
       containers:
         - name: dns-agent
-          image: ghcr.io/amaze-labs/mazedns-agent:latest
+          image: ghcr.io/amaze-labs/mazedns-resolver:latest
           env:
             - { name: MAZEDNS_API_ADDRESS, value: "0.0.0.0" }   # required for kubelet probes + scraping
             - { name: MAZEDNS_DB_PATH, value: "/data/mazedns.db" }
@@ -371,7 +380,7 @@ spec:
           # really can't answer.
           readinessProbe: { httpGet: { path: /readyz, port: 8080 } }
           volumeMounts: [{ name: data, mountPath: /data }]
-      # emptyDir loses the node's identity when the pod is recreated, so the agent
+      # emptyDir loses the node's identity when the pod is recreated, so the resolver
       # re-enrolls as a NEW node (a duplicate, -2-suffixed entry). Fine only with an
       # unlimited-use enrollment key. For a stable identity across restarts, back the
       # `data` volume with a PersistentVolumeClaim (or a per-node hostPath) instead.
@@ -392,7 +401,7 @@ spec:
 Point clients (or CoreDNS forwarding) at the `dns` Service's external address.
 `MAZEDNS_API_ADDRESS=0.0.0.0` is mandatory here: kubelet runs the `/healthz` probes
 against the pod IP, which a loopback bind would refuse. For real client IPs, use
-`externalTrafficPolicy: Local` (above) or give the agent pod `hostNetwork: true`.
+`externalTrafficPolicy: Local` (above) or give the resolver pod `hostNetwork: true`.
 
 ---
 
@@ -403,3 +412,22 @@ against the pod IP, which a loopback bind would refuse. For real client IPs, use
 - **[user-guide.md](user-guide.md)** — the dashboard, blocklists, rewrites,
   clustering operations, auth/SSO, and backup/restore.
 - **[troubleshooting.md](troubleshooting.md)** — symptom → fix.
+
+## Renamed artifacts
+
+The DNS servers were called *agents* before they were called **resolvers**. The
+old names keep working until the next major release:
+
+| Old | New | Until the next major |
+|-----|-----|----------------------|
+| image `ghcr.io/amaze-labs/mazedns-agent` | `ghcr.io/amaze-labs/mazedns-resolver` | published with the same digest |
+| binary `dns-agent` | `dns-resolver` | a symlink in the image and the tarballs (a copy on Windows); logs a deprecation warning |
+| Docker target `dns-agent` | `dns-resolver` | an alias of the same stage |
+| `configs/dns-agent.example.yaml` | `configs/dns-resolver.example.yaml` | — |
+| metric `mazedns_agents{state}` | `mazedns_resolvers{state}` | both exported, same values |
+| env `MAZEDNS_AGENT_BUILD` (set by the release pipeline) | `MAZEDNS_RESOLVER_BUILD` | both read, the new one first |
+
+The API (`/api/cluster/nodes`) and config (`MAZEDNS_NODE_*`) never said *agent*
+and don't change. Container, compose service, volume and Kubernetes names in
+these docs also stay as they are, so an existing resolver keeps its identity
+when you update the image.

@@ -5,16 +5,16 @@
 
 A self-hosted **DNS filtering resolver**, like AdGuard Home or Pi-hole, built for
 **several sites**: one control plane holds your configuration and dashboard, and
-any number of DNS agents copy it and answer queries close to your clients.
+any number of DNS resolvers copy it and answer queries close to your clients.
 
-![The MazeDNS overview: a day of queries across four agents in three sites](docs/images/overview.png)
+![The MazeDNS overview: a day of queries across four resolvers in three sites](docs/images/overview.png)
 
 ## What it does
 
 ### See what your network does
 
-Every query from every agent lands in one place: how it was answered (cache,
-upstream, blocked, local record), by which agent, for which device, and **what
+Every query from every resolver lands in one place: how it was answered (cache,
+upstream, blocked, local record), by which resolver, for which device, and **what
 kind of traffic it is**: social, streaming, work, gaming… Devices get names, and
 each one has its own breakdown.
 
@@ -25,7 +25,7 @@ each one has its own breakdown.
 ### Filter it
 
 Blocklists from a URL, a file or pasted text, your own allow and block rules,
-**whole categories** (adult, gambling, social…) blocked on every agent, and a
+**whole categories** (adult, gambling, social…) blocked on every resolver, and a
 one-click pause.
 
 ![Block by category](docs/images/filtering-categories.png)
@@ -51,18 +51,18 @@ Classification answers two questions about every domain your network uses:
 
 Local records (`nas.home.lan`, `*.lab.home.lan`) with reverse lookups for free,
 conditional forwarding (`corp.internal` → your office DNS), each scoped to every
-agent, a site, or a single agent for split-horizon answers.
+resolver, a site, or a single resolver for split-horizon answers.
 
 ![Local DNS](docs/images/local-dns.png)
 
 ### Run it on several sites
 
-Agents enroll themselves with a key, copy the configuration, and keep answering
+Resolvers enroll themselves with a key, copy the configuration, and keep answering
 from their last copy if the control plane goes away. Group them into sites with
 a role each, put one in maintenance to drain it, and see at a glance which
-agents are healthy, in sync and up to date.
+resolvers are healthy, in sync and up to date.
 
-![Agents in sites](docs/images/agents.png)
+![Resolvers in sites](docs/images/agents.png)
 
 ### And everything around it
 
@@ -72,7 +72,7 @@ agents are healthy, in sync and up to date.
 - **Accounts:** local users or single sign-on through any **OIDC** provider,
   profile pictures, and API tokens for integrations.
 - **Observability:** Prometheus `/metrics` on both components, optional
-  VictoriaMetrics and VictoriaLogs export, and a Logs page for every agent.
+  VictoriaMetrics and VictoriaLogs export, and a Logs page for every resolver.
 - **Updates:** Settings → About & updates shows when a new release is out, and
   what it changes.
 - **Everywhere:** light, dark or system theme, and a layout made for phones and
@@ -88,7 +88,7 @@ MazeDNS is two containers:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.png">
-  <img src="docs/images/architecture.png" alt="Clients in each site query a DNS agent on port 53; every agent syncs with one control plane, which you use from a browser">
+  <img src="docs/images/architecture.png" alt="Clients in each site query a MazeDNS resolver on port 53; every resolver syncs with one control plane, which you use from a browser">
 </picture>
 
 <sub>Drawn with Excalidraw: open <a href="docs/images/architecture.excalidraw">architecture.excalidraw</a> on excalidraw.com to edit it.</sub>
@@ -96,9 +96,9 @@ MazeDNS is two containers:
 | Image | Serves | Run |
 |-------|--------|-----|
 | `ghcr.io/amaze-labs/mazedns-control-plane` | web UI, API, `/metrics` (**no DNS**) | **one**, on the host you manage |
-| `ghcr.io/amaze-labs/mazedns-agent` | DNS (UDP/TCP, optionally DoT/DoH), `/healthz`, `/readyz`, `/metrics` | **one or more**, wherever you serve DNS |
+| `ghcr.io/amaze-labs/mazedns-resolver` | DNS (UDP/TCP, optionally DoT/DoH), `/healthz`, `/readyz`, `/metrics` | **one or more**, wherever you serve DNS |
 
-Clients point at the **agents**. Agents keep resolving from their local copy even
+Clients point at the **resolvers**. Resolvers keep resolving from their local copy even
 if the control plane is down for a while, and the dashboard's load never touches
 the DNS path.
 
@@ -108,7 +108,7 @@ the DNS path.
 # 1. Get the compose file.
 curl -O https://raw.githubusercontent.com/amaze-labs/MazeDNS/main/docker-compose.prod.yml
 
-# 2. Tell the agent where to reach the control plane. The compose file requires this
+# 2. Tell the resolver where to reach the control plane. The compose file requires this
 #    (host networking has no Docker DNS); on a single host it's this host's LAN IP.
 echo 'MAZEDNS_CP_IP=192.168.1.10' > .env
 
@@ -118,18 +118,18 @@ echo 'MAZEDNS_CP_IP=192.168.1.10' > .env
 #    setup, so don't expose 8080 publicly until the wizard is done.
 docker compose -f docker-compose.prod.yml up -d control-plane
 
-# 4. Add the enrollment key the wizard gave you, then start the agent:
+# 4. Add the enrollment key the wizard gave you, then start the resolver:
 echo "MAZEDNS_JOIN_TOKEN=<enrollment-key>" >> .env
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-This runs a control plane (dashboard on `http://localhost:8080`) and one DNS agent
+This runs a control plane (dashboard on `http://localhost:8080`) and one DNS resolver
 listening on `:53`. Sign in with the admin account you created, then point a client
-at the agent:
+at the resolver:
 
 ```bash
-dig @<agent-host> example.com        # resolves
-dig @<agent-host> doubleclick.net    # blocked, once you add a blocklist
+dig @<resolver-host> example.com        # resolves
+dig @<resolver-host> doubleclick.net    # blocked, once you add a blocklist
 ```
 
 The full walkthrough (Docker, Kubernetes, `network_mode: host`, pinning the control
@@ -149,10 +149,10 @@ Start at the **[documentation index](docs/README.md)**.
 
 - Never expose the control-plane UI/API to the internet: keep it on a management
   network or VPN, behind a TLS reverse proxy.
-- The agent's `/metrics`, `/healthz` and `/readyz` endpoints are unauthenticated:
+- The resolver's `/metrics`, `/healthz` and `/readyz` endpoints are unauthenticated:
   bind them to a private address (they default to loopback).
-- **The resolver has no client ACL**: anything that can reach an agent's `:53`
-  gets answers. Keep agents on a private network or firewall the port; never
+- **The resolver has no client ACL**: anything that can reach a resolver's `:53`
+  gets answers. Keep resolvers on a private network or firewall the port; never
   publish `:53` to the internet.
 - Per-client rate limiting is available but ships **disabled**: turn it on under
   **Settings → Resolver** (queries per minute per client IP; `REFUSED` beyond).

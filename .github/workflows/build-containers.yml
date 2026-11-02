@@ -2,7 +2,11 @@
 #   1. compute the next version from the latest semver tag plus the commits after
 #      it (type!: major, feat: minor, anything else: patch — see
 #      .github/scripts/next-version.sh);
-#   2. publish BOTH images (control plane and agent) as <version> and latest.
+#   2. publish BOTH images (control plane and resolver) as <version> and latest.
+#      The resolver is pushed to mazedns-agent, its pre-rename name, and the same
+#      digest is tagged in mazedns-resolver too. mazedns-agent stays the primary
+#      until the next major release: the previous release's label is read from
+#      it, and mazedns-resolver has no tag older than the rename.
 #      Each one is rebuilt only when something that ends up in IT changed since
 #      the previous release: the packages its binary imports (go list), the web
 #      UI for the control plane, and the shared go.mod, Dockerfile and configs.
@@ -12,10 +16,10 @@
 #      (no "v" prefix).
 #
 # The two images always carry the same version, and each binary reports it
-# (in its startup log, and the app version agents send to the control plane). A rebuilt
-# binary has it compiled in; a stamped one reads MAZEDNS_IMAGE_VERSION. The
-# control plane also learns the release its agent code comes from (AgentBuild),
-# so an agent on an earlier version isn't flagged as outdated when the releases
+# (in its startup log, and the app version resolvers send to the control plane). A
+# rebuilt binary has it compiled in; a stamped one reads MAZEDNS_IMAGE_VERSION. The
+# control plane also learns the release its resolver code comes from (AgentBuild),
+# so a resolver on an earlier version isn't flagged as outdated when the releases
 # since then only changed the control plane.
 #
 # A push that only changes documentation (docs/, *.md, LICENSE) or CI (.github/)
@@ -146,20 +150,21 @@ jobs:
             cp=true; agent=true
           else
             cp_changes=$(changed $shared web $(specs cmd/control-plane))
-            agent_changes=$(changed $shared $(specs cmd/dns-agent))
+            agent_changes=$(changed $shared $(specs cmd/dns-resolver))
             cp=false; agent=false
             [ -n "$cp_changes" ] && cp=true
             [ -n "$agent_changes" ] && agent=true
             echo "Control plane changes since ${PREV}:"; echo "${cp_changes:-  none}"
-            echo "Agent changes since ${PREV}:"; echo "${agent_changes:-  none}"
+            echo "Resolver changes since ${PREV}:"; echo "${agent_changes:-  none}"
           fi
           if [ "$cp" = true ]; then cp_build="$VERSION"; else cp_build=$(built_at control-plane); fi
           if [ "$agent" = true ]; then agent_build="$VERSION"; else agent_build=$(built_at agent); fi
 
           # The build matrix: only the images that changed, on both arches.
+          # `alias` is a second repository the published digest is tagged in.
           matrix=$(jq -cn --argjson cp "$cp" --argjson agent "$agent" '
             [ (if $cp then {image: "control-plane", suffix: "control-plane"} else empty end),
-              (if $agent then {image: "dns-agent", suffix: "agent"} else empty end) ] as $imgs
+              (if $agent then {image: "dns-resolver", suffix: "agent", alias: "resolver"} else empty end) ] as $imgs
             | [ {arch: "amd64", runner: "ubuntu-latest", platform: "linux/amd64"},
                 {arch: "arm64", runner: "ubuntu-24.04-arm", platform: "linux/arm64"} ] as $arches
             | {include: [ $imgs[] as $i | $arches[] as $a | $i + $a ]}')
@@ -174,7 +179,7 @@ jobs:
           {
             echo "### Images"
             echo "- control plane: $([ "$cp" = true ] && echo rebuilt || echo "stamped, code from \`${cp_build}\`")"
-            echo "- agent: $([ "$agent" = true ] && echo rebuilt || echo "stamped, code from \`${agent_build}\`")"
+            echo "- resolver: $([ "$agent" = true ] && echo rebuilt || echo "stamped, code from \`${agent_build}\`")"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -256,19 +261,27 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [control-plane, dns-agent]
+        image: [control-plane, dns-resolver]
+        # suffix: the repository the build pushed to; alias: a second repository
+        # that gets the same tags (see the header).
         include:
           - image: control-plane
             suffix: control-plane
-          - image: dns-agent
+            alias: ''
+          - image: dns-resolver
             suffix: agent
+            alias: resolver
     env:
       # Whether this image was rebuilt in this run (else it is stamped).
       REBUILT: ${{ matrix.image == 'control-plane' && needs.version.outputs.build_cp || needs.version.outputs.build_agent }}
     steps:
       - name: Set image name
         id: repo
-        run: echo "image_name=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.suffix }}" >> "$GITHUB_OUTPUT"
+        run: |
+          base="${REGISTRY}/${GITHUB_REPOSITORY,,}"
+          echo "image_name=${base}-${{ matrix.suffix }}" >> "$GITHUB_OUTPUT"
+          alias="${{ matrix.alias }}"
+          echo "alias_name=${alias:+${base}-${alias}}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -293,23 +306,26 @@ jobs:
         working-directory: /tmp/digests
         env:
           IMAGE: ${{ steps.repo.outputs.image_name }}
+          ALIAS: ${{ steps.repo.outputs.alias_name }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -eu
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${VERSION}" \
-            --tag "${IMAGE}:latest" \
-            $(printf "${IMAGE}@sha256:%s " *)
+          tags=(--tag "${IMAGE}:${VERSION}" --tag "${IMAGE}:latest")
+          if [ -n "$ALIAS" ]; then tags+=(--tag "${ALIAS}:${VERSION}" --tag "${ALIAS}:latest"); fi
+          docker buildx imagetools create "${tags[@]}" $(printf "${IMAGE}@sha256:%s " *)
 
       # No compile and no layer travels: the previous release's image plus one
       # config change, on both arches (FROM + ENV + LABEL run nothing, so no
       # emulation). The binary reads MAZEDNS_IMAGE_VERSION, so it reports the new
-      # version, and MAZEDNS_AGENT_BUILD tells the control plane where its agent
-      # code comes from. The io.mazedns.build label is inherited untouched.
+      # version, and MAZEDNS_RESOLVER_BUILD tells the control plane where its
+      # resolver code comes from. MAZEDNS_AGENT_BUILD carries the same value for
+      # binaries built before the rename, which only read that name. The
+      # io.mazedns.build label is inherited untouched.
       - name: Stamp ${{ needs.version.outputs.previous }} as ${{ needs.version.outputs.version }}
         if: env.REBUILT != 'true'
         env:
           IMAGE: ${{ steps.repo.outputs.image_name }}
+          ALIAS: ${{ steps.repo.outputs.alias_name }}
           VERSION: ${{ needs.version.outputs.version }}
           PREV: ${{ needs.version.outputs.previous }}
           AGENT_BUILD: ${{ needs.version.outputs.agent_build }}
@@ -318,14 +334,28 @@ jobs:
           mkdir -p /tmp/stamp && cd /tmp/stamp
           cat > Dockerfile <<EOF
           FROM ${IMAGE}:${PREV}
-          ENV MAZEDNS_IMAGE_VERSION=${VERSION} MAZEDNS_AGENT_BUILD=${AGENT_BUILD}
+          ENV MAZEDNS_IMAGE_VERSION=${VERSION} MAZEDNS_RESOLVER_BUILD=${AGENT_BUILD} MAZEDNS_AGENT_BUILD=${AGENT_BUILD}
           LABEL org.opencontainers.image.version=${VERSION} org.opencontainers.image.revision=${GITHUB_SHA}
           EOF
-          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push \
-            --tag "${IMAGE}:${VERSION}" --tag "${IMAGE}:latest" .
+          tags=(--tag "${IMAGE}:${VERSION}" --tag "${IMAGE}:latest")
+          if [ -n "$ALIAS" ]; then tags+=(--tag "${ALIAS}:${VERSION}" --tag "${ALIAS}:latest"); fi
+          docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --push "${tags[@]}" .
 
       - name: Inspect image
-        run: docker buildx imagetools inspect "${{ steps.repo.outputs.image_name }}:${{ needs.version.outputs.version }}"
+        env:
+          IMAGE: ${{ steps.repo.outputs.image_name }}
+          ALIAS: ${{ steps.repo.outputs.alias_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          if [ -n "$ALIAS" ]; then
+            # Both names must point at the same image.
+            a=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest.Digest}}')
+            b=$(docker buildx imagetools inspect "${ALIAS}:${VERSION}" --format '{{json .Manifest.Digest}}')
+            echo "${IMAGE}: ${a}"; echo "${ALIAS}: ${b}"
+            [ "$a" = "$b" ]
+          fi
 
   tag:
     name: Tag ${{ needs.version.outputs.version }}

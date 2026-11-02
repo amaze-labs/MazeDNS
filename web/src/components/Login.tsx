@@ -98,7 +98,7 @@ export default function Login({
         </div>
         <blockquote>
           One place to decide what every network you run is allowed to resolve.
-          <small>Control plane for your MazeDNS agents</small>
+          <small>Control plane for your MazeDNS resolvers</small>
         </blockquote>
       </div>
 

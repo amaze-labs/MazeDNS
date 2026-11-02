@@ -25,7 +25,8 @@ var Version = "dev"
 // release itself when the agent was rebuilt, an earlier one when only the
 // control plane changed. Agents reporting this release or a later one run
 // current code. Set like Version (-X …/version.AgentBuild=<v>, or
-// MAZEDNS_AGENT_BUILD on a stamped image); empty when unknown (local builds),
+// MAZEDNS_RESOLVER_BUILD on a stamped image; MAZEDNS_AGENT_BUILD, its pre-rename
+// name, is still read when the new one is unset); empty when unknown (local builds),
 // and then only an agent on the control plane's own version counts as current.
 var AgentBuild = ""
 
@@ -36,8 +37,11 @@ func fromEnv(getenv func(string) string) {
 	if v := strings.TrimSpace(getenv("MAZEDNS_IMAGE_VERSION")); v != "" {
 		Version = v
 	}
-	if v := strings.TrimSpace(getenv("MAZEDNS_AGENT_BUILD")); v != "" {
-		AgentBuild = v
+	for _, k := range []string{"MAZEDNS_RESOLVER_BUILD", "MAZEDNS_AGENT_BUILD"} {
+		if v := strings.TrimSpace(getenv(k)); v != "" {
+			AgentBuild = v
+			break
+		}
 	}
 }
 

@@ -95,7 +95,7 @@ export default function ApiTokens() {
       <div className="sg-body">
         <p className="hint" style={{ margin: 0 }}>
           A token can do what its role allows on DNS data — rewrites, forwarders, rules, lists, clients and read-only views — but
-          never manages people, tokens, sign-in, credentials, backups or agents. It keeps working when password sign-in is off
+          never manages people, tokens, sign-in, credentials, backups or resolvers. It keeps working when password sign-in is off
           for SSO, but never outranks its creator: it is revoked if their account is removed, and acts as a viewer if they are no
           longer an administrator (for an SSO account, from their next sign-in). Each token is shown once, then stored hashed;
           revoking it applies on the next request.

@@ -8,14 +8,14 @@ link here rather than repeat the tables.
 The **control plane** is configured through its web UI: a fresh install runs a
 [first-boot setup wizard](install.md#first-boot-setup-wizard) (trust-on-first-use —
 complete it before exposing the port), and everything after is edited under
-**Settings**. The **DNS agent** keeps env-var configuration — that's the right fit
+**Settings**. The **DNS resolver** keeps env-var configuration — that's the right fit
 for a stateless resolver.
 
 Two classes of settings behave differently:
 
 - **Bootstrap settings** — read on **every start**, env/YAML only, because they're
   needed before the database or UI exist: the database (`MAZEDNS_DB_*`), the HTTP
-  bind (`MAZEDNS_API_ADDRESS` / `MAZEDNS_API_PORT`), the agent's DNS listener
+  bind (`MAZEDNS_API_ADDRESS` / `MAZEDNS_API_PORT`), the resolver's DNS listener
   (`MAZEDNS_LISTEN_*`, plus the `dot` / `doh` / `tls` YAML sections), and
   `MAZEDNS_LOG_LEVEL`.
 - **Runtime settings** — everything else on the control plane (DNS defaults, SSO,
@@ -53,7 +53,7 @@ The variable that applies to a component depends on which image it is:
 
 - **Control plane** (`mazedns-control-plane`) — UI, API, auth, classifier, cluster
   coordination. No DNS listener.
-- **DNS agent** (`mazedns-agent`) — the resolver. Rules and rewrites are
+- **Resolver** (`mazedns-resolver`, formerly `mazedns-agent`) — answers DNS. Rules and rewrites are
   replicated from the control plane, not configured here.
 
 ---
@@ -74,8 +74,8 @@ The variable that applies to a component depends on which image it is:
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`/`info`/`warn`/`error`. |
 
 Clustering has no enable flag: the control plane **always** serves the cluster
-endpoints. To let agents join, create an **enrollment key** in the UI (Agents →
-Enrollment keys) or via the admin API and pass it to each agent as
+endpoints. To let resolvers join, create an **enrollment key** in the UI (Resolvers →
+Enrollment keys) or via the admin API and pass it to each resolver as
 `MAZEDNS_JOIN_TOKEN`. The removed `MAZEDNS_CLUSTER_ENABLED` and
 `MAZEDNS_CLUSTER_BOOTSTRAP_NODES` env vars are ignored (a startup warning is logged
 if still set) — pre-provisioning nodes with fixed keys is no longer supported
@@ -83,9 +83,9 @@ because it put node secrets in the environment and bypassed enrollment keys, the
 approval flow, and the server-assigned-UUID identity model.
 
 To **pause replication** for a node (previously `cp_url` + `enabled: false`), either
-unset `MAZEDNS_CP_URL`/`cp_url` so the agent runs standalone, or — to keep it
+unset `MAZEDNS_CP_URL`/`cp_url` so the resolver runs standalone, or — to keep it
 enrolled — put the node into **maintenance/drain** from the control-plane UI
-(Agents → the node), which stops it serving without de-enrolling it.
+(Resolvers → the node), which stops it serving without de-enrolling it.
 
 **Runtime** (seed-only — configured in the UI after first boot). The variables below
 still work, but **only to seed the database on first boot**; afterwards they are
@@ -94,9 +94,9 @@ ignored and the values are edited under **Settings** (or the setup wizard):
 | Seed variable | UI location | Notes |
 |---|---|---|
 | `MAZEDNS_ADMIN_USERNAME` / `MAZEDNS_ADMIN_PASSWORD` | *(removed)* | The first admin is created by the **setup wizard**; these env vars are no longer read. Recover with `control-plane reset-admin`. |
-| `MAZEDNS_REQUIRE_APPROVAL` | Settings → Access → Cluster policy | Hold new agents pending approval. |
+| `MAZEDNS_REQUIRE_APPROVAL` | Settings → Access → Cluster policy | Hold new resolvers pending approval. |
 | `MAZEDNS_KEY_MAX_AGE` / `MAZEDNS_KEY_GRACE` | Settings → Access → Cluster policy | Per-node key rotation policy. |
-| `MAZEDNS_ADVERTISE_ADDR` | Settings → Access → Cluster policy | Address handed to agents at enrollment. |
+| `MAZEDNS_ADVERTISE_ADDR` | Settings → Access → Cluster policy | Address handed to resolvers at enrollment. |
 | `MAZEDNS_CLASSIFIER_*` | Settings → Classification | Endpoint/model/mode/API key. Naming a model or an endpoint turns the AI layer on. Everything else that contacts a third party (WHOIS/RDAP, threat feeds, the nameserver DoH check, reputation services) starts off and is chosen in Settings; nothing is downloaded or sent while classification is off. |
 | `MAZEDNS_OIDC_*` | Settings → Access & sign-in | Issuer, client ID/secret, redirect URL, groups, flags. |
 
@@ -106,14 +106,14 @@ masked and never receives the value; sending an empty field leaves the stored se
 unchanged. Settings changes are recorded in an **audit log** (who/when/which keys —
 never the secret values), viewable at `GET /api/settings/audit`.
 
-### DNS agent
+### DNS resolver
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `MAZEDNS_CP_URL` | For clustering | *(empty)* | Control-plane base URL, e.g. `https://cp.example.com:8080`. Setting it (with a credential) makes the agent join the cluster — there is no separate enable flag. (Deprecated alias: `MAZEDNS_MASTER_URL`.) With no URL the agent runs **standalone** — resolving and filtering from its own local config. |
-| `MAZEDNS_CP_IP` | Conditional | *(auto)* | Pin the control plane's IP so the agent reaches it without DNS (TLS still verifies the URL host). Needed when the agent can't resolve the CP's FQDN — e.g. it's its network's only DNS. Left empty, the agent auto-learns and persists the address the CP advertises at enrollment. (Deprecated alias: `MAZEDNS_MASTER_IP`.) |
-| `MAZEDNS_NODE_NAME` | No | *(hostname)* | **Initial** display label the agent enrolls under. A node's identity is an immutable UUID the control plane assigns at first enrollment and the agent stores locally (alongside its node key); this name is just an editable label. You can rename a node in the UI, and changing `MAZEDNS_NODE_NAME` after enrollment does **not** create a new node or change its identity. The UUID is never user-configurable. |
-| `MAZEDNS_NODE_KEY` | No | *(auto-issued)* | Per-node API key. Leave empty when using an enrollment key — one is issued, persisted, and rotated automatically. **Retained** (not part of the removed bootstrap-nodes flow) for automation/recovery: supply a key minted for a specific node via the admin API (`POST /api/cluster/nodes/{id}/key`) to attach an agent without the enrollment round-trip. |
+| `MAZEDNS_CP_URL` | For clustering | *(empty)* | Control-plane base URL, e.g. `https://cp.example.com:8080`. Setting it (with a credential) makes the resolver join the cluster — there is no separate enable flag. (Deprecated alias: `MAZEDNS_MASTER_URL`.) With no URL the resolver runs **standalone** — resolving and filtering from its own local config. |
+| `MAZEDNS_CP_IP` | Conditional | *(auto)* | Pin the control plane's IP so the resolver reaches it without DNS (TLS still verifies the URL host). Needed when the resolver can't resolve the CP's FQDN — e.g. it's its network's only DNS. Left empty, the resolver auto-learns and persists the address the CP advertises at enrollment. (Deprecated alias: `MAZEDNS_MASTER_IP`.) |
+| `MAZEDNS_NODE_NAME` | No | *(hostname)* | **Initial** display label the resolver enrolls under. A node's identity is an immutable UUID the control plane assigns at first enrollment and the resolver stores locally (alongside its node key); this name is just an editable label. You can rename a node in the UI, and changing `MAZEDNS_NODE_NAME` after enrollment does **not** create a new node or change its identity. The UUID is never user-configurable. |
+| `MAZEDNS_NODE_KEY` | No | *(auto-issued)* | Per-node API key. Leave empty when using an enrollment key — one is issued, persisted, and rotated automatically. **Retained** (not part of the removed bootstrap-nodes flow) for automation/recovery: supply a key minted for a specific node via the admin API (`POST /api/cluster/nodes/{id}/key`) to attach a resolver without the enrollment round-trip. |
 | `MAZEDNS_LISTEN_ADDRESS` | No | `0.0.0.0` | DNS bind address. |
 | `MAZEDNS_LISTEN_PORT` | No | `53` | DNS listen port. The image binds `53` as non-root via a `CAP_NET_BIND_SERVICE` file capability. |
 | `MAZEDNS_UDP_LISTENERS` | No | *(auto)* | Number of `SO_REUSEPORT` UDP sockets that share the port so the kernel spreads packets across cores. **Defaults to one per available CPU** (bounded at 8; scales with the container's CPU quota). Set to `1` to force a single socket, or to a specific number to pin it. Each socket reserves an 8 MiB read + 8 MiB write buffer, so more sockets means more memory. |
@@ -122,35 +122,35 @@ never the secret values), viewable at `GET /api/settings/audit`.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | Bind address of the HTTP server. Control plane: UI + API + `/metrics` (optionally token-gated — see [Scraping /metrics](#scraping-metrics-prometheus)) + `/healthz`. Agent: `/healthz` (liveness) + `/readyz` (DNS readiness) + `/metrics` only (unauthenticated). Set to `0.0.0.0` so a mapped port is reachable; for an agent, prefer the node's private/overlay IP. |
-| `MAZEDNS_API_PORT` | No | `8080` | Port of the HTTP server (YAML: `api.port`). Move it when two components share a host — the prod compose sets `9090` on the agent so the control plane keeps `:8080` under host networking. |
-| `MAZEDNS_JOIN_TOKEN` | For clustering | *(empty)* | The **enrollment key** an agent presents to self-enroll and receive a per-node key. Create/list/revoke enrollment keys in the UI (Agents → Enrollment keys) with optional expiry and max-uses. On the **control plane** this variable is *deprecated*: if set it is auto-imported once as a never-expiring enrollment key so existing agents keep working — prefer managing keys in the UI. Enrollment keys only work at `/api/cluster/enroll`, never for serving DNS or shipping logs. |
-| `MAZEDNS_KEY_MAX_AGE` | No | `720h` (30d) | Control plane: rotate a node's per-node key once it exceeds this age. The new key is handed to the agent on its next poll; the old key stays valid for `MAZEDNS_KEY_GRACE`. |
+| `MAZEDNS_API_ADDRESS` | In containers | `127.0.0.1` | Bind address of the HTTP server. Control plane: UI + API + `/metrics` (optionally token-gated — see [Scraping /metrics](#scraping-metrics-prometheus)) + `/healthz`. Resolver: `/healthz` (liveness) + `/readyz` (DNS readiness) + `/metrics` only (unauthenticated). Set to `0.0.0.0` so a mapped port is reachable; for a resolver, prefer the node's private/overlay IP. |
+| `MAZEDNS_API_PORT` | No | `8080` | Port of the HTTP server (YAML: `api.port`). Move it when two components share a host — the prod compose sets `9090` on the resolver so the control plane keeps `:8080` under host networking. |
+| `MAZEDNS_JOIN_TOKEN` | For clustering | *(empty)* | The **enrollment key** a resolver presents to self-enroll and receive a per-node key. Create/list/revoke enrollment keys in the UI (Resolvers → Enrollment keys) with optional expiry and max-uses. On the **control plane** this variable is *deprecated*: if set it is auto-imported once as a never-expiring enrollment key so existing resolvers keep working — prefer managing keys in the UI. Enrollment keys only work at `/api/cluster/enroll`, never for serving DNS or shipping logs. |
+| `MAZEDNS_KEY_MAX_AGE` | No | `720h` (30d) | Control plane: rotate a node's per-node key once it exceeds this age. The new key is handed to the resolver on its next poll; the old key stays valid for `MAZEDNS_KEY_GRACE`. |
 | `MAZEDNS_KEY_GRACE` | No | `15m` | Control plane: how long a rotated-out node key stays valid — the zero-downtime overlap window. |
-| `MAZEDNS_ADVERTISE_ADDR` | No | *(auto)* | Site-reachable address a node advertises. On the control plane it's the CP address handed to agents (which pin it); on an agent it's the DNS address reported to the CP for display and generated client config. Set it when the auto-detected address (e.g. a docker-internal IP) would be wrong. |
+| `MAZEDNS_ADVERTISE_ADDR` | No | *(auto)* | Site-reachable address a node advertises. On the control plane it's the CP address handed to resolvers (which pin it); on a resolver it's the DNS address reported to the CP for display and generated client config. Set it when the auto-detected address (e.g. a docker-internal IP) would be wrong. |
 | `MAZEDNS_DB_PATH` | No | `mazedns.db` | SQLite file path. In containers set it under the mounted volume, e.g. `/data/mazedns.db`. |
 | `MAZEDNS_DB_DRIVER` | No | `sqlite` | `sqlite` or `postgres`. |
 | `MAZEDNS_DB_DSN` | For Postgres | *(empty)* | PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/mazedns?sslmode=disable`. Setting only the DSN implies the `postgres` driver. |
 | `MAZEDNS_BLOCKLIST_FILES` | No | *(empty)* | Local blocklist file path(s), comma/space separated (absolute paths). Replaces `filter.blocklist_files`. Loaded locally per component (not replicated). |
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error`. |
-| `MAZEDNS_CATEGORY_DB` | No | on | `off` turns domain categories off: the control plane stops labelling queries, an agent stops blocking categories. Otherwise both download the UT1 category database from `dsi.ut-capitole.fr` next to their database — all of it on the control plane (~48 MB in memory), only the blocked categories on an agent (see [Domain categories](user-guide.md#domain-categories)). |
+| `MAZEDNS_CATEGORY_DB` | No | on | `off` turns domain categories off: the control plane stops labelling queries, a resolver stops blocking categories. Otherwise both download the UT1 category database from `dsi.ut-capitole.fr` next to their database — all of it on the control plane (~48 MB in memory), only the blocked categories on a resolver (see [Domain categories](user-guide.md#domain-categories)). |
 | `MAZEDNS_UPDATE_CHECK` | No | on | `off` stops the control plane checking for newer releases. Otherwise it reads the project's public GitHub releases (`api.github.com`, unauthenticated, every 6 hours or on **Check now**) to show under **Settings → About & updates** whether an update is out and what it changes. |
 
-> **Never share one database between the control plane and an agent.** Each writes
-> its own tables; pointing an agent at the control plane's database would overwrite
+> **Never share one database between the control plane and a resolver.** Each writes
+> its own tables; pointing a resolver at the control plane's database would overwrite
 > the source of truth. Use PostgreSQL for the control plane if you want managed
-> backups/HA, and leave agents on their local SQLite.
+> backups/HA, and leave resolvers on their local SQLite.
 
 The Go garbage-collector knobs `GOGC` and `GOMEMLIMIT` are honored on both images.
-When `GOGC` is unset, the DNS agent raises it to `200` to cut GC jitter on the
+When `GOGC` is unset, the DNS resolver raises it to `200` to cut GC jitter on the
 query path; the control plane keeps Go's default (`100`), since it serves no DNS
 and a higher value would only inflate its heap.
 
-`MAZEDNS_IMAGE_VERSION` and `MAZEDNS_AGENT_BUILD` are set **by the published
-images**, not by you. A release rebuilds only the image whose code changed and
+`MAZEDNS_IMAGE_VERSION` and `MAZEDNS_RESOLVER_BUILD` (`MAZEDNS_AGENT_BUILD`, its
+old name, is still set and read) are set **by the published images**, not by you. A release rebuilds only the image whose code changed and
 stamps the other with the new version through these variables, so both report
-the same version; the control plane then knows which release its agent code
-comes from, and doesn't flag agents as outdated after a release that only
+the same version; the control plane then knows which release its resolver code
+comes from, and doesn't flag resolvers as outdated after a release that only
 changed the control plane. Don't override them.
 
 ---
@@ -161,7 +161,7 @@ Every variable above maps to a field in the YAML file the image reads
 (`/etc/mazedns/mazedns.yaml`). Full annotated examples ship in the repo:
 
 - [`configs/control-plane.example.yaml`](../configs/control-plane.example.yaml)
-- [`configs/dns-agent.example.yaml`](../configs/dns-agent.example.yaml)
+- [`configs/dns-resolver.example.yaml`](../configs/dns-resolver.example.yaml)
 
 You rarely need to touch the file for a container deployment — env vars cover the
 bootstrap settings, and everything operational is edited in the UI. Mount your own
@@ -171,13 +171,13 @@ file at `/etc/mazedns/mazedns.yaml` only if you prefer file-based config.
 
 | Section | Keys | Notes |
 |---|---|---|
-| `listen` | `address` (`0.0.0.0`), `port` (`53`) | Agent DNS listener (agent only). |
+| `listen` | `address` (`0.0.0.0`), `port` (`53`) | Resolver DNS listener (resolver only). |
 | `api` | `enabled` (`true`), `address` (`127.0.0.1`), `port` (`8080`) | HTTP server. |
-| `dot` / `doh` | `enabled` (`false`), `address`, `port` (`853`/`8443`), `doh.path` (`/dns-query`) | Encrypted DNS endpoints for clients (agent only). |
+| `dot` / `doh` | `enabled` (`false`), `address`, `port` (`853`/`8443`), `doh.path` (`/dns-query`) | Encrypted DNS endpoints for clients (resolver only). |
 | `tls` | `cert_file`, `key_file` | Empty → a self-signed cert is generated on start. |
 | `database` | `driver` (`sqlite`), `path` (`mazedns.db`), `dsn` | See the shared table and the note above. |
 | `log` | `level` (`info`) | The `query_log` toggle is a runtime setting. |
-| `cluster` | agent-side `cp_url`, `cp_ip`/`master_ip`, `node_name`, `node_key`, `interval` (`30s`) | Agent wiring. No enable flag — an agent joins when `cp_url` + a credential are set; the control plane always serves cluster endpoints. |
+| `cluster` | agent-side `cp_url`, `cp_ip`/`master_ip`, `node_name`, `node_key`, `interval` (`30s`) | Resolver wiring. No enable flag — a resolver joins when `cp_url` + a credential are set; the control plane always serves cluster endpoints. |
 
 ### Runtime sections — control plane (seeded once, then edited in the UI)
 
@@ -195,10 +195,10 @@ by the database and edited under **Settings** (secrets are write-only):
 
 > `auth.admin.*` is no longer read — the first admin is created by the setup wizard.
 
-### Runtime sections — DNS agent / resolver (seeded once, then edited in the UI)
+### Runtime sections — resolver (seeded once, then edited in the UI)
 
-The resolver settings below apply to whichever component runs a resolver. On the
-control plane they configure only its headless resolver (it serves no DNS); agents
+The settings below configure the resolvers. The control plane also reads them for
+the headless DNS engine it uses internally (it serves no DNS); resolvers
 take rules/rewrites from the control plane via replication.
 
 | Section | Keys |
@@ -235,7 +235,7 @@ settings and in config exports). See [Query privacy](user-guide.md#query-privacy
 
 Settings saved before these keys existed run `ordered` with the default timeout
 (or whatever the config file sets, until the settings are next saved from the
-UI). Upstreams and the strategy are per-node settings: on a DNS agent they come
+UI). Upstreams and the strategy are per-node settings: on a DNS resolver they come
 from its own config file — only conditional forwarders are pushed from the control
 plane.
 
@@ -250,13 +250,13 @@ Every component's Prometheus metrics are **pushed** to a VictoriaMetrics instanc
 every node. Fields: `enabled`, `url`, `interval` (`15s`), `job` (`mazedns`),
 `instance`, `username`/`password`. Also editable live in the UI.
 
-Only the control plane talks to VictoriaMetrics. Agents learn that the export is on
+Only the control plane talks to VictoriaMetrics. Resolvers learn that the export is on
 (and its interval) from the replicated settings and post their metrics to the
 control plane (`POST /api/cluster/metrics`, authenticated with the node key), which
 forwards them with its own credentials — the VM URL and password never leave the
 control plane. Series are labelled `instance="control-plane"` for the control plane
-and `instance="<node name>"` for each agent; `instance` overrides the control
-plane's label. An agent not joined to a cluster pushes directly, using the export
+and `instance="<node name>"` for each resolver; `instance` overrides the control
+plane's label. A resolver not joined to a cluster pushes directly, using the export
 settings in its own database.
 
 What each component exposes (all prefixed `mazedns_`, plus the standard `go_*` and
@@ -264,17 +264,18 @@ What each component exposes (all prefixed `mazedns_`, plus the standard `go_*` a
 
 | Metric | Where | Meaning |
 |---|---|---|
-| `queries_total{action}` | agent | Queries answered, by action (forward, cache, blocked, …) |
-| `upstream_duration_seconds{upstream}` | agent | Upstream round-trip time (histogram), by the upstream that answered, as configured |
-| `upstream_tcp_fallback_total` | agent | Truncated UDP answers retried over TCP |
-| `querylog_dropped_total` | agent | Query-log entries dropped because the buffer was full |
-| `last_query_timestamp_seconds`, `last_forward_{success,error}_timestamp_seconds`, `cluster_last_sync_{success,error}_timestamp_seconds` | agent | Liveness timestamps (see troubleshooting) |
-| `agents{state}` | control plane | Agents online (seen in the last 2 minutes), offline, or pending approval |
-| `querylog_ingested_total` | control plane | Query-log entries received from agents |
+| `queries_total{action}` | resolver | Queries answered, by action (forward, cache, blocked, …) |
+| `upstream_duration_seconds{upstream}` | resolver | Upstream round-trip time (histogram), by the upstream that answered, as configured |
+| `upstream_tcp_fallback_total` | resolver | Truncated UDP answers retried over TCP |
+| `querylog_dropped_total` | resolver | Query-log entries dropped because the buffer was full |
+| `last_query_timestamp_seconds`, `last_forward_{success,error}_timestamp_seconds`, `cluster_last_sync_{success,error}_timestamp_seconds` | resolver | Liveness timestamps (see troubleshooting) |
+| `resolvers{state}` | control plane | Resolvers online (seen in the last 2 minutes), offline, or pending approval |
+| `agents{state}` | control plane | Deprecated: the same values as `resolvers{state}` under the old name, removed in the next major release |
+| `querylog_ingested_total` | control plane | Query-log entries received from resolvers |
 | `classifications{status}` | control plane | Classifier verdicts by status |
-| `category_db_domains`, `category_db_updated_timestamp_seconds` | both | Size and age of the loaded category database (the whole database on the control plane, the blocked categories on an agent) |
+| `category_db_domains`, `category_db_updated_timestamp_seconds` | both | Size and age of the loaded category database (the whole database on the control plane, the blocked categories on a resolver) |
 
-The DNS counters live only on the agents: sum them across `instance` for
+The DNS counters live only on the resolvers: sum them across `instance` for
 cluster-wide totals.
 
 ### Scraping `/metrics` (Prometheus)
@@ -296,12 +297,12 @@ scrape_configs:
 
 With no token set, requests without an `Authorization` header still succeed
 (unchanged behavior). *Clear* the token to reopen `/metrics`. While first-boot setup
-is pending, `/metrics` is blocked entirely (only `/healthz` is public). The agent's
+is pending, `/metrics` is blocked entirely (only `/healthz` is public). The resolver's
 `/metrics` has no token and stays open — restrict it at the network layer.
 
 ### Logs — VictoriaLogs (`metrics.victoria_logs`)
 
-The **control plane** ships the cluster-wide query log (its own plus agents' shipped
+The **control plane** ships the cluster-wide query log (its own plus resolvers' shipped
 entries) to VictoriaLogs (`/insert/jsonline`) for retention beyond the local window.
 Fields: `enabled`, `url`, `interval` (`15s`), `username`/`password`.
 
@@ -309,7 +310,7 @@ Each query becomes one log line with the fields `node`, `client`, `name`, `qtype
 `action`, `category` (the block reason), `content_category` (what the domain is:
 social, streaming, …), `rcode` and `elapsed_ms`; `node` and `action` are the stream
 fields. For example, `content_category:social | stats by (node) count()` counts
-social-media lookups per agent. The export resumes where it stopped after a restart
+social-media lookups per resolver. The export resumes where it stopped after a restart
 or a VictoriaLogs outage, and catches up a backlog in back-to-back batches.
 
 ### PostgreSQL notes

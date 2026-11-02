@@ -92,7 +92,7 @@ export function UpstreamBars({ rows, color = 'var(--fwd)' }: { rows: UpstreamSta
                       </button>
                     ) : (
                       // Older agents don't say which upstream answered: nothing to filter on.
-                      <div className="cat-row static" title={`${label}. Agents older than this version don’t report the upstream.`}>
+                      <div className="cat-row static" title={`${label}. Resolvers older than this version don’t report the upstream.`}>
                         {body}
                       </div>
                     )}

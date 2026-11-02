@@ -1,13 +1,13 @@
 # Production compose: pulls the published images and runs a control-plane
-# (dashboard/API, no DNS) plus a DNS agent that self-enrolls with an enrollment key
-# and serves DNS. In a real multi-site deployment each agent runs on a separate
+# (dashboard/API, no DNS) plus a DNS resolver that self-enrolls with an enrollment key
+# and serves DNS. In a real multi-site deployment each resolver runs on a separate
 # host/site (reaching the control plane over your private overlay); here both are
 # shown on one host for illustration.
 #
 #   echo 'MAZEDNS_CP_IP=<this-host-lan-ip>' > .env
 #   docker compose -f docker-compose.prod.yml up -d control-plane   # then run the wizard
 #   echo 'MAZEDNS_JOIN_TOKEN=<enrollment-key>' >> .env
-#   docker compose -f docker-compose.prod.yml up -d                 # starts the agent
+#   docker compose -f docker-compose.prod.yml up -d                 # starts the resolver
 #
 # On first boot the control plane starts in setup mode — there is NO setup token.
 # It uses trust-on-first-use: whoever reaches the fresh control plane first completes
@@ -15,16 +15,16 @@
 # http://<host>:8080 and complete it: create your admin (or configure SSO), set DNS
 # defaults, and create the first enrollment key. Everything else (SSO, metrics,
 # cluster policy) is configured in the UI under Settings — no env vars, no YAML, no
-# restart. The agent below presents MAZEDNS_JOIN_TOKEN as its enrollment key; paste
-# the key from the wizard into your environment (or into the agent service) to join.
+# restart. The resolver below presents MAZEDNS_JOIN_TOKEN as its enrollment key; paste
+# the key from the wizard into your environment (or into the resolver service) to join.
 #
 # Environment (set in your shell or a .env file next to this compose file):
 #   MAZEDNS_CP_IP       REQUIRED — compose refuses to start without it. The IP where
-#                       the agent host reaches the control plane (single-host setup:
+#                       the resolver host reaches the control plane (single-host setup:
 #                       this host's own LAN IP).
 #   MAZEDNS_JOIN_TOKEN  enrollment key from the setup wizard / Cluster page. May be
 #                       empty on the first `up -d control-plane` (the wizard hasn't
-#                       issued a key yet); the agent needs it to join.
+#                       issued a key yet); the resolver needs it to join.
 
 name: mazedns
 
@@ -45,16 +45,21 @@ services:
     volumes:
       - control-plane-data:/data
 
+  # The service, container and volume keep their pre-rename names on purpose:
+  # renaming them would make `docker compose up` start a second container next
+  # to the running one (both wanting :53) and a fresh volume without this
+  # resolver's identity. The image moved to mazedns-resolver; mazedns-agent is
+  # the same image, still published until the next major release.
   dns-agent:
-    image: ghcr.io/amaze-labs/mazedns-agent:latest
+    image: ghcr.io/amaze-labs/mazedns-resolver:latest
     container_name: mazedns-agent
     restart: unless-stopped
     depends_on: [control-plane]
-    # Host networking (the default here, recommended): the agent binds the host's
+    # Host networking (the default here, recommended): the resolver binds the host's
     # own :53 directly, so the resolver sees each client's REAL source IP
     # (per-client dashboard stats) and the control plane records this node's real
     # host IP — under bridge networking both collapse to a docker bridge address
-    # like 172.18.0.2. The agent binds :53 out of the box — its baked config
+    # like 172.18.0.2. The resolver binds :53 out of the box — its baked config
     # defaults to port 53 and the binary carries CAP_NET_BIND_SERVICE, no root
     # needed. Host networking has no compose DNS, so the control plane's IP MUST
     # be pinned: set MAZEDNS_CP_IP in your environment (or a .env file) to the IP
@@ -63,14 +68,14 @@ services:
     # verifies the URL host.
     network_mode: host
     environment:
-      MAZEDNS_API_ADDRESS: "0.0.0.0"     # agent /healthz + /metrics
+      MAZEDNS_API_ADDRESS: "0.0.0.0"     # resolver /healthz + /metrics
       MAZEDNS_API_PORT: "9090"           # keep :8080 free for the control plane on this host
       MAZEDNS_DB_PATH: "/data/mazedns.db"
       MAZEDNS_CP_URL: "http://${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}:8080"
       MAZEDNS_CP_IP: "${MAZEDNS_CP_IP:?set MAZEDNS_CP_IP to the IP where this host reaches the control plane}"
-      # Enrollment key created in the setup wizard / Agents → Enrollment keys.
+      # Enrollment key created in the setup wizard / Resolvers → Enrollment keys.
       MAZEDNS_JOIN_TOKEN: "${MAZEDNS_JOIN_TOKEN}"
-      MAZEDNS_NODE_NAME: "agent-1"
+      MAZEDNS_NODE_NAME: "resolver-1"
     volumes:
       - agent-data:/data
     # --- Bridge networking (alternative) ---------------------------------------
@@ -82,7 +87,7 @@ services:
     # ports:
     #   - "53:53/udp"
     #   - "53:53/tcp"
-    #   - "9090:8080"       # agent /metrics + /healthz
+    #   - "9090:8080"       # resolver /metrics + /healthz
 
 volumes:
   control-plane-data:

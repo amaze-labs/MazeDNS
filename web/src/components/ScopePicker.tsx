@@ -47,7 +47,7 @@ export function scopeBadge(scopeType?: string, scopeValues?: string[], known?: s
   if (st === 'all') return <span className="chip">Everyone</span>
   const vals = scopeValues || []
   const isSite = st === 'sites'
-  const label = isSite ? 'site' : 'agent'
+  const label = isSite ? 'site' : 'resolver'
   return (
     <span className="scope-chips">
       {vals.map((v) => {
@@ -90,7 +90,7 @@ export default function ScopePicker({
 }) {
   const known = value.scope_type === 'nodes' ? nodes : value.scope_type === 'sites' ? sites : []
   const options = [...(known ?? []), ...value.scope_values.filter((v) => !(known ?? []).includes(v))]
-  const label = value.scope_type === 'nodes' ? 'agent' : 'site'
+  const label = value.scope_type === 'nodes' ? 'resolver' : 'site'
   const toggle = (name: string) => {
     const has = value.scope_values.includes(name)
     onChange({
@@ -102,7 +102,7 @@ export default function ScopePicker({
     <div className="scope-picker">
       <select id={id} value={value.scope_type} onChange={(e) => onChange({ scope_type: e.target.value, scope_values: [] })}>
         <option value="all">Everyone</option>
-        {((nodes?.length ?? 0) > 0 || value.scope_type === 'nodes') && <option value="nodes">Specific agents</option>}
+        {((nodes?.length ?? 0) > 0 || value.scope_type === 'nodes') && <option value="nodes">Specific resolvers</option>}
         {((sites?.length ?? 0) > 0 || value.scope_type === 'sites') && <option value="sites">Sites</option>}
       </select>
       {value.scope_type !== 'all' && (

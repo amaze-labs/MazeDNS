@@ -312,7 +312,7 @@ func (s *Server) mfaEnable(w http.ResponseWriter, r *http.Request) {
 // allowCodeGuess counts one code guess against the account's limit (see
 // mfaCodeLimit), answering 429 when it is used up.
 func (s *Server) allowCodeGuess(w http.ResponseWriter, userID int64) bool {
-	if !s.loginRate.allow("mfa:"+strconv.FormatInt(userID, 10), mfaCodeLimit, mfaCodeWindow) {
+	if !s.mfaRate.allow(strconv.FormatInt(userID, 10), mfaCodeLimit, mfaCodeWindow) {
 		w.Header().Set("Retry-After", strconv.Itoa(int(mfaCodeWindow.Seconds())))
 		writeError(w, http.StatusTooManyRequests, "too many code attempts; try again in a few minutes")
 		return false

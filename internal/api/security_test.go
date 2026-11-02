@@ -21,7 +21,7 @@ func newAuthServer(t *testing.T) (*Server, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	s := &Server{store: st, auth: auth.NewManager(st, nil, time.Hour), authEnabled: true, loginRate: newKeyedLimiter()}
+	s := &Server{store: st, auth: auth.NewManager(st, nil, time.Hour), authEnabled: true, loginRate: newKeyedLimiter(), mfaRate: newKeyedLimiter()}
 	s.setupDone.Store(true)
 	s.applyCPSettings(cpSettingsDefaults())
 	hash, _ := auth.HashPassword("correcthorse7")

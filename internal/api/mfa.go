@@ -27,9 +27,10 @@ const (
 	mfaIssuer       = "MazeDNS"
 	mfaChallengeTTL = 5 * time.Minute
 	mfaMaxAttempts  = 5
-	// Code checks made with a session (turning MFA off, new recovery codes) are
-	// limited per account whatever the login rate limit is set to, since a
-	// session alone must not be enough to brute-force a code.
+	// Code guesses are limited per account, across all its challenges and
+	// session-based checks, whatever the login rate limit is set to: a new
+	// challenge only takes the password again, so per-challenge tries alone
+	// wouldn't bound guessing when that limit is off.
 	mfaCodeLimit  = 10
 	mfaCodeWindow = 5 * time.Minute
 )
@@ -157,7 +158,7 @@ func (s *Server) mfaVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, c := s.challengeUser(w, in.Challenge, "verify")
-	if u == nil {
+	if u == nil || !s.allowCodeGuess(w, u.ID) {
 		return
 	}
 	good, left, err := s.checkCode(u.ID, in.Code, true)
@@ -261,7 +262,7 @@ func (s *Server) mfaEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, c := s.mfaAccount(w, r, in.Challenge, true)
-	if u == nil {
+	if u == nil || (c != nil && !s.allowCodeGuess(w, u.ID)) {
 		return
 	}
 	m, err := s.store.GetMFA(u.ID)
@@ -308,18 +309,24 @@ func (s *Server) mfaEnable(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// allowCodeCheck applies the per-account limit on session-based code checks.
-func (s *Server) allowCodeCheck(w http.ResponseWriter, r *http.Request) bool {
-	p, ok := s.auth.UserFromRequest(r)
-	if !ok {
-		return true // mfaAccount answers 401
-	}
-	if !s.loginRate.allow("mfa:"+strconv.FormatInt(p.ID, 10), mfaCodeLimit, mfaCodeWindow) {
+// allowCodeGuess counts one code guess against the account's limit (see
+// mfaCodeLimit), answering 429 when it is used up.
+func (s *Server) allowCodeGuess(w http.ResponseWriter, userID int64) bool {
+	if !s.loginRate.allow("mfa:"+strconv.FormatInt(userID, 10), mfaCodeLimit, mfaCodeWindow) {
 		w.Header().Set("Retry-After", strconv.Itoa(int(mfaCodeWindow.Seconds())))
 		writeError(w, http.StatusTooManyRequests, "too many code attempts; try again in a few minutes")
 		return false
 	}
 	return true
+}
+
+// allowCodeCheck applies allowCodeGuess to the signed-in user.
+func (s *Server) allowCodeCheck(w http.ResponseWriter, r *http.Request) bool {
+	p, ok := s.auth.UserFromRequest(r)
+	if !ok {
+		return true // mfaAccount answers 401
+	}
+	return s.allowCodeGuess(w, p.ID)
 }
 
 // mfaDisable turns the signed-in user's MFA off. It takes the password and a

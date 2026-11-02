@@ -273,3 +273,33 @@ func auditHas(t *testing.T, st *store.Store, action string) bool {
 	}
 	return false
 }
+
+// Fresh challenges (each with its own tries) don't reset the per-account limit
+// on code guesses, even with the login rate limit turned off.
+func TestMFAGuessLimitAcrossChallenges(t *testing.T) {
+	s, _ := newAuthServer(t)
+	s.applyCPSettings(store.CPSettings{SessionTTLSec: 3600, LoginRateAttempts: 0, LoginRateWindowSec: 60})
+	c := &mfaClient{t: t, s: s}
+	c.login("admin", "correcthorse7")
+	secret, _ := c.enroll()
+
+	guesses := 1 // confirming the setup used one
+	for guesses < mfaCodeLimit {
+		_, out := c.login("admin", "correcthorse7")
+		challenge := out["challenge"].(string)
+		for i := 0; i < 3 && guesses < mfaCodeLimit; i++ {
+			rr, _ := c.do(s.mfaVerify, "/api/auth/mfa/verify", jsonBody(map[string]string{"challenge": challenge, "code": "000000"}))
+			if rr.Code != http.StatusUnauthorized {
+				t.Fatalf("guess %d: %d", guesses+1, rr.Code)
+			}
+			guesses++
+		}
+	}
+	// The limit is spent: a new challenge with the right code is still refused.
+	_, out := c.login("admin", "correcthorse7")
+	code, _ := auth.TOTPCode(secret, time.Now())
+	rr, _ := c.do(s.mfaVerify, "/api/auth/mfa/verify", jsonBody(map[string]string{"challenge": out["challenge"].(string), "code": code}))
+	if rr.Code != http.StatusTooManyRequests || rr.Header().Get("Retry-After") == "" || c.cookie != nil {
+		t.Fatalf("after %d guesses: %d %s", mfaCodeLimit, rr.Code, rr.Body)
+	}
+}

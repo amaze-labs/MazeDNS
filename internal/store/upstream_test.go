@@ -160,6 +160,7 @@ func TestRollupByUpstream(t *testing.T) {
 // upstream rollup's action filter must not send it through the (action, ts)
 // index, which walks every forwarded row in the log on each advance.
 func TestRollupStatementsUseIDRange(t *testing.T) {
+	sqliteOnly(t)
 	s := openUpstreamStore(t)
 	for _, q := range rollupStatements {
 		rows, err := s.read.Query(`EXPLAIN QUERY PLAN `+q, 100, 200)

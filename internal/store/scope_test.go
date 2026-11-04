@@ -150,6 +150,7 @@ func TestRewriteScopeConflict(t *testing.T) {
 // An existing pre-scope database is rebuilt in place: rows preserved, scope
 // defaulted to 'all', and the relaxed unique key allows split-horizon rows.
 func TestRewritesScopeMigration(t *testing.T) {
+	sqliteOnly(t)
 	path := filepath.Join(t.TempDir(), "old.db")
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {

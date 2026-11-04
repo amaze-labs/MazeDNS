@@ -62,9 +62,16 @@ func TestToPostgresSchema(t *testing.T) {
 	if !strings.Contains(pg, "ON CONFLICT(key) DO NOTHING") {
 		t.Error("expected the portable seed upsert in the postgres schema")
 	} // Unix-millisecond columns overflow Postgres' 32-bit INTEGER (~1.8e12 > 2^31).
-	for _, col := range []string{"ts BIGINT NOT NULL", "updated_at BIGINT NOT NULL"} {
+	for _, col := range []string{"ts BIGINT NOT NULL", "updated_at BIGINT NOT NULL", "value BIGINT NOT NULL"} {
 		if !strings.Contains(pg, col) {
 			t.Errorf("expected %q in the postgres schema (unix millis need 64 bits)", col)
+		}
+	}
+	// Columns whose content is not an integer must not be declared INTEGER:
+	// Postgres enforces the type that SQLite merely suggests.
+	for _, col := range []string{"version TEXT NOT NULL DEFAULT ''", "elapsed_ms DOUBLE PRECISION NOT NULL"} {
+		if !strings.Contains(pg, col) {
+			t.Errorf("expected %q in the postgres schema", col)
 		}
 	}
 }

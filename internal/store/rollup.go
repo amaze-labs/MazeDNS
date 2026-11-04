@@ -18,19 +18,19 @@ var rollupStatements = []string{
 	 FROM query_log WHERE id > ? AND id <= ?
 	 GROUP BY ts/60000, node, action
 	 ON CONFLICT(bucket, node, action) DO UPDATE SET
-	   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+	   cnt = query_rollup.cnt + excluded.cnt, lat_sum = query_rollup.lat_sum + excluded.lat_sum`,
 	`INSERT INTO client_rollup(hour, node, client, cnt, blocked)
 	 SELECT ts/3600000, node, client, COUNT(*), COALESCE(SUM(action='blocked'), 0)
 	 FROM query_log WHERE id > ? AND id <= ? AND client <> ''
 	 GROUP BY ts/3600000, node, client
 	 ON CONFLICT(hour, node, client) DO UPDATE SET
-	   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+	   cnt = client_rollup.cnt + excluded.cnt, blocked = client_rollup.blocked + excluded.blocked`,
 	`INSERT INTO category_rollup(hour, node, category, cnt, blocked)
 	 SELECT ts/3600000, node, content_category, COUNT(*), COALESCE(SUM(action='blocked'), 0)
 	 FROM query_log WHERE id > ? AND id <= ? AND content_category <> ''
 	 GROUP BY ts/3600000, node, content_category
 	 ON CONFLICT(hour, node, category) DO UPDATE SET
-	   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+	   cnt = category_rollup.cnt + excluded.cnt, blocked = category_rollup.blocked + excluded.blocked`,
 	// action || '' (not action) keeps the planner off the (action, ts) index:
 	// see above. A HAVING on action is moved back into WHERE, so it doesn't.
 	`INSERT INTO upstream_rollup(bucket, node, forwarder, upstream, cnt, lat_sum)
@@ -38,7 +38,7 @@ var rollupStatements = []string{
 	 FROM query_log WHERE id > ? AND id <= ? AND action || '' = 'forward'
 	 GROUP BY ts/60000, node, forwarder, upstream
 	 ON CONFLICT(bucket, node, forwarder, upstream) DO UPDATE SET
-	   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+	   cnt = upstream_rollup.cnt + excluded.cnt, lat_sum = upstream_rollup.lat_sum + excluded.lat_sum`,
 }
 
 // RollupAdvance folds the next batch of new query_log rows (id in (cursor, upto])

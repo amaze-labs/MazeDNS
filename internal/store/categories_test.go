@@ -234,6 +234,7 @@ func TestOtherQueriesPaging(t *testing.T) {
 // Each page must walk the (content_category, ts) index in order: a sort would
 // re-read every "other" row in the window for every page.
 func TestOtherQueriesUsesIndexOrder(t *testing.T) {
+	sqliteOnly(t)
 	s := openCatStore(t)
 	rows, err := s.read.Query(`EXPLAIN QUERY PLAN `+otherQueriesSQL(true), "other", 0, 1, 1, 10)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 // the config hashes agents compare against don't move: adding the columns
 // must not resync any agent.
 func TestRewriteOwnershipMigrationKeepsConfigHash(t *testing.T) {
+	sqliteOnly(t)
 	path := filepath.Join(t.TempDir(), "old.db")
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {

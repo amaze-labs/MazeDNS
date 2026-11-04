@@ -659,7 +659,7 @@ func (s *Store) RenameNode(id, newName string) error {
 		`INSERT INTO query_rollup(bucket, node, action, cnt, lat_sum)
 		 SELECT bucket, ?, action, cnt, lat_sum FROM query_rollup WHERE node=?
 		 ON CONFLICT(bucket, node, action) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+		   cnt = query_rollup.cnt + excluded.cnt, lat_sum = query_rollup.lat_sum + excluded.lat_sum`,
 		newName, old); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -672,7 +672,7 @@ func (s *Store) RenameNode(id, newName string) error {
 		`INSERT INTO client_rollup(hour, node, client, cnt, blocked)
 		 SELECT hour, ?, client, cnt, blocked FROM client_rollup WHERE node=?
 		 ON CONFLICT(hour, node, client) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+		   cnt = client_rollup.cnt + excluded.cnt, blocked = client_rollup.blocked + excluded.blocked`,
 		newName, old); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -685,7 +685,7 @@ func (s *Store) RenameNode(id, newName string) error {
 		`INSERT INTO category_rollup(hour, node, category, cnt, blocked)
 		 SELECT hour, ?, category, cnt, blocked FROM category_rollup WHERE node=?
 		 ON CONFLICT(hour, node, category) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+		   cnt = category_rollup.cnt + excluded.cnt, blocked = category_rollup.blocked + excluded.blocked`,
 		newName, old); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -698,7 +698,7 @@ func (s *Store) RenameNode(id, newName string) error {
 		`INSERT INTO upstream_rollup(bucket, node, forwarder, upstream, cnt, lat_sum)
 		 SELECT bucket, ?, forwarder, upstream, cnt, lat_sum FROM upstream_rollup WHERE node=?
 		 ON CONFLICT(bucket, node, forwarder, upstream) DO UPDATE SET
-		   cnt = cnt + excluded.cnt, lat_sum = lat_sum + excluded.lat_sum`,
+		   cnt = upstream_rollup.cnt + excluded.cnt, lat_sum = upstream_rollup.lat_sum + excluded.lat_sum`,
 		newName, old); err != nil {
 		_ = tx.Rollback()
 		return err

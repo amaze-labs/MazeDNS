@@ -23,11 +23,11 @@ func (s *Store) RecordLLMUsage(errored bool, promptTokens, completionTokens, lat
 		`INSERT INTO llm_usage(day, calls, errors, prompt_tokens, completion_tokens, latency_ms_total)
 		 VALUES(?,1,?,?,?,?)
 		 ON CONFLICT(day) DO UPDATE SET
-		   calls = calls + 1,
-		   errors = errors + excluded.errors,
-		   prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-		   completion_tokens = completion_tokens + excluded.completion_tokens,
-		   latency_ms_total = latency_ms_total + excluded.latency_ms_total`,
+		   calls = llm_usage.calls + 1,
+		   errors = llm_usage.errors + excluded.errors,
+		   prompt_tokens = llm_usage.prompt_tokens + excluded.prompt_tokens,
+		   completion_tokens = llm_usage.completion_tokens + excluded.completion_tokens,
+		   latency_ms_total = llm_usage.latency_ms_total + excluded.latency_ms_total`,
 		day, errs, promptTokens, completionTokens, latencyMs)
 	return err
 }

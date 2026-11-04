@@ -420,8 +420,11 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("MAZEDNS_DB_DSN"); v != "" {
 		cfg.Database.DSN = v
-		if cfg.Database.Driver == "" {
-			cfg.Database.Driver = "postgres" // a DSN implies an external DB
+		// A DSN in the environment implies an external DB unless the driver is
+		// also set there: the YAML's driver (the shipped config says "sqlite")
+		// must not silently win, or the DSN is ignored and SQLite is opened.
+		if os.Getenv("MAZEDNS_DB_DRIVER") == "" {
+			cfg.Database.Driver = "postgres"
 		}
 	}
 	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {

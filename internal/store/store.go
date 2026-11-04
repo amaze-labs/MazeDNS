@@ -88,19 +88,31 @@ func Open(path string) (*Store, error) {
 		"_pragma=mmap_size(268435456)", // 256 MiB memory-mapped I/O
 		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
 	}, "&")
+	if openOverride != nil {
+		return openOverride(path)
+	}
 	return OpenWith("sqlite", dsn)
+}
+
+// openOverride, when set (only by the pgtest build tag, see pgtest.go), replaces
+// Open so the whole store test suite can run against PostgreSQL.
+var openOverride func(path string) (*Store, error)
+
+// sqlOpen opens a connection pool for the backend: pgx with MazeDNS' type
+// adaptations on Postgres (see openPostgres), the plain driver otherwise.
+func sqlOpen(pg bool, dsn string) (*sql.DB, error) {
+	if pg {
+		return openPostgres(dsn)
+	}
+	return sql.Open("sqlite", dsn)
 }
 
 // OpenWith opens the store on a given backend. driver is "sqlite" (default) or
 // "pgx"/"postgres" (an external PostgreSQL server, dsn is its connection string).
 func OpenWith(driver, dsn string) (*Store, error) {
 	pg := driver == "pgx" || driver == "postgres"
-	name := "sqlite"
-	if pg {
-		name = "pgx"
-	}
 
-	write, err := sql.Open(name, dsn)
+	write, err := sqlOpen(pg, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -108,7 +120,7 @@ func OpenWith(driver, dsn string) (*Store, error) {
 		write.SetMaxOpenConns(1) // SQLite allows a single writer
 	}
 
-	read, err := sql.Open(name, dsn)
+	read, err := sqlOpen(pg, dsn)
 	if err != nil {
 		_ = write.Close()
 		return nil, fmt.Errorf("open db (read pool): %w", err)
@@ -173,7 +185,7 @@ CREATE TABLE IF NOT EXISTS query_log (
 	action TEXT NOT NULL,
 	category TEXT NOT NULL DEFAULT '',
 	rcode TEXT NOT NULL,
-	elapsed_ms INTEGER NOT NULL,
+	elapsed_ms REAL NOT NULL,                  -- milliseconds with sub-ms precision
 	node TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(ts);
@@ -268,7 +280,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS meta (
 	key TEXT PRIMARY KEY,
-	value INTEGER NOT NULL
+	value BIGINT NOT NULL                       -- any int64 (cursors, ids, unix millis): BIGINT on Postgres
 );
 INSERT INTO meta(key, value) VALUES('config_version', 0) ON CONFLICT(key) DO NOTHING;
 INSERT INTO meta(key, value) VALUES('block_paused_until', 0) ON CONFLICT(key) DO NOTHING;
@@ -290,7 +302,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 	key_hash TEXT NOT NULL DEFAULT '',
 	key_prefix TEXT NOT NULL DEFAULT '',
 	address TEXT NOT NULL DEFAULT '',
-	version INTEGER NOT NULL DEFAULT 0,
+	version TEXT NOT NULL DEFAULT '',             -- config hash the node last reported (hex string)
 	last_seen INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL DEFAULT 0,
 	q_total INTEGER NOT NULL DEFAULT 0,
@@ -439,7 +451,48 @@ func (s *Store) widenMillisTimestamps() error {
 	if err := s.widenToBigint("query_log", "ts"); err != nil {
 		return err
 	}
+	// meta holds arbitrary int64s via SetMetaInt, among them the privacy scrub
+	// cursor (unix millis): as INTEGER that write overflowed on Postgres.
+	if err := s.widenToBigint("meta", "value"); err != nil {
+		return err
+	}
 	return s.widenToBigint("classifications", "updated_at")
+}
+
+// fixPostgresColumnTypes corrects columns whose declared type never matched what
+// MazeDNS writes into them. SQLite's dynamic typing hid the mismatch; Postgres
+// enforces it:
+//   - nodes.version holds the config hash a node reports (a hex string): as
+//     INTEGER every enrollment (empty default) and every heartbeat failed with
+//     "invalid input syntax for type integer".
+//   - query_log.elapsed_ms holds sub-millisecond latencies: as INTEGER they were
+//     rounded, flattening the latency charts.
+//
+// Postgres-only and idempotent: a column already of the right type is skipped.
+func (s *Store) fixPostgresColumnTypes() error {
+	if !s.db.pg {
+		return nil
+	}
+	for _, c := range []struct{ table, col, to, using, dflt string }{
+		{"nodes", "version", "TEXT", "version::text", "''"},
+		{"query_log", "elapsed_ms", "DOUBLE PRECISION", "elapsed_ms::double precision", ""},
+	} {
+		var typ string
+		err := s.db.QueryRow(`SELECT data_type FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`, c.table, c.col).Scan(&typ)
+		if err != nil || typ != "integer" {
+			continue // already converted (or the schema above just created it right)
+		}
+		alter := "ALTER TABLE " + c.table + " ALTER COLUMN " + c.col + " DROP DEFAULT, ALTER COLUMN " +
+			c.col + " TYPE " + c.to + " USING " + c.using
+		if c.dflt != "" {
+			alter += ", ALTER COLUMN " + c.col + " SET DEFAULT " + c.dflt
+		}
+		if _, err := s.db.Exec(alter); err != nil {
+			return fmt.Errorf("migrate %s.%s to %s: %w", c.table, c.col, c.to, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) migrate() error {
@@ -526,6 +579,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := s.widenMillisTimestamps(); err != nil {
+		return err
+	}
+	if err := s.fixPostgresColumnTypes(); err != nil {
 		return err
 	}
 	if err := s.moveVerdictContentCategories(); err != nil {

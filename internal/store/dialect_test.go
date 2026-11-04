@@ -61,6 +61,11 @@ func TestToPostgresSchema(t *testing.T) {
 	// The portable seed form must survive in both dialects.
 	if !strings.Contains(pg, "ON CONFLICT(key) DO NOTHING") {
 		t.Error("expected the portable seed upsert in the postgres schema")
+	} // Unix-millisecond columns overflow Postgres' 32-bit INTEGER (~1.8e12 > 2^31).
+	for _, col := range []string{"ts BIGINT NOT NULL", "updated_at BIGINT NOT NULL"} {
+		if !strings.Contains(pg, col) {
+			t.Errorf("expected %q in the postgres schema (unix millis need 64 bits)", col)
+		}
 	}
 }
 

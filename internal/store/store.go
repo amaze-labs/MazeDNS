@@ -166,7 +166,7 @@ CREATE TABLE IF NOT EXISTS rewrites (
 );
 CREATE TABLE IF NOT EXISTS query_log (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	ts INTEGER NOT NULL,
+	ts BIGINT NOT NULL,                         -- unix millis: BIGINT, Postgres INTEGER is 32-bit
 	client TEXT NOT NULL,
 	name TEXT NOT NULL,
 	qtype TEXT NOT NULL,
@@ -355,7 +355,7 @@ CREATE TABLE IF NOT EXISTS classifications (
 	trusted INTEGER NOT NULL DEFAULT 0,
 	threat INTEGER NOT NULL DEFAULT 0,
 	note TEXT NOT NULL DEFAULT '',         -- operator review note (why allowed/blocked)
-	updated_at INTEGER NOT NULL
+	updated_at BIGINT NOT NULL                  -- unix millis: BIGINT, Postgres INTEGER is 32-bit
 );
 CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status);
 CREATE TABLE IF NOT EXISTS llm_usage (
@@ -402,24 +402,44 @@ CREATE TABLE IF NOT EXISTS revoked_nodes (
 );
 `
 
-// widenAPITokenTimes moves api_tokens' timestamps to BIGINT on Postgres, for
-// tables created when they were INTEGER (32-bit there, too small for a
-// user-chosen expiry past 2038). SQLite integers are 64-bit already.
-func (s *Store) widenAPITokenTimes() error {
-	if !s.db.pg {
+// widenToBigint moves the given columns of table to BIGINT on Postgres, for tables
+// created when they were INTEGER: 32-bit there, too small for unix-millisecond
+// timestamps (~1.8e12) or a user-chosen expiry past 2038. SQLite integers are
+// 64-bit already, so this is a Postgres-only, idempotent migration.
+func (s *Store) widenToBigint(table string, cols ...string) error {
+	if !s.db.pg || len(cols) == 0 {
 		return nil
 	}
 	var typ string
 	err := s.db.QueryRow(`SELECT data_type FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = 'api_tokens' AND column_name = 'expires_at'`).Scan(&typ)
+		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`, table, cols[0]).Scan(&typ)
 	if err != nil || typ != "integer" {
 		return nil // already widened (or not there: the schema above just made it)
 	}
-	if _, err := s.db.Exec(`ALTER TABLE api_tokens ALTER COLUMN created_at TYPE BIGINT,
-		ALTER COLUMN last_used_at TYPE BIGINT, ALTER COLUMN expires_at TYPE BIGINT`); err != nil {
-		return fmt.Errorf("migrate api_tokens timestamps: %w", err)
+	alters := make([]string, len(cols))
+	for i, c := range cols {
+		alters[i] = "ALTER COLUMN " + c + " TYPE BIGINT"
+	}
+	if _, err := s.db.Exec("ALTER TABLE " + table + " " + strings.Join(alters, ", ")); err != nil {
+		return fmt.Errorf("migrate %s to BIGINT: %w", table, err)
 	}
 	return nil
+}
+
+// widenAPITokenTimes moves api_tokens' timestamps to BIGINT on Postgres (a
+// user-chosen expiry may lie past 2038).
+func (s *Store) widenAPITokenTimes() error {
+	return s.widenToBigint("api_tokens", "expires_at", "created_at", "last_used_at")
+}
+
+// widenMillisTimestamps moves the unix-millisecond columns to BIGINT on Postgres:
+// with INTEGER every query_log insert and classification write fails with
+// "integer out of range".
+func (s *Store) widenMillisTimestamps() error {
+	if err := s.widenToBigint("query_log", "ts"); err != nil {
+		return err
+	}
+	return s.widenToBigint("classifications", "updated_at")
 }
 
 func (s *Store) migrate() error {
@@ -503,6 +523,9 @@ func (s *Store) migrate() error {
 		}
 	}
 	if err := s.widenAPITokenTimes(); err != nil {
+		return err
+	}
+	if err := s.widenMillisTimestamps(); err != nil {
 		return err
 	}
 	if err := s.moveVerdictContentCategories(); err != nil {

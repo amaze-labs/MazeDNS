@@ -32,6 +32,21 @@ type readiness struct {
 	res  *resolver.Resolver
 	srv  *resolver.Server
 	sync *cluster.SyncHealth // nil in standalone mode
+	// staleAfter marks the control-plane sync stale once the last success (or
+	// the start, if there was none) is older than it; 0 = never. Like the rest of
+	// the control-plane state it is reported, never a reason to fail readiness.
+	staleAfter time.Duration
+	started    time.Time
+}
+
+// syncStaleAfter is how long a resolver may go without a successful config
+// sync before /readyz reports it stale: ten polls, and never under 5 minutes so
+// a control-plane restart or a short outage doesn't show.
+func syncStaleAfter(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		interval = 30 * time.Second // the agent's default
+	}
+	return max(10*interval, 5*time.Minute)
 }
 
 // readyReport is the /readyz body. Times are RFC 3339, omitted when never.
@@ -62,6 +77,7 @@ type syncState struct {
 	LastSyncOK    string `json:"last_sync_ok,omitempty"`
 	LastSyncError string `json:"last_sync_error,omitempty"`
 	Error         string `json:"error,omitempty"`
+	Stale         bool   `json:"stale,omitempty"` // no successful sync in staleAfter
 }
 
 func rfc3339(t time.Time) string {
@@ -125,10 +141,15 @@ func (rd *readiness) check(ctx context.Context) readyReport {
 		rep.Standalone = true
 	} else {
 		s := rd.sync.Status()
+		since := s.LastOK
+		if since.IsZero() {
+			since = rd.started
+		}
 		rep.ControlPlane = &syncState{
 			LastSyncOK:    rfc3339(s.LastOK),
 			LastSyncError: rfc3339(s.LastError),
 			Error:         s.Error,
+			Stale:         rd.staleAfter > 0 && time.Since(since) > rd.staleAfter,
 		}
 	}
 	return rep

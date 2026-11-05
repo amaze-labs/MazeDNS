@@ -226,7 +226,7 @@ func main() {
 	// endpoint is unauthenticated, so exposing it on the network is an explicit
 	// operator choice via MAZEDNS_API_ADDRESS (set to 0.0.0.0 in the compose files,
 	// or to the overlay IP on a bare host).
-	ready := &readiness{res: res, srv: dnsSrv, sync: syncHealth}
+	ready := &readiness{res: res, srv: dnsSrv, sync: syncHealth, staleAfter: syncStaleAfter(cfg.Cluster.Interval.Std()), started: time.Now()}
 	httpSrv := healthServer(net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port)), mx, ready)
 	go func() {
 		slog.Info("MazeDNS resolver HTTP starting (healthz + readyz + metrics)", "addr", httpSrv.Addr)

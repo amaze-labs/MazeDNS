@@ -6,6 +6,7 @@ compose names them `mazedns-agent` and `mazedns-control-plane`; the resolver's
 container keeps its pre-rename name so existing deployments don't change).
 
 - [A resolver doesn't appear on the Resolvers page](#a-resolver-doesnt-appear-on-the-resolvers-page)
+- [A resolver shows offline but still answers DNS](#a-resolver-shows-offline-but-still-answers-dns)
 - [The resolver won't start / can't bind port 53](#the-resolver-wont-start--cant-bind-port-53)
 - [DNS doesn't resolve through the resolver](#dns-doesnt-resolve-through-the-resolver)
 - [The dashboard shows only one client](#the-dashboard-shows-only-one-client)
@@ -41,6 +42,43 @@ Common causes:
 - **Pending approval.** With **require approval** on (Settings → Access → Cluster
   policy), the node is created *pending* — approve it on the Resolvers page before it
   serves.
+
+## A resolver shows offline but still answers DNS
+
+A resolver that can't reach the control plane keeps serving DNS from the last
+config it applied. It shows as **offline** on the Resolvers page, its
+`/readyz` stays 200 (see [below](#dns-seems-broken-during-or-after-a-wan-outage)), and
+it misses every rule, list and local-record change until it syncs again. Its
+logs repeat `cluster sync failed` with the reason:
+
+- `master returned status 401` / `403` → the node key was rejected, or the node
+  is pending approval or revoked: see the section above.
+- A connection or TLS error → see *Can't reach the control plane* above.
+- `master returned status 421: Misdirected Request` → the reverse proxy in front
+  of the control plane refuses the connection the resolver is using, typically
+  after the proxy was redeployed. The resolver retries a 421 on a new
+  connection by itself; if the log keeps showing it, the proxy refuses fresh
+  connections too, so check its routing and TLS options for the control plane's
+  host.
+
+Nothing fails a health check here, by design: failing `/readyz` would take every
+resolver out of service whenever the control plane is down. To find out anyway:
+
+- Asked from the resolver's host, `/readyz` reports `"stale": true` under
+  `control_plane` once the last successful sync is older than ten poll
+  intervals (at least 5 minutes).
+- Alert on the control plane's own metric, which keeps working while a resolver
+  can't reach it:
+
+  ```promql
+  # resolvers not seen in the last 2 minutes
+  mazedns_resolvers{state="offline"} > 0
+  ```
+
+  held `for: 10m`, so a restart doesn't page. The resolver's `mazedns_cluster_last_sync_success_timestamp_seconds`
+  is relayed through the control plane, so it goes missing exactly when the
+  resolver can't reach it. To alert on it, scrape the resolver directly, or alert
+  on `absent()`.
 
 ## The resolver won't start / can't bind port 53
 
@@ -234,7 +272,7 @@ docker exec <resolver-container> /usr/local/bin/dns-resolver -healthcheck
 not in maintenance, 503 otherwise. Asked from the resolver's own host (or inside its
 container), its JSON body also reports when a query was last answered, when
 forwarding last succeeded and failed (with the error), and when the control plane
-was last reached. Any other caller gets the same status code with only the
+was last reached (`stale` once that is too long ago). Any other caller gets the same status code with only the
 verdict, since the errors name your upstreams and control plane and the endpoint
 has no authentication. WAN and control-plane state are informational:
 they never make `/readyz` fail, because a node cut off from both still serves its

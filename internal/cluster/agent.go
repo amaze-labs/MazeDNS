@@ -174,21 +174,99 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 // masterTransport returns an HTTP transport. When masterIP is set, every
 // connection to the master is dialed at that fixed IP regardless of DNS, while
 // TLS (SNI/cert verification) still uses the hostname from the URL — so a worker
-// can reach the master even if it can't resolve the master's name.
+// can reach the master even if it can't resolve the master's name. A 421 from
+// the master (or the proxy in front of it) moves to a new connection pool; see
+// freshOn421.
 func masterTransport(masterIP string) http.RoundTripper {
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	if masterIP == "" {
+	if masterIP != "" {
+		slog.Info("cluster: pinning master IP (DNS bypassed)", "ip", masterIP)
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	fresh := func() *http.Transport {
+		base := http.DefaultTransport.(*http.Transport).Clone()
+		if masterIP != "" {
+			base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if _, port, err := net.SplitHostPort(addr); err == nil {
+					addr = net.JoinHostPort(masterIP, port)
+				}
+				return dialer.DialContext(ctx, network, addr)
+			}
+		}
 		return base
 	}
-	slog.Info("cluster: pinning master IP (DNS bypassed)", "ip", masterIP)
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	base.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if _, port, err := net.SplitHostPort(addr); err == nil {
-			addr = net.JoinHostPort(masterIP, port)
-		}
-		return dialer.DialContext(ctx, network, addr)
+	return &freshOn421{cur: fresh(), fresh: fresh}
+}
+
+// freshOn421 retries a 421 Misdirected Request on a new connection, as the
+// status asks (RFC 9110 §15.5.20); net/http keeps the connection pooled and
+// returns the 421. A reverse proxy answers it on a connection it no longer
+// serves the master's host on (e.g. after a redeploy), and since every request
+// to the master shares one HTTP/2 connection that the live long-poll keeps busy,
+// it is never idle, so neither IdleConnTimeout nor CloseIdleConnections drops
+// it: the resolver would stay cut off until restarted. Instead, a 421 swaps in
+// a fresh transport (requests in flight on the old one finish there) and the
+// request is retried once on it.
+type freshOn421 struct {
+	mu    sync.Mutex
+	cur   *http.Transport
+	fresh func() *http.Transport
+}
+
+func (f *freshOn421) current() *http.Transport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.cur
+}
+
+func (f *freshOn421) RoundTrip(req *http.Request) (*http.Response, error) {
+	t := f.current()
+	resp, err := t.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusMisdirectedRequest {
+		return resp, err
 	}
-	return base
+	f.replace(t)
+	retry, ok := replayable(req)
+	if !ok {
+		return resp, nil // the next request goes out on the new transport
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	resp.Body.Close()
+	slog.Info("cluster: master answered 421 Misdirected Request; retrying on a new connection", "path", req.URL.Path)
+	return f.current().RoundTrip(retry)
+}
+
+// replace swaps in a fresh transport unless a concurrent 421 already did.
+func (f *freshOn421) replace(old *http.Transport) {
+	f.mu.Lock()
+	if f.cur != old {
+		f.mu.Unlock()
+		return
+	}
+	f.cur = f.fresh()
+	f.mu.Unlock()
+	old.CloseIdleConnections()
+}
+
+// CloseIdleConnections lets http.Client.CloseIdleConnections reach the pool.
+func (f *freshOn421) CloseIdleConnections() { f.current().CloseIdleConnections() }
+
+// replayable returns a copy of req that can be sent again: one without a body,
+// or one whose body GetBody can rebuild (set by http.NewRequest for the
+// in-memory readers every master request uses).
+func replayable(req *http.Request) (*http.Request, bool) {
+	r := req.Clone(req.Context())
+	if req.Body == nil || req.Body == http.NoBody {
+		return r, true
+	}
+	if req.GetBody == nil {
+		return nil, false
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return nil, false
+	}
+	r.Body = body
+	return r, true
 }
 
 // Run runs a sync+ship cycle immediately, then every interval until cancelled.

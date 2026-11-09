@@ -303,6 +303,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [hasMetricsToken, setHasMetricsToken] = useState(false)
   const [newScrapeToken, setNewScrapeToken] = useState('')
   const [tokenMsg, setTokenMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [flushing, setFlushing] = useState(false)
+  const [flushMsg, setFlushMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   // Settings change history (admin-only).
   const [audit, setAudit] = useState<AuditEntry[] | null>(null)
@@ -427,6 +429,21 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
       setTestMsg({ ok: false, text: e.message })
     } finally {
       setTesting(false)
+    }
+  }
+
+  // Clearing the cache is an action, not a setting: it applies at once
+  // (no Save) and each resolver picks it up on its next sync.
+  const flushCache = async () => {
+    setFlushing(true)
+    setFlushMsg(null)
+    try {
+      await api.flushCache()
+      setFlushMsg({ ok: true, text: 'Cleared. Every resolver empties its cache on its next sync.' })
+    } catch (e) {
+      setFlushMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setFlushing(false)
     }
   }
 
@@ -1012,6 +1029,21 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             />
           </Field>
         </div>
+        {!readonly && (
+          <div className="check-row cache-flush">
+            <span className="t">
+              <b>Clear the cache</b>
+              <small>
+                Drop every cached answer on all resolvers, e.g. after changing a record upstream. Applies at once,
+                without Save; each resolver clears on its next sync.
+              </small>
+            </span>
+            <button type="button" className="btn sm" disabled={flushing} onClick={flushCache}>
+              {flushing ? 'Clearing…' : 'Clear cache'}
+            </button>
+          </div>
+        )}
+        <Msg m={flushMsg} />
       </Group>
 
       <Group title="Security" desc="Protocol hardening and abuse limits.">

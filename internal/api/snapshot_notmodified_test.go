@@ -29,6 +29,7 @@ type pollOpts struct {
 	pausedUntil  int64
 	maintenance  bool
 	settingsVer  string // "" = an agent that predates replicated settings
+	cacheFlush   string // "" = an agent that predates cache flushes
 	stats        string
 	advertise    string
 }
@@ -55,6 +56,9 @@ func poll(s *Server, o pollOpts) *httptest.ResponseRecorder {
 		req.Header.Set(cluster.HeaderMaintenance, m)
 		if o.settingsVer != "" {
 			req.Header.Set(cluster.HeaderSettingsVersion, o.settingsVer)
+		}
+		if o.cacheFlush != "" {
+			req.Header.Set(cluster.HeaderCacheFlush, o.cacheFlush)
 		}
 	}
 	rr := httptest.NewRecorder()
@@ -490,5 +494,53 @@ func TestSnapshotReplicatesSettings(t *testing.T) {
 	o.settingsVer = ""
 	if rr := poll(s, o); rr.Code != http.StatusNotModified {
 		t.Fatalf("agent without the header: status = %d, want 304", rr.Code)
+	}
+}
+
+// Clearing the cache bumps a generation that reaches every agent: an agent
+// holding the old one gets the full snapshot carrying the new one, and a 304
+// once it reports it. Agents that don't send the header aren't held back.
+func TestSnapshotDeliversCacheFlush(t *testing.T) {
+	s, _, key, node, snap := enrolledAgent(t)
+	o := upToDate(key, node, snap)
+	o.cacheFlush = "0"
+	if rr := poll(s, o); rr.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 before any flush", rr.Code)
+	}
+
+	rr := httptest.NewRecorder()
+	s.flushCache(rr, httptest.NewRequest(http.MethodPost, "/api/cache/flush", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("flush status = %d (%s)", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		CacheFlush int64 `json:"cache_flush"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil || out.CacheFlush == 0 {
+		t.Fatalf("flush response: %s", rr.Body.String())
+	}
+
+	got := decodeSnap(t, poll(s, o))
+	if got.CacheFlush != out.CacheFlush {
+		t.Fatalf("snapshot cache_flush = %d, want %d", got.CacheFlush, out.CacheFlush)
+	}
+	o.cacheFlush = strconv.FormatInt(out.CacheFlush, 10)
+	if rr := poll(s, o); rr.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 once the agent reports the generation", rr.Code)
+	}
+	o.cacheFlush = ""
+	if rr := poll(s, o); rr.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 for an agent that predates cache flushes", rr.Code)
+	}
+
+	// A second request in quick succession is still a new generation.
+	rr = httptest.NewRecorder()
+	s.flushCache(rr, httptest.NewRequest(http.MethodPost, "/api/cache/flush", nil))
+	var out2 struct {
+		CacheFlush int64 `json:"cache_flush"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &out2)
+	if out2.CacheFlush <= out.CacheFlush {
+		t.Fatalf("generation did not advance: %d -> %d", out.CacheFlush, out2.CacheFlush)
 	}
 }

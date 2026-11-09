@@ -247,6 +247,7 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 
 		mux.HandleFunc("GET /api/settings", s.requireRole(roleReadonly, s.getSettings))
 		mux.HandleFunc("PUT /api/settings", s.requireRole(roleAdmin, s.putSettings))
+		mux.HandleFunc("POST /api/cache/flush", s.requireRole(roleAdmin, s.flushCache))
 		// Control-plane runtime settings (SSO, session TTL, cluster policy, general).
 		mux.HandleFunc("GET /api/settings/cp", s.requireSession(roleAdmin, s.getCPSettings))
 		mux.HandleFunc("PUT /api/settings/cp", s.requireSession(roleAdmin, s.putCPSettings))
@@ -869,6 +870,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.TouchNode(node.ID, addr, ver, appVer, st)
 
 	pausedUntil, _ := s.store.GetBlockPausedUntil()
+	cacheFlush, _ := s.store.GetCacheFlush()
 	settings, err := s.replicatedSettings()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -880,7 +882,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	// is the steady state, and it costs a cached-version lookup instead of
 	// loading, hashing and serializing the whole rule set. A key rotated on this
 	// very poll must reach the agent, so it always gets the full snapshot.
-	if newNodeKey == "" && agentHoldsSnapshotState(r, node, ver, pausedUntil, cluster.SettingsVersion(settings)) {
+	if newNodeKey == "" && agentHoldsSnapshotState(r, node, ver, pausedUntil, cacheFlush, cluster.SettingsVersion(settings)) {
 		cur, err := s.store.CachedConfigVersionForNode(node.Name, node.Site)
 		if err == nil && cur == ver {
 			w.WriteHeader(http.StatusNotModified)
@@ -909,7 +911,7 @@ func (s *Server) clusterSnapshot(w http.ResponseWriter, r *http.Request) {
 	// re-enrolling — so it can prove ownership on a future re-enroll. NewNodeKey is
 	// set only when the control plane rotated the key on this poll; the agent
 	// persists it and authenticates with it from the next request.
-	writeJSON(w, http.StatusOK, cluster.Snapshot{NodeID: node.ID, NewNodeKey: newNodeKey, Version: snap.Version, Rules: rules, Rewrites: rewrites, Forwarders: snap.Forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance, Settings: settings})
+	writeJSON(w, http.StatusOK, cluster.Snapshot{NodeID: node.ID, NewNodeKey: newNodeKey, Version: snap.Version, Rules: rules, Rewrites: rewrites, Forwarders: snap.Forwarders, PausedUntil: pausedUntil, Maintenance: node.Maintenance, CacheFlush: cacheFlush, Settings: settings})
 }
 
 // replicatedSettings returns the operational settings pushed to every agent:
@@ -951,10 +953,11 @@ func (s *Server) replicatedSettings() (json.RawMessage, error) {
 // agentHoldsSnapshotState reports whether the polling agent advertised 304
 // support and already has every field of the snapshot except the config
 // itself (compared by version afterwards): its node id, the cluster-wide
-// block-pause deadline, its maintenance flag and the replicated settings.
+// block-pause deadline, its maintenance flag, the cache-flush generation and
+// the replicated settings.
 // Those are not part of the version hash, so a 304 must not be sent while any
 // of them differs — the agent would never learn the change.
-func agentHoldsSnapshotState(r *http.Request, node *store.Node, ver string, pausedUntil int64, settingsVer string) bool {
+func agentHoldsSnapshotState(r *http.Request, node *store.Node, ver string, pausedUntil, cacheFlush int64, settingsVer string) bool {
 	maint := "0"
 	if node.Maintenance {
 		maint = "1"
@@ -964,6 +967,7 @@ func agentHoldsSnapshotState(r *http.Request, node *store.Node, ver string, paus
 		r.Header.Get(cluster.HeaderNodeID) == node.ID &&
 		r.Header.Get(cluster.HeaderPausedUntil) == strconv.FormatInt(pausedUntil, 10) &&
 		r.Header.Get(cluster.HeaderMaintenance) == maint &&
+		(r.Header.Get(cluster.HeaderCacheFlush) == "" || r.Header.Get(cluster.HeaderCacheFlush) == strconv.FormatInt(cacheFlush, 10)) &&
 		(r.Header.Get(cluster.HeaderSettingsVersion) == "" || r.Header.Get(cluster.HeaderSettingsVersion) == settingsVer)
 }
 

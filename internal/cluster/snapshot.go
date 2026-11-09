@@ -22,6 +22,10 @@ type Snapshot struct {
 	Forwarders  []store.ForwardSpec `json:"forwarders,omitempty"`
 	PausedUntil int64               `json:"paused_until"` // cluster-wide block pause deadline (unix)
 	Maintenance bool                `json:"maintenance"`  // this node is drained (answers SERVFAIL)
+	// CacheFlush is the cluster-wide cache-flush generation: when it differs
+	// from the one an agent last saw, the agent empties its response cache.
+	// 0 = never requested (and what a control plane that predates it sends).
+	CacheFlush int64 `json:"cache_flush,omitempty"`
 	// Settings are the cluster-wide resolver settings (upstreams, cache, block
 	// response, …; resolver.Settings JSON without the conditional forwarders,
 	// which stay node-local). They are versioned apart from the rules — see
@@ -60,4 +64,8 @@ const (
 	// that predate replicated settings don't send it and can't apply them, so the
 	// control plane only withholds a 304 over settings when it is present.
 	HeaderSettingsVersion = "X-MazeDNS-Settings-Version"
+	// HeaderCacheFlush is the cache-flush generation the agent has seen. Like
+	// HeaderSettingsVersion, older agents don't send it (they can't flush), so
+	// a 304 is only withheld over it when it is present.
+	HeaderCacheFlush = "X-MazeDNS-Cache-Flush"
 )

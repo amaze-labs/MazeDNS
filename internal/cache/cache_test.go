@@ -201,3 +201,26 @@ func BenchmarkCacheGetParallel(b *testing.B) {
 		}
 	})
 }
+
+func TestCacheClear(t *testing.T) {
+	c := New(100, time.Second, time.Hour)
+	for i := 0; i < 20; i++ {
+		name := "host" + strconv.Itoa(i) + ".example.lan"
+		q := dns.Question{Name: dns.Fqdn(name), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+		c.Set(q, false, makeReply(name, 300))
+	}
+	if n := c.Clear(); n != 20 {
+		t.Fatalf("Clear returned %d, want 20", n)
+	}
+	if c.Len() != 0 {
+		t.Fatalf("Len after Clear = %d", c.Len())
+	}
+	q := dns.Question{Name: dns.Fqdn("host1.example.lan"), Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	if _, ok, _ := c.Get(q, false); ok {
+		t.Fatal("hit after Clear")
+	}
+	c.Set(q, false, makeReply("host1.example.lan", 300))
+	if _, ok, _ := c.Get(q, false); !ok {
+		t.Fatal("cache unusable after Clear")
+	}
+}

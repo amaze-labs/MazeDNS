@@ -42,6 +42,7 @@ func (f *fakeCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r.Header.Get(HeaderNodeID) == f.snap.NodeID &&
 		r.Header.Get(HeaderPausedUntil) == jsonInt(f.snap.PausedUntil) &&
 		r.Header.Get(HeaderMaintenance) == maint &&
+		(r.Header.Get(HeaderCacheFlush) == "" || r.Header.Get(HeaderCacheFlush) == jsonInt(f.snap.CacheFlush)) &&
 		(r.Header.Get(HeaderSettingsVersion) == "" || r.Header.Get(HeaderSettingsVersion) == SettingsVersion(f.snap.Settings)) {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -268,5 +269,39 @@ func TestAgentAppliesCentralSettings(t *testing.T) {
 	restarted := NewAgent("http://unused.example.lan", "", "tok", "", time.Second, st, nil, nil, nil, nil)
 	if restarted.settingsVer != SettingsVersion(cp.snap.Settings) {
 		t.Fatalf("restart lost the settings version: %q", restarted.settingsVer)
+	}
+}
+
+// A cache flush requested on the control plane empties the cache exactly once:
+// the first snapshot after boot only records the generation (a request made
+// before this process started must not fire again), a new generation withholds
+// the 304 and flushes, and the next poll reports it and gets a 304.
+func TestAgentFlushesCacheOnNewGeneration(t *testing.T) {
+	snap := testSnapshot(t)
+	snap.CacheFlush = 100
+	cp := &fakeCP{snap: snap}
+	ag, _, p := newAgentAgainst(t, cp)
+	flushes := 0
+	ag.SetFlushCache(func() int { flushes++; return 3 })
+
+	ag.syncOnce(context.Background())
+	if flushes != 0 {
+		t.Fatalf("first snapshot after boot must not flush: %d", flushes)
+	}
+	ag.syncOnce(context.Background())
+	if got := cp.last().Get(HeaderCacheFlush); got != "100" || flushes != 0 {
+		t.Fatalf("up-to-date poll: header %q, flushes %d", got, flushes)
+	}
+
+	cp.mu.Lock()
+	cp.snap.CacheFlush = 200
+	cp.mu.Unlock()
+	ag.syncOnce(context.Background())
+	if flushes != 1 || p.reloads != 1 {
+		t.Fatalf("new generation must flush once without a reload: flushes %d, reloads %d", flushes, p.reloads)
+	}
+	ag.syncOnce(context.Background())
+	if got := cp.last().Get(HeaderCacheFlush); got != "200" || flushes != 1 {
+		t.Fatalf("agent should report the new generation and get a 304: header %q, flushes %d", got, flushes)
 	}
 }

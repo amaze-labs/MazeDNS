@@ -32,11 +32,11 @@ func (s *Store) RecordReputationUsage(service string, errored, rateLimited bool,
 		`INSERT INTO reputation_usage(day, service, calls, errors, rate_limited, remaining, limit_total)
 		 VALUES(?,?,1,?,?,?,?)
 		 ON CONFLICT(day, service) DO UPDATE SET
-		   calls = calls + 1,
-		   errors = errors + excluded.errors,
-		   rate_limited = rate_limited + excluded.rate_limited,
-		   remaining = CASE WHEN excluded.remaining >= 0 THEN excluded.remaining ELSE remaining END,
-		   limit_total = CASE WHEN excluded.limit_total >= 0 THEN excluded.limit_total ELSE limit_total END`,
+		   calls = reputation_usage.calls + 1,
+		   errors = reputation_usage.errors + excluded.errors,
+		   rate_limited = reputation_usage.rate_limited + excluded.rate_limited,
+		   remaining = CASE WHEN excluded.remaining >= 0 THEN excluded.remaining ELSE reputation_usage.remaining END,
+		   limit_total = CASE WHEN excluded.limit_total >= 0 THEN excluded.limit_total ELSE reputation_usage.limit_total END`,
 		day, service, errs, rl, remaining, limit)
 	return err
 }

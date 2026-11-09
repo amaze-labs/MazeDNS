@@ -88,19 +88,31 @@ func Open(path string) (*Store, error) {
 		"_pragma=mmap_size(268435456)", // 256 MiB memory-mapped I/O
 		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
 	}, "&")
+	if openOverride != nil {
+		return openOverride(path)
+	}
 	return OpenWith("sqlite", dsn)
+}
+
+// openOverride, when set (only by the pgtest build tag, see pgtest.go), replaces
+// Open so the whole store test suite can run against PostgreSQL.
+var openOverride func(path string) (*Store, error)
+
+// sqlOpen opens a connection pool for the backend: pgx with MazeDNS' type
+// adaptations on Postgres (see openPostgres), the plain driver otherwise.
+func sqlOpen(pg bool, dsn string) (*sql.DB, error) {
+	if pg {
+		return openPostgres(dsn)
+	}
+	return sql.Open("sqlite", dsn)
 }
 
 // OpenWith opens the store on a given backend. driver is "sqlite" (default) or
 // "pgx"/"postgres" (an external PostgreSQL server, dsn is its connection string).
 func OpenWith(driver, dsn string) (*Store, error) {
 	pg := driver == "pgx" || driver == "postgres"
-	name := "sqlite"
-	if pg {
-		name = "pgx"
-	}
 
-	write, err := sql.Open(name, dsn)
+	write, err := sqlOpen(pg, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -108,7 +120,7 @@ func OpenWith(driver, dsn string) (*Store, error) {
 		write.SetMaxOpenConns(1) // SQLite allows a single writer
 	}
 
-	read, err := sql.Open(name, dsn)
+	read, err := sqlOpen(pg, dsn)
 	if err != nil {
 		_ = write.Close()
 		return nil, fmt.Errorf("open db (read pool): %w", err)
@@ -166,14 +178,14 @@ CREATE TABLE IF NOT EXISTS rewrites (
 );
 CREATE TABLE IF NOT EXISTS query_log (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	ts INTEGER NOT NULL,
+	ts BIGINT NOT NULL,                         -- unix millis: BIGINT, Postgres INTEGER is 32-bit
 	client TEXT NOT NULL,
 	name TEXT NOT NULL,
 	qtype TEXT NOT NULL,
 	action TEXT NOT NULL,
 	category TEXT NOT NULL DEFAULT '',
 	rcode TEXT NOT NULL,
-	elapsed_ms INTEGER NOT NULL,
+	elapsed_ms REAL NOT NULL,                  -- milliseconds with sub-ms precision
 	node TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(ts);
@@ -268,7 +280,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE TABLE IF NOT EXISTS meta (
 	key TEXT PRIMARY KEY,
-	value INTEGER NOT NULL
+	value BIGINT NOT NULL                       -- any int64 (cursors, ids, unix millis): BIGINT on Postgres
 );
 INSERT INTO meta(key, value) VALUES('config_version', 0) ON CONFLICT(key) DO NOTHING;
 INSERT INTO meta(key, value) VALUES('block_paused_until', 0) ON CONFLICT(key) DO NOTHING;
@@ -290,7 +302,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 	key_hash TEXT NOT NULL DEFAULT '',
 	key_prefix TEXT NOT NULL DEFAULT '',
 	address TEXT NOT NULL DEFAULT '',
-	version INTEGER NOT NULL DEFAULT 0,
+	version TEXT NOT NULL DEFAULT '',             -- config hash the node last reported (hex string)
 	last_seen INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL DEFAULT 0,
 	q_total INTEGER NOT NULL DEFAULT 0,
@@ -355,7 +367,7 @@ CREATE TABLE IF NOT EXISTS classifications (
 	trusted INTEGER NOT NULL DEFAULT 0,
 	threat INTEGER NOT NULL DEFAULT 0,
 	note TEXT NOT NULL DEFAULT '',         -- operator review note (why allowed/blocked)
-	updated_at INTEGER NOT NULL
+	updated_at BIGINT NOT NULL                  -- unix millis: BIGINT, Postgres INTEGER is 32-bit
 );
 CREATE INDEX IF NOT EXISTS idx_classifications_status ON classifications(status);
 CREATE TABLE IF NOT EXISTS llm_usage (
@@ -402,22 +414,83 @@ CREATE TABLE IF NOT EXISTS revoked_nodes (
 );
 `
 
-// widenAPITokenTimes moves api_tokens' timestamps to BIGINT on Postgres, for
-// tables created when they were INTEGER (32-bit there, too small for a
-// user-chosen expiry past 2038). SQLite integers are 64-bit already.
-func (s *Store) widenAPITokenTimes() error {
-	if !s.db.pg {
+// widenToBigint moves the given columns of table to BIGINT on Postgres, for tables
+// created when they were INTEGER: 32-bit there, too small for unix-millisecond
+// timestamps (~1.8e12) or a user-chosen expiry past 2038. SQLite integers are
+// 64-bit already, so this is a Postgres-only, idempotent migration.
+func (s *Store) widenToBigint(table string, cols ...string) error {
+	if !s.db.pg || len(cols) == 0 {
 		return nil
 	}
 	var typ string
 	err := s.db.QueryRow(`SELECT data_type FROM information_schema.columns
-		WHERE table_schema = current_schema() AND table_name = 'api_tokens' AND column_name = 'expires_at'`).Scan(&typ)
+		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`, table, cols[0]).Scan(&typ)
 	if err != nil || typ != "integer" {
 		return nil // already widened (or not there: the schema above just made it)
 	}
-	if _, err := s.db.Exec(`ALTER TABLE api_tokens ALTER COLUMN created_at TYPE BIGINT,
-		ALTER COLUMN last_used_at TYPE BIGINT, ALTER COLUMN expires_at TYPE BIGINT`); err != nil {
-		return fmt.Errorf("migrate api_tokens timestamps: %w", err)
+	alters := make([]string, len(cols))
+	for i, c := range cols {
+		alters[i] = "ALTER COLUMN " + c + " TYPE BIGINT"
+	}
+	if _, err := s.db.Exec("ALTER TABLE " + table + " " + strings.Join(alters, ", ")); err != nil {
+		return fmt.Errorf("migrate %s to BIGINT: %w", table, err)
+	}
+	return nil
+}
+
+// widenAPITokenTimes moves api_tokens' timestamps to BIGINT on Postgres (a
+// user-chosen expiry may lie past 2038).
+func (s *Store) widenAPITokenTimes() error {
+	return s.widenToBigint("api_tokens", "expires_at", "created_at", "last_used_at")
+}
+
+// widenMillisTimestamps moves the unix-millisecond columns to BIGINT on Postgres:
+// with INTEGER every query_log insert and classification write fails with
+// "integer out of range".
+func (s *Store) widenMillisTimestamps() error {
+	if err := s.widenToBigint("query_log", "ts"); err != nil {
+		return err
+	}
+	// meta holds arbitrary int64s via SetMetaInt, among them the privacy scrub
+	// cursor (unix millis): as INTEGER that write overflowed on Postgres.
+	if err := s.widenToBigint("meta", "value"); err != nil {
+		return err
+	}
+	return s.widenToBigint("classifications", "updated_at")
+}
+
+// fixPostgresColumnTypes corrects columns whose declared type never matched what
+// MazeDNS writes into them. SQLite's dynamic typing hid the mismatch; Postgres
+// enforces it:
+//   - nodes.version holds the config hash a node reports (a hex string): as
+//     INTEGER every enrollment (empty default) and every heartbeat failed with
+//     "invalid input syntax for type integer".
+//   - query_log.elapsed_ms holds sub-millisecond latencies: as INTEGER they were
+//     rounded, flattening the latency charts.
+//
+// Postgres-only and idempotent: a column already of the right type is skipped.
+func (s *Store) fixPostgresColumnTypes() error {
+	if !s.db.pg {
+		return nil
+	}
+	for _, c := range []struct{ table, col, to, using, dflt string }{
+		{"nodes", "version", "TEXT", "version::text", "''"},
+		{"query_log", "elapsed_ms", "DOUBLE PRECISION", "elapsed_ms::double precision", ""},
+	} {
+		var typ string
+		err := s.db.QueryRow(`SELECT data_type FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`, c.table, c.col).Scan(&typ)
+		if err != nil || typ != "integer" {
+			continue // already converted (or the schema above just created it right)
+		}
+		alter := "ALTER TABLE " + c.table + " ALTER COLUMN " + c.col + " DROP DEFAULT, ALTER COLUMN " +
+			c.col + " TYPE " + c.to + " USING " + c.using
+		if c.dflt != "" {
+			alter += ", ALTER COLUMN " + c.col + " SET DEFAULT " + c.dflt
+		}
+		if _, err := s.db.Exec(alter); err != nil {
+			return fmt.Errorf("migrate %s.%s to %s: %w", c.table, c.col, c.to, err)
+		}
 	}
 	return nil
 }
@@ -503,6 +576,12 @@ func (s *Store) migrate() error {
 		}
 	}
 	if err := s.widenAPITokenTimes(); err != nil {
+		return err
+	}
+	if err := s.widenMillisTimestamps(); err != nil {
+		return err
+	}
+	if err := s.fixPostgresColumnTypes(); err != nil {
 		return err
 	}
 	if err := s.moveVerdictContentCategories(); err != nil {

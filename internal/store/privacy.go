@@ -135,7 +135,7 @@ func (s *Store) RekeyClientRollup(fromHour, throughHour int64, prefix string, re
 		if _, err := tx.Exec(
 			`INSERT INTO client_rollup(hour, node, client, cnt, blocked) VALUES(?, ?, ?, ?, ?)
 			 ON CONFLICT(hour, node, client) DO UPDATE SET
-			   cnt = cnt + excluded.cnt, blocked = blocked + excluded.blocked`,
+			   cnt = client_rollup.cnt + excluded.cnt, blocked = client_rollup.blocked + excluded.blocked`,
 			r.hour, r.node, r.to, r.cnt, r.blocked); err != nil {
 			_ = tx.Rollback()
 			return err

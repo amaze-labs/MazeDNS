@@ -81,6 +81,26 @@ func TestListenPortEnvOverride(t *testing.T) {
 	}
 }
 
+func TestDBDSNEnvImpliesPostgres(t *testing.T) {
+	// The shipped config pins driver: "sqlite"; MAZEDNS_DB_DSN alone must still
+	// select Postgres (it used to be ignored, silently opening SQLite).
+	p := writeConfig(t, strings.Replace(minimalConfig, `database: { path: "mazedns.db" }`,
+		`database: { driver: "sqlite", path: "mazedns.db" }`, 1))
+	t.Setenv("MAZEDNS_DB_DSN", "postgres://u:p@db:5432/mazedns?sslmode=disable")
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Database.Driver != "postgres" {
+		t.Errorf("driver = %q with MAZEDNS_DB_DSN set, want postgres", cfg.Database.Driver)
+	}
+	// An explicit MAZEDNS_DB_DRIVER still wins.
+	t.Setenv("MAZEDNS_DB_DRIVER", "sqlite")
+	if cfg, _ = Load(p); cfg.Database.Driver != "sqlite" {
+		t.Errorf("driver = %q with MAZEDNS_DB_DRIVER=sqlite, want sqlite", cfg.Database.Driver)
+	}
+}
+
 func TestMasterIPValidation(t *testing.T) {
 	if _, err := Load(writeConfig(t, minimalConfig+"\ncluster: { master_ip: \"not-an-ip\" }\n")); err == nil {
 		t.Error("expected an error for a non-IP cluster.master_ip")

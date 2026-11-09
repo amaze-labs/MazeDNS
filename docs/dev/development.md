@@ -99,6 +99,17 @@ go test ./...                 # unit tests
 go test -race ./internal/cache/ ./internal/resolver/   # race detector on the hot path
 ```
 
+The same suite runs on PostgreSQL with the `pgtest` build tag: every store
+opened by a test lands in its own schema of the database in
+`MAZEDNS_TEST_PG_DSN` (URL form; use a throwaway database, schemas are left
+behind). Run it after touching the schema or any SQL: SQLite's dynamic typing
+accepts values Postgres rejects. Tests that exercise SQLite itself skip.
+
+```bash
+MAZEDNS_TEST_PG_DSN='postgres://user:pass@localhost:5432/mazedns_ci?sslmode=disable' \
+  go test -tags pgtest -p 1 ./...
+```
+
 Resolver hot-path benchmarks and how to read them are documented in
 [latency-audit.md](latency-audit.md):
 

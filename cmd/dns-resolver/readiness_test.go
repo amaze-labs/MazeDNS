@@ -178,3 +178,40 @@ func TestRunHealthcheck(t *testing.T) {
 		t.Fatalf("unreachable: code=%d, want 1", code)
 	}
 }
+
+// A control plane not reached for longer than staleAfter is reported stale, but
+// the node stays ready: it still serves DNS from the config it holds, and a
+// failing probe would take every resolver out of service with the control plane.
+func TestReadyzSyncStale(t *testing.T) {
+	res := resolver.New(resolver.Options{})
+	srv := startDNS(t, res)
+	rd := &readiness{res: res, srv: srv, sync: &cluster.SyncHealth{}, staleAfter: 5 * time.Minute, started: time.Now()}
+
+	if _, rep := getReady(t, rd); rep.ControlPlane == nil || rep.ControlPlane.Stale {
+		t.Fatalf("just started: %+v", rep.ControlPlane)
+	}
+	rd.started = time.Now().Add(-6 * time.Minute)
+	code, rep := getReady(t, rd)
+	if rep.ControlPlane == nil || !rep.ControlPlane.Stale {
+		t.Fatalf("no sync for 6m: %+v", rep.ControlPlane)
+	}
+	if code != http.StatusOK || !rep.Ready {
+		t.Fatalf("stale sync must not fail readiness: code=%d ready=%v", code, rep.Ready)
+	}
+	rd.staleAfter = 0
+	if _, rep = getReady(t, rd); rep.ControlPlane.Stale {
+		t.Fatal("staleAfter 0 must never report stale")
+	}
+}
+
+func TestSyncStaleAfter(t *testing.T) {
+	for _, c := range []struct{ interval, want time.Duration }{
+		{0, 5 * time.Minute},
+		{30 * time.Second, 5 * time.Minute},
+		{time.Minute, 10 * time.Minute},
+	} {
+		if got := syncStaleAfter(c.interval); got != c.want {
+			t.Errorf("syncStaleAfter(%v) = %v, want %v", c.interval, got, c.want)
+		}
+	}
+}

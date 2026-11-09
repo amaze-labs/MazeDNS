@@ -150,7 +150,10 @@ Resolvers older than the control plane ignore replicated settings until upgraded
   itself; the control plane answers no queries, so those never applied. If any
   are left, the section offers to move them to the list (a domain the list
   already forwards keeps its entry) or to remove them.
-- **Cache** — enable/size it and clamp TTLs (`min_ttl`/`max_ttl`).
+- **Cache** — enable/size it and clamp TTLs (`min_ttl`/`max_ttl`). **Clear cache**
+  drops every cached answer on all resolvers (e.g. after changing a record
+  upstream). It applies without **Save**; each resolver clears its cache on its
+  next sync with the control plane.
 - **Rate limit** — per-client queries per minute (`REFUSED` beyond).
 - **DNSSEC** — force the DO bit upstream and surface the AD flag.
 - **Block response** — `nxdomain` (default) or `zeroip` (`0.0.0.0` / `::`).

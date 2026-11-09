@@ -286,6 +286,25 @@ func (s *Store) GetBlockPausedUntil() (int64, error) {
 	return v, err
 }
 
+// GetCacheFlush returns the cluster-wide cache-flush generation (0 = never
+// requested). Agents empty their response cache whenever it changes.
+func (s *Store) GetCacheFlush() (int64, error) { return s.GetMetaInt("cache_flush") }
+
+// BumpCacheFlush records a new cache-flush request and returns its generation:
+// the current time in milliseconds, kept strictly increasing so two clicks in
+// the same millisecond (or a clock step back) still read as a change.
+func (s *Store) BumpCacheFlush() (int64, error) {
+	prev, err := s.GetCacheFlush()
+	if err != nil {
+		return 0, err
+	}
+	gen := time.Now().UnixMilli()
+	if gen <= prev {
+		gen = prev + 1
+	}
+	return gen, s.SetMetaInt("cache_flush", gen)
+}
+
 // SetBlockPausedUntil persists the block-pause deadline (0 = active).
 func (s *Store) SetBlockPausedUntil(ts int64) error {
 	_, err := s.db.Exec(

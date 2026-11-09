@@ -505,6 +505,15 @@ func (r *Resolver) CacheLen() int {
 	return 0
 }
 
+// FlushCache empties the response cache and returns how many entries it held
+// (0 if caching is disabled). Every following query goes upstream once.
+func (r *Resolver) FlushCache() int {
+	if c := r.rt.Load().cache; c != nil {
+		return c.Clear()
+	}
+	return 0
+}
+
 // Handle implements dns.Handler (UDP/TCP/DoT).
 func (r *Resolver) Handle(w dns.ResponseWriter, req *dns.Msg) {
 	start := time.Now()

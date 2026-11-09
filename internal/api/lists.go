@@ -257,3 +257,17 @@ func (s *Server) enableProtection(w http.ResponseWriter, _ *http.Request) {
 	s.res.SetBlockPausedUntil(0)
 	writeJSON(w, http.StatusOK, s.protectionState())
 }
+
+// flushCache asks every resolver to empty its response cache. The request is
+// a generation number replicated in the snapshot: each agent clears its cache
+// on the poll that brings a new one, so it lands within one sync interval.
+func (s *Server) flushCache(w http.ResponseWriter, r *http.Request) {
+	gen, err := s.store.BumpCacheFlush()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = s.store.AppendAudit(store.AuditEntry{User: auditUser(s, r), Action: "cache.flush",
+		Detail: "asked every resolver to clear its DNS cache"})
+	writeJSON(w, http.StatusOK, map[string]any{"cache_flush": gen})
+}

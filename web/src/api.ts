@@ -781,6 +781,8 @@ export const api = {
   deleteRule: (id: number) => fetch(`/api/rules/${id}`, { method: 'DELETE' }).then(ok),
 
   settings: () => fetch('/api/settings').then(j<Settings>),
+  // Ask every resolver to empty its DNS cache (applied on its next sync).
+  flushCache: () => fetch('/api/cache/flush', { method: 'POST' }).then(j<{ cache_flush: number }>),
   saveSettings: (s: Settings) =>
     fetch('/api/settings', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(j<Settings>),
 

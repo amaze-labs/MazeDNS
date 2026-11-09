@@ -216,6 +216,21 @@ func evictLocked(s *shard) {
 	}
 }
 
+// Clear drops every cached entry (fresh and stale) and returns how many were
+// held. Lookups racing it either see the old entry or a miss; nothing blocks
+// for longer than one shard's swap.
+func (c *Cache) Clear() int {
+	n := 0
+	for i := range c.shards {
+		s := &c.shards[i]
+		s.mu.Lock()
+		n += len(s.items)
+		s.items = make(map[string]entry)
+		s.mu.Unlock()
+	}
+	return n
+}
+
 // Len returns the current number of cached entries across all shards.
 func (c *Cache) Len() int {
 	n := 0

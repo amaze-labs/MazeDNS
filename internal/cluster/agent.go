@@ -52,6 +52,7 @@ type Agent struct {
 	setMaintenance func(bool)
 	purgeShipped   func() bool // drop shipped query-log entries (privacy level on; may be nil)
 	applySettings  func()      // re-merge local + central settings after an applied snapshot (may be nil)
+	flushCache     func() int  // empty the response cache, returning how many entries it held (may be nil)
 	client         *http.Client
 	lastShipped    int64
 	reenroll       func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
@@ -76,6 +77,7 @@ type Agent struct {
 	stateApplied bool
 	appliedPause int64
 	appliedMaint bool
+	appliedFlush int64    // the cache-flush generation last seen
 	live         *LiveTap // live query streaming (nil = disabled)
 	// settingsVer is the SettingsVersion of the central settings persisted on
 	// this node (loaded at start, updated on every change).
@@ -116,6 +118,10 @@ func (a *Agent) SetPurgeShipped(fn func() bool) { a.purgeShipped = fn }
 // so the node rebuilds its effective settings (local settings + centrally
 // pushed forwarders, central winning per suffix).
 func (a *Agent) SetApplySettings(fn func()) { a.applySettings = fn }
+
+// SetFlushCache installs the callback that empties this node's response cache
+// when the control plane asks for it (a new cache-flush generation).
+func (a *Agent) SetFlushCache(fn func() int) { a.flushCache = fn }
 
 // SetNodeID gives the agent its currently-persisted node id (may be empty) and a
 // sink to persist one learned later. When empty, the agent adopts the id the
@@ -488,6 +494,15 @@ func (a *Agent) syncOnce(ctx context.Context) {
 	if a.setMaintenance != nil {
 		a.setMaintenance(snap.Maintenance)
 	}
+	// A cache flush asked for since the last poll empties the cache. The first
+	// snapshot after boot only records the generation: a process that just
+	// started holds nothing worth flushing, and a request made long ago must not
+	// fire again on every restart.
+	if a.stateApplied && snap.CacheFlush != a.appliedFlush && a.flushCache != nil {
+		n := a.flushCache()
+		slog.Info("cluster: response cache cleared on request", "entries", n)
+	}
+	a.appliedFlush = snap.CacheFlush
 	a.appliedPause, a.appliedMaint, a.stateApplied = snap.PausedUntil, snap.Maintenance, true
 	// The central resolver settings are versioned apart from the rules: persist
 	// them whenever they changed, and re-apply even if the rules did not.
@@ -563,6 +578,7 @@ func (a *Agent) fetch(ctx context.Context) (*Snapshot, error) {
 		}
 		req.Header.Set(HeaderMaintenance, maint)
 		req.Header.Set(HeaderSettingsVersion, a.settingsVer)
+		req.Header.Set(HeaderCacheFlush, strconv.FormatInt(a.appliedFlush, 10))
 	}
 	if a.advertiseAddr != "" {
 		req.Header.Set("X-MazeDNS-Advertise-Addr", a.advertiseAddr)

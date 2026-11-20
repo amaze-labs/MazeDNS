@@ -146,11 +146,12 @@ const (
 
 // localConfigFingerprint cheaply identifies the state of an agent's
 // replicated tables. Agents only change them through ApplySnapshot, which
-// deletes and re-inserts every row, and AUTOINCREMENT ids are never reused:
-// any apply that leaves rows moves MAX(id), and one that leaves none zeroes
-// the count. The forwarders blob is small and hashed whole. So a snapshot
-// applied by anything else — e.g. an older agent build that does not
-// maintain the persisted version — never matches a stale fingerprint.
+// inserts every added or changed row anew, and AUTOINCREMENT ids are never
+// reused: an apply that adds or changes a row moves MAX(id), and one that only
+// removes rows lowers the count. The forwarders blob is small and hashed
+// whole. So a snapshot applied by anything else — e.g. an older agent build
+// that does not maintain the persisted version — never matches a stale
+// fingerprint.
 func (s *Store) localConfigFingerprint() (string, error) {
 	var fp strings.Builder
 	for _, table := range []string{"rules", "rewrites"} {
@@ -392,31 +393,28 @@ func (s *Store) configVersionsForNodes(nodes []Node) (map[string]string, error) 
 	return out, nil
 }
 
-// ApplySnapshot replaces all rules and rewrites with the given set. Used by
-// worker nodes during replication.
+// ApplySnapshot makes the rules and rewrites tables hold exactly the given
+// set. Used by worker nodes during replication.
+//
+// Rules are applied as a difference: a blocklist runs to hundreds of thousands
+// of rules and a snapshot usually changes a handful, so deleting and
+// re-inserting every row on each change made a config apply cost tens of MB of
+// disk writes on every agent. A rule already held unchanged keeps its row; a
+// changed one is deleted and re-inserted rather than updated, so it gets a new
+// id: localConfigFingerprint counts on any apply that changes the table moving
+// MAX(id) or COUNT(*). Rewrites are few and are still replaced whole.
 func (s *Store) ApplySnapshot(rules []Rule, rewrites []Rewrite) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	exec := func(q string, args ...any) error {
-		_, e := tx.Exec(q, args...)
-		return e
-	}
-	if err := exec(`DELETE FROM rules`); err != nil {
+	if err := applyRules(tx, rules); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
-	for _, r := range rules {
-		cat := r.Category
-		if cat == "" {
-			cat = "custom"
-		}
-		if err := exec(`INSERT INTO rules(action, domain, category, enabled, updated_at) VALUES(?,?,?,?,?)`,
-			r.Action, r.Domain, cat, r.Enabled, r.UpdatedAt); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
+	exec := func(q string, args ...any) error {
+		_, e := tx.Exec(q, args...)
+		return e
 	}
 	if err := exec(`DELETE FROM rewrites`); err != nil {
 		_ = tx.Rollback()
@@ -430,6 +428,81 @@ func (s *Store) ApplySnapshot(rules []Rule, rewrites []Rewrite) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// applyRules turns the rules table into rules within tx, writing only the rows
+// that differ (see ApplySnapshot).
+func applyRules(tx *txh, rules []Rule) error {
+	type key struct{ action, domain string }
+	type held struct {
+		id       int64
+		category string
+		enabled  bool
+	}
+	rows, err := tx.Query(`SELECT id, action, domain, category, enabled FROM rules`)
+	if err != nil {
+		return err
+	}
+	have := map[key]held{}
+	for rows.Next() {
+		var k key
+		var h held
+		if err := rows.Scan(&h.id, &k.action, &k.domain, &h.category, &h.enabled); err != nil {
+			rows.Close()
+			return err
+		}
+		have[k] = h
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	var drop []int64
+	var add []Rule
+	for _, r := range rules {
+		if r.Category == "" {
+			r.Category = "custom"
+		}
+		k := key{r.Action, r.Domain}
+		if h, ok := have[k]; ok {
+			delete(have, k)
+			if h.category == r.Category && h.enabled == r.Enabled {
+				continue // held unchanged: no write
+			}
+			drop = append(drop, h.id)
+		}
+		add = append(add, r)
+	}
+	for _, h := range have { // no longer in the snapshot
+		drop = append(drop, h.id)
+	}
+
+	for len(drop) > 0 {
+		chunk := drop[:min(len(drop), 500)]
+		drop = drop[len(chunk):]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		if _, err := tx.Exec(`DELETE FROM rules WHERE id IN (?`+strings.Repeat(",?", len(chunk)-1)+`)`, args...); err != nil {
+			return err
+		}
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`INSERT INTO rules(action, domain, category, enabled, updated_at) VALUES(?,?,?,?,?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, r := range add {
+		if _, err := stmt.Exec(r.Action, r.Domain, r.Category, r.Enabled, r.UpdatedAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // NodeStats is a worker's query counters, reported to the master on each poll.

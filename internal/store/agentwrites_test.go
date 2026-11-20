@@ -76,3 +76,110 @@ func TestAgentStoreDropsQueryLogIndexes(t *testing.T) {
 		t.Fatalf("reopened as control plane: query_log indexes = %v, want 4", got)
 	}
 }
+
+// ApplySnapshot writes only what changed: rules it already holds keep their
+// rows (and ids), a changed rule is replaced, a dropped one removed, a new one
+// added.
+func TestApplySnapshotWritesOnlyTheDifference(t *testing.T) {
+	s := openTestStore(t)
+	before := []Rule{
+		{Action: "deny", Domain: "keep.example", Category: "ads", Enabled: true},
+		{Action: "deny", Domain: "recat.example", Category: "ads", Enabled: true},
+		{Action: "deny", Domain: "toggle.example", Category: "ads", Enabled: true},
+		{Action: "deny", Domain: "drop.example", Category: "ads", Enabled: true},
+		{Action: "allow", Domain: "keep.example", Category: "custom", Enabled: true},
+	}
+	if err := s.ApplySnapshot(before, nil); err != nil {
+		t.Fatal(err)
+	}
+	ids := ruleIDs(t, s)
+	if _, err := s.RecordLocalConfigVersion(); err != nil {
+		t.Fatal(err)
+	}
+
+	after := []Rule{
+		{Action: "deny", Domain: "keep.example", Category: "ads", Enabled: true},
+		{Action: "deny", Domain: "recat.example", Category: "malware", Enabled: true},
+		{Action: "deny", Domain: "toggle.example", Category: "ads", Enabled: false},
+		{Action: "allow", Domain: "keep.example", Category: "custom", Enabled: true},
+		{Action: "deny", Domain: "new.example", Category: "", Enabled: true}, // "" is stored as custom
+	}
+	if err := s.ApplySnapshot(after, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := ruleIDs(t, s)
+	for _, k := range []string{"deny keep.example", "allow keep.example"} {
+		if got[k] != ids[k] {
+			t.Errorf("%s: id %d -> %d, an unchanged rule must keep its row", k, ids[k], got[k])
+		}
+	}
+	for _, k := range []string{"deny recat.example", "deny toggle.example"} {
+		if got[k] == 0 || got[k] == ids[k] {
+			t.Errorf("%s: id %d -> %d, a changed rule must be replaced", k, ids[k], got[k])
+		}
+	}
+	if _, ok := got["deny drop.example"]; ok {
+		t.Error("a rule missing from the snapshot must be removed")
+	}
+	if len(got) != len(after) {
+		t.Fatalf("rules after apply = %v, want %d", got, len(after))
+	}
+
+	rules, err := s.ListRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"deny keep.example": "ads true", "deny recat.example": "malware true", "deny toggle.example": "ads false",
+		"allow keep.example": "custom true", "deny new.example": "custom true",
+	}
+	for _, r := range rules {
+		k := r.Action + " " + r.Domain
+		if w := want[k]; w != r.Category+" "+boolStr(r.Enabled) {
+			t.Errorf("%s = %s %v, want %s", k, r.Category, r.Enabled, w)
+		}
+	}
+	// The fingerprint still sees the apply (the persisted version is not
+	// reused for tables an apply changed).
+	if got, want := mustLocalVersion(t, s), mustConfigVersion(t, s); got != want {
+		t.Errorf("LocalConfigVersion = %q, ConfigVersion = %q", got, want)
+	}
+}
+
+func mustLocalVersion(t *testing.T, s *Store) string {
+	t.Helper()
+	v, err := s.LocalConfigVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func mustConfigVersion(t *testing.T, s *Store) string {
+	t.Helper()
+	v, err := s.ConfigVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func ruleIDs(t *testing.T, s *Store) map[string]int64 {
+	t.Helper()
+	rules, err := s.ListRules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := map[string]int64{}
+	for _, r := range rules {
+		m[r.Action+" "+r.Domain] = r.ID
+	}
+	return m
+}
+
+func boolStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}

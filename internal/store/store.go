@@ -44,6 +44,11 @@ type Store struct {
 	// noQueryLogIndexes leaves query_log without its secondary indexes (see
 	// WithoutQueryLogIndexes).
 	noQueryLogIndexes bool
+
+	// Node heartbeats held in memory between writes (see TouchNode).
+	hbMu       sync.Mutex
+	heartbeats map[string]*heartbeat
+	now        func() time.Time // clock (tests replace it)
 }
 
 // Option adjusts how Open / OpenWith set up the store.
@@ -149,7 +154,7 @@ func OpenWith(driver, dsn string, opts ...Option) (*Store, error) {
 	}
 	read.SetMaxOpenConns(n) // WAL / Postgres allow concurrent readers
 
-	s := &Store{}
+	s := &Store{heartbeats: map[string]*heartbeat{}, now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
@@ -163,8 +168,10 @@ func OpenWith(driver, dsn string, opts ...Option) (*Store, error) {
 	return s, nil
 }
 
-// Close closes both connection pools.
+// Close writes the node heartbeats held in memory and closes both connection
+// pools.
 func (s *Store) Close() error {
+	s.flushHeartbeats()
 	_ = s.read.Close()
 	return s.db.Close()
 }

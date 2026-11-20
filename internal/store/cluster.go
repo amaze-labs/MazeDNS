@@ -842,19 +842,90 @@ func (s *Store) nodeBy(where string, args ...any) (*Node, error) {
 	}
 	n.Maintenance = maintenance != 0
 	n.Approved = approved != 0
+	s.overlayHeartbeat(n)
 	return n, nil
 }
 
+// heartbeatFlush is how long a node's routine heartbeat (last seen and
+// counters, reported on every sync) may stay in memory before it is written.
+// Each write is a database page, twice with the WAL checkpoint, per node per
+// sync: most of an idle control plane's disk writes.
+const heartbeatFlush = 5 * time.Minute
+
+// heartbeat is the latest a node reported, and when it was last written.
+type heartbeat struct {
+	address, version, appVersion string
+	lastSeen                     int64
+	stats                        NodeStats
+	written                      time.Time
+	dirty                        bool // holds values the database lacks
+}
+
 // TouchNode refreshes a node's last-seen address, config version, app (build)
-// version, and stats.
+// version, and stats. The new values are visible to NodeBy*/ListNodes at
+// once but written to the database only when the node's address or versions
+// change, on the first heartbeat after start, or heartbeatFlush after the
+// last write (and on Close): a restart of the control plane loses at most
+// that much of last-seen and counters, which the next sync replaces anyway.
 func (s *Store) TouchNode(id, address, version, appVersion string, st NodeStats) error {
+	now := s.now()
+	s.hbMu.Lock()
+	defer s.hbMu.Unlock()
+	h := s.heartbeats[id]
+	routine := h != nil && h.address == address && h.version == version && h.appVersion == appVersion &&
+		now.Sub(h.written) < heartbeatFlush
+	if h == nil {
+		h = &heartbeat{}
+		s.heartbeats[id] = h
+	}
+	h.address, h.version, h.appVersion, h.lastSeen, h.stats = address, version, appVersion, now.Unix(), st
+	if routine {
+		h.dirty = true
+		return nil
+	}
+	if err := s.writeHeartbeat(id, h); err != nil {
+		h.dirty = true
+		return err
+	}
+	h.written, h.dirty = now, false
+	return nil
+}
+
+func (s *Store) writeHeartbeat(id string, h *heartbeat) error {
 	_, err := s.db.Exec(
 		`UPDATE nodes SET address=?, version=?, app_version=?, last_seen=?,
 		   q_total=?, q_blocked=?, q_cached=?, q_forwarded=?, q_rewritten=?, q_errors=?
 		 WHERE id=?`,
-		address, version, appVersion, time.Now().Unix(),
-		st.Total, st.Blocked, st.Cached, st.Forwarded, st.Rewritten, st.Errors, id)
+		h.address, h.version, h.appVersion, h.lastSeen,
+		h.stats.Total, h.stats.Blocked, h.stats.Cached, h.stats.Forwarded, h.stats.Rewritten, h.stats.Errors, id)
 	return err
+}
+
+// flushHeartbeats writes every heartbeat held in memory (on Close).
+func (s *Store) flushHeartbeats() {
+	s.hbMu.Lock()
+	defer s.hbMu.Unlock()
+	for id, h := range s.heartbeats {
+		if h.dirty && s.writeHeartbeat(id, h) == nil {
+			h.dirty = false
+		}
+	}
+}
+
+// overlayHeartbeat gives n the heartbeat held in memory, newer than the row.
+func (s *Store) overlayHeartbeat(n *Node) {
+	s.hbMu.Lock()
+	defer s.hbMu.Unlock()
+	if h := s.heartbeats[n.ID]; h != nil {
+		n.Address, n.Version, n.AppVersion, n.LastSeen, n.NodeStats = h.address, h.version, h.appVersion, h.lastSeen, h.stats
+	}
+}
+
+// forgetHeartbeat drops a node's held heartbeat (the node was deleted).
+func (s *Store) forgetHeartbeat(id string) {
+	s.hbMu.Lock()
+	defer s.hbMu.Unlock()
+	delete(s.heartbeats, id)
 }
 
 // SetNodeInsights stores a node's latest reported insights (JSON).
@@ -905,6 +976,7 @@ func (s *Store) ListNodes() ([]Node, error) {
 		}
 		n.Maintenance = maintenance != 0
 		n.Approved = approved != 0
+		s.overlayHeartbeat(&n)
 		out = append(out, n)
 	}
 	return out, rows.Err()
@@ -945,7 +1017,11 @@ func (s *Store) DeleteNode(id string, revoke bool, revokedBy string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.forgetHeartbeat(id)
+	return nil
 }
 
 // IsNodeRevoked reports whether the given node id has a revocation tombstone.

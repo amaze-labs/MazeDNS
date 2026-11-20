@@ -95,6 +95,19 @@ published as `mazedns-agent`, its pre-rename name).
   DoT/DoH), replicates its effective filtering config from the control plane, and
   ships its query log + counters back for the dashboard. Agents keep resolving
   from their local copy even if the control plane is unreachable.
+- **An agent's query log is an outbox.** Entries wait in memory
+  (`store.QueryLogBuffer`) and go to the control plane every 2 minutes
+  (sooner once a full batch is buffered): fewer, larger batches cost the
+  control plane's indexes far fewer page writes than one per sync. The
+  agent's database only gets what memory can't hold (control plane
+  unreachable, or shutdown), with no secondary indexes, and shipped rows are
+  deleted. Steady state writes no query log on the agent; a hard crash loses
+  up to one ship interval of entries, and the dashboard trails by as much
+  (the Live view streams separately). Config applies write only the rules
+  that changed, and the control plane writes a node's routine heartbeat
+  every 5 minutes, not every sync. `dev/iobench/run.sh` measures the bytes
+  each process writes, `TestWriteCostReport` the pages each recurring
+  operation writes.
 
 > **Naming.** Agents were renamed **resolvers** (issue #80); "upstream" is the
 > word for the servers they forward to. The binary is `cmd/dns-resolver` and the

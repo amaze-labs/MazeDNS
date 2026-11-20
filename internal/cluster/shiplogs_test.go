@@ -154,3 +154,40 @@ func TestShipLogsAfterRestartShipsSpilledEntries(t *testing.T) {
 		t.Fatalf("control plane received %d entries, want 3 + 4 spilled", got)
 	}
 }
+
+// Query logs go out every logShipInterval, not every sync cycle: fewer,
+// larger batches cost the control plane far fewer index page writes. A
+// buffer holding a full batch goes out at once, so a busy node never fills
+// its buffer waiting.
+func TestQueryLogsShipEveryInterval(t *testing.T) {
+	cp := &logCP{}
+	ag, st, _ := newAgentAgainst(t, cp)
+	buf := store.NewQueryLogBuffer(st, 100000)
+	t.Cleanup(buf.Close)
+	ag.SetQueryLog(buf)
+	now := time.Unix(1_700_000_000, 0)
+	ag.now = func() time.Time { return now }
+
+	if !ag.logsDue() {
+		t.Fatal("the first cycle must ship")
+	}
+	now = now.Add(30 * time.Second)
+	if ag.logsDue() {
+		t.Fatal("30s later: not due yet")
+	}
+	for _, e := range logEntries(shipBatch) {
+		buf.Write(e)
+	}
+	if !ag.logsDue() {
+		t.Fatal("a full batch buffered must ship at once")
+	}
+	ag.shipLogs(context.Background())
+	now = now.Add(logShipInterval - time.Second)
+	if ag.logsDue() {
+		t.Fatal("before the interval: not due")
+	}
+	now = now.Add(time.Second)
+	if !ag.logsDue() {
+		t.Fatal("after the interval: due")
+	}
+}

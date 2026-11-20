@@ -40,7 +40,27 @@ type Store struct {
 	// rows already folded (RelabelContent), so a row is never counted under
 	// one category and labelled with another.
 	rollupMu sync.Mutex
+
+	// noQueryLogIndexes leaves query_log without its secondary indexes (see
+	// WithoutQueryLogIndexes).
+	noQueryLogIndexes bool
+
+	// Node heartbeats held in memory between writes (see TouchNode).
+	hbMu       sync.Mutex
+	heartbeats map[string]*heartbeat
+	now        func() time.Time // clock (tests replace it)
 }
+
+// Option adjusts how Open / OpenWith set up the store.
+type Option func(*Store)
+
+// WithoutQueryLogIndexes is for a resolver agent, whose query_log is only an
+// outbox: rows wait there to be shipped to the control plane, read by id and
+// deleted once shipped. The secondary indexes serve the dashboard's filters,
+// which run on the control plane only, and each one costs a write per logged
+// query, so the agent drops them (and an existing database loses them on its
+// next open).
+func WithoutQueryLogIndexes() Option { return func(s *Store) { s.noQueryLogIndexes = true } }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.
 type Rule struct {
@@ -72,9 +92,9 @@ type Rewrite struct {
 	ExternalID  string   `json:"external_id,omitempty"`
 }
 
-// Open opens (creating if needed) the SQLite database at path and runs migrations.
-// Open opens the embedded SQLite database at path (the default backend).
-func Open(path string) (*Store, error) {
+// Open opens (creating if needed) the embedded SQLite database at path (the
+// default backend) and runs migrations.
+func Open(path string, opts ...Option) (*Store, error) {
 	// PRAGMAs are set in the DSN so they apply to *every* connection (including each
 	// connection in the read pool). WAL + NORMAL sync are the safe fast pairing; the
 	// bigger page cache + memory-mapped reads + in-memory temp B-trees cut the I/O
@@ -89,14 +109,14 @@ func Open(path string) (*Store, error) {
 		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
 	}, "&")
 	if openOverride != nil {
-		return openOverride(path)
+		return openOverride(path, opts...)
 	}
-	return OpenWith("sqlite", dsn)
+	return OpenWith("sqlite", dsn, opts...)
 }
 
 // openOverride, when set (only by the pgtest build tag, see pgtest.go), replaces
 // Open so the whole store test suite can run against PostgreSQL.
-var openOverride func(path string) (*Store, error)
+var openOverride func(path string, opts ...Option) (*Store, error)
 
 // sqlOpen opens a connection pool for the backend: pgx with MazeDNS' type
 // adaptations on Postgres (see openPostgres), the plain driver otherwise.
@@ -109,7 +129,7 @@ func sqlOpen(pg bool, dsn string) (*sql.DB, error) {
 
 // OpenWith opens the store on a given backend. driver is "sqlite" (default) or
 // "pgx"/"postgres" (an external PostgreSQL server, dsn is its connection string).
-func OpenWith(driver, dsn string) (*Store, error) {
+func OpenWith(driver, dsn string, opts ...Option) (*Store, error) {
 	pg := driver == "pgx" || driver == "postgres"
 
 	write, err := sqlOpen(pg, dsn)
@@ -134,7 +154,10 @@ func OpenWith(driver, dsn string) (*Store, error) {
 	}
 	read.SetMaxOpenConns(n) // WAL / Postgres allow concurrent readers
 
-	s := &Store{}
+	s := &Store{heartbeats: map[string]*heartbeat{}, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
 	s.db = &dbh{DB: write, pg: pg, gen: &s.configGen}
 	s.read = &dbh{DB: read, pg: pg, gen: &s.configGen}
 	if err := s.migrate(); err != nil {
@@ -145,8 +168,10 @@ func OpenWith(driver, dsn string) (*Store, error) {
 	return s, nil
 }
 
-// Close closes both connection pools.
+// Close writes the node heartbeats held in memory and closes both connection
+// pools.
 func (s *Store) Close() error {
+	s.flushHeartbeats()
 	_ = s.read.Close()
 	return s.db.Close()
 }
@@ -188,13 +213,8 @@ CREATE TABLE IF NOT EXISTS query_log (
 	elapsed_ms REAL NOT NULL,                  -- milliseconds with sub-ms precision
 	node TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(ts);
--- Composite indexes for the windowed dashboard aggregations so they seek instead
--- of scanning the whole (cluster-wide, up to 90-day) log: (action,ts) covers the
--- blocked-only queries (blocked-by-category, top-blocked), (client,ts) covers the
--- per-client breakdown (Clients tab modal).
-CREATE INDEX IF NOT EXISTS idx_query_log_action_ts ON query_log(action, ts);
-CREATE INDEX IF NOT EXISTS idx_query_log_client_ts ON query_log(client, ts);
+-- query_log's secondary indexes are created (or, on an agent, dropped) by
+-- migrate: see queryLogIndexes.
 -- Materialized rollups so dashboard windows read tiny pre-aggregated tables
 -- instead of scanning the raw query_log. Maintained incrementally from a cursor.
 -- query_rollup: per-minute, per-node, per-action counts + latency sum (charts,
@@ -414,6 +434,21 @@ CREATE TABLE IF NOT EXISTS revoked_nodes (
 );
 `
 
+// queryLogIndexes are query_log's secondary indexes, for the dashboard's
+// windowed reads on the control plane, so they seek instead of scanning the
+// whole (cluster-wide, up to 90-day) log. An agent never reads its log by
+// anything but id and goes without them (WithoutQueryLogIndexes).
+var queryLogIndexes = []struct{ name, cols string }{
+	// Pruning and every time window.
+	{"idx_query_log_ts", "ts"},
+	// The blocked-only queries (blocked-by-category, top-blocked).
+	{"idx_query_log_action_ts", "action, ts"},
+	// The per-client breakdown (Clients tab modal).
+	{"idx_query_log_client_ts", "client, ts"},
+	// The Queries page filters by category, newest first.
+	{"idx_query_log_ccat_ts", "content_category, ts"},
+}
+
 // widenToBigint moves the given columns of table to BIGINT on Postgres, for tables
 // created when they were INTEGER: 32-bit there, too small for unix-millisecond
 // timestamps (~1.8e12) or a user-chosen expiry past 2038. SQLite integers are
@@ -589,13 +624,16 @@ func (s *Store) migrate() error {
 	}
 	// Indexes on columns added above (they can't be in the schema: on an older
 	// database the column doesn't exist yet when the schema runs).
-	for _, idx := range []string{
-		// The Queries page filters by category, newest first.
-		`CREATE INDEX IF NOT EXISTS idx_query_log_ccat_ts ON query_log(content_category, ts)`,
-		`CREATE INDEX IF NOT EXISTS idx_classifications_content_checked ON classifications(content_checked)`,
-	} {
-		if _, err := s.db.Exec(idx); err != nil {
-			return fmt.Errorf("migrate index: %w", err)
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_classifications_content_checked ON classifications(content_checked)`); err != nil {
+		return fmt.Errorf("migrate index: %w", err)
+	}
+	for _, idx := range queryLogIndexes {
+		stmt := `CREATE INDEX IF NOT EXISTS ` + idx.name + ` ON query_log(` + idx.cols + `)`
+		if s.noQueryLogIndexes {
+			stmt = `DROP INDEX IF EXISTS ` + idx.name
+		}
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate index %s: %w", idx.name, err)
 		}
 	}
 	if err := s.backfillNodeIDs(); err != nil {

@@ -28,7 +28,14 @@ const (
 	// the config sync. At the default 30s interval that drains ~3300 queries/s;
 	// an agent sustaining more still falls behind and would need its own ticker.
 	shipMaxBatches = 20
-	procLogBatch   = 1000 // max process-log lines shipped to the master per cycle
+	// logShipInterval is how often query logs go to the control plane (or
+	// every sync, if that is slower). Each ingested batch rewrites one index
+	// page per active client, category and action on the control plane
+	// whatever its size, so fewer, larger batches cost it several times fewer
+	// disk writes than one per 30s sync. The Live view is unaffected (it
+	// streams on its own); the dashboard trails by up to this much.
+	logShipInterval = 2 * time.Minute
+	procLogBatch    = 1000 // max process-log lines shipped to the master per cycle
 	// procLogByteBudget bounds one proc-log batch's payload so it stays well
 	// under the master's 1MB request-body cap — a rejected batch would re-ship
 	// identically every cycle and wedge shipping for good.
@@ -50,15 +57,22 @@ type Agent struct {
 	stats          func() store.NodeStats
 	setPause       func(int64)
 	setMaintenance func(bool)
-	purgeShipped   func() bool // drop shipped query-log entries (privacy level on; may be nil)
-	applySettings  func()      // re-merge local + central settings after an applied snapshot (may be nil)
-	flushCache     func() int  // empty the response cache, returning how many entries it held (may be nil)
+	applySettings  func()     // re-merge local + central settings after an applied snapshot (may be nil)
+	flushCache     func() int // empty the response cache, returning how many entries it held (may be nil)
 	client         *http.Client
-	lastShipped    int64
-	reenroll       func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
-	nodeID         string                                    // persisted immutable node id ('' until learned)
-	saveNodeID     func(string)                              // persist a newly-learned node id (nil = disabled)
-	saveNodeKey    func(string)                              // persist a control-plane-rotated node key (nil = disabled)
+	// Query-log shipping: entries come from the resolver's in-memory buffer
+	// (nil = none) and from the database, where the buffer spills what it
+	// can't hold. lastShipped is the database cursor; staleRowsPurged records
+	// that rows already shipped (kept by an older build) were deleted.
+	qlog            *store.QueryLogBuffer
+	lastShipped     int64
+	staleRowsPurged bool
+	lastLogShip     time.Time                                 // when query logs last went out (see logsDue)
+	now             func() time.Time                          // clock (tests replace it)
+	reenroll        func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
+	nodeID          string                                    // persisted immutable node id ('' until learned)
+	saveNodeID      func(string)                              // persist a newly-learned node id (nil = disabled)
+	saveNodeKey     func(string)                              // persist a control-plane-rotated node key (nil = disabled)
 	// Process-log shipping (nil = disabled): recent slog lines from procLogs are
 	// forwarded to the master each cycle so the dashboard can show agent logs.
 	// The cursor is in-memory only — the ring is per-boot, and bootID lets the
@@ -108,11 +122,9 @@ func (a *Agent) SetProcessLogs(buf *logbuf.Buffer) { a.procLogs = buf }
 // rotation and self-healing after a control-plane DB reset.
 func (a *Agent) SetReenroll(fn func(ctx context.Context) (string, error)) { a.reenroll = fn }
 
-// SetPurgeShipped installs a check, made after each shipped batch, of whether
-// the agent should drop the entries it just shipped instead of keeping its
-// local buffer (the privacy level is on: the control plane holds what may be
-// kept).
-func (a *Agent) SetPurgeShipped(fn func() bool) { a.purgeShipped = fn }
+// SetQueryLog sets the resolver's query-log buffer, whose entries each cycle
+// ships to the control plane straight from memory.
+func (a *Agent) SetQueryLog(buf *store.QueryLogBuffer) { a.qlog = buf }
 
 // SetApplySettings installs a callback invoked after every applied snapshot,
 // so the node rebuilds its effective settings (local settings + centrally
@@ -149,9 +161,11 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 		interval = 30 * time.Second
 	}
 	// Resume shipping from where we left off; on first run skip the existing
-	// backlog so we only forward entries logged from now on.
-	last, _ := st.GetMetaInt("shipped_log_id")
-	if last == 0 {
+	// backlog so we only forward entries logged from now on. A cursor still at
+	// 0 is not a first run: a node that ships from memory moves it only when
+	// it ships rows the buffer spilled, and those must not be skipped.
+	last, set, _ := st.LookupMetaInt("shipped_log_id")
+	if !set {
 		if max, err := st.MaxQueryLogID(); err == nil {
 			last = max
 			_ = st.SetMetaInt("shipped_log_id", last)
@@ -161,6 +175,7 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 	_, _ = rand.Read(nonce)
 	settings, _ := st.ClusterSettings()
 	return &Agent{
+		now:            time.Now,
 		masterURL:      strings.TrimRight(masterURL, "/"),
 		nodeKey:        nodeKey,
 		advertiseAddr:  strings.TrimSpace(advertiseAddr),
@@ -302,8 +317,22 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) cycle(ctx context.Context) {
 	a.syncOnce(ctx)
-	a.shipLogs(ctx)
+	if a.logsDue() {
+		a.shipLogs(ctx)
+	}
 	a.shipProcLogs(ctx)
+}
+
+// logsDue reports whether this cycle ships query logs: every
+// logShipInterval, or at once when the buffer holds a full batch (a busy
+// node must not fill its buffer and spill to disk while it waits).
+func (a *Agent) logsDue() bool {
+	now := a.now()
+	if now.Sub(a.lastLogShip) < logShipInterval && (a.qlog == nil || a.qlog.Len() < shipBatch) {
+		return false
+	}
+	a.lastLogShip = now
+	return true
 }
 
 // procLogBody is the payload of POST /api/cluster/proclog. BootID identifies
@@ -365,29 +394,73 @@ func (a *Agent) shipProcLogs(ctx context.Context) {
 	}
 }
 
-// shipLogs forwards new query-log entries to the master in batches, advancing a
-// persisted cursor, until the backlog is drained (or shipMaxBatches batches were
-// sent). Runs off the DNS path on the agent goroutine.
+// shipLogs sends new query-log entries to the control plane, at most
+// shipMaxBatches batches per cycle: first the rows waiting in the database
+// (spilled from the buffer, or left by an older build), then the buffer
+// itself. Shipped rows are deleted: nothing on the agent reads its log, and
+// the control plane holds the cluster-wide copy. Runs off the DNS path on the
+// agent goroutine.
 func (a *Agent) shipLogs(ctx context.Context) {
-	for i := 0; i < shipMaxBatches; i++ {
+	budget := shipMaxBatches
+	if !a.shipStoredLogs(ctx, &budget) {
+		return
+	}
+	a.shipBufferedLogs(ctx, budget)
+}
+
+// shipStoredLogs ships the database's unshipped rows, spending *budget
+// batches. It reports whether the database is drained (the buffer may go
+// next).
+func (a *Agent) shipStoredLogs(ctx context.Context, budget *int) bool {
+	if !a.staleRowsPurged {
+		// Rows up to the cursor were shipped by an earlier run: an older build
+		// kept them for 48 hours (with four indexes to update on the way out).
+		if err := a.store.DeleteQueryLogThrough(a.lastShipped); err != nil {
+			slog.Warn("ship logs: purge shipped failed", "err", err)
+		} else {
+			a.staleRowsPurged = true
+		}
+	}
+	for ; *budget > 0; *budget-- {
 		entries, maxID, err := a.store.QueryLogSince(a.lastShipped, shipBatch)
 		if err != nil {
 			slog.Warn("ship logs: read failed", "err", err)
-			return
+			return false
 		}
+		if len(entries) == 0 {
+			return true
+		}
+		if err := a.postJSON(ctx, "/api/cluster/log", entries); err != nil {
+			slog.Warn("ship logs: post failed", "err", err)
+			return false
+		}
+		a.lastShipped = maxID
+		_ = a.store.SetMetaInt("shipped_log_id", maxID)
+		if err := a.store.DeleteQueryLogThrough(maxID); err != nil {
+			slog.Warn("ship logs: purge shipped failed", "err", err)
+		}
+		if len(entries) < shipBatch {
+			return true
+		}
+	}
+	return false
+}
+
+// shipBufferedLogs ships the in-memory buffer in up to budget batches. A batch
+// the control plane doesn't take goes back to the buffer for the next cycle.
+func (a *Agent) shipBufferedLogs(ctx context.Context, budget int) {
+	if a.qlog == nil {
+		return
+	}
+	for ; budget > 0; budget-- {
+		entries := a.qlog.Take(shipBatch)
 		if len(entries) == 0 {
 			return
 		}
 		if err := a.postJSON(ctx, "/api/cluster/log", entries); err != nil {
-			slog.Warn("ship logs: post failed", "err", err)
+			a.qlog.Requeue(entries)
+			slog.Warn("ship logs: post failed", "err", err, "buffered", a.qlog.Len())
 			return
-		}
-		a.lastShipped = maxID
-		_ = a.store.SetMetaInt("shipped_log_id", maxID)
-		if a.purgeShipped != nil && a.purgeShipped() {
-			if err := a.store.DeleteQueryLogThrough(maxID); err != nil {
-				slog.Warn("ship logs: purge shipped failed", "err", err)
-			}
 		}
 		if len(entries) < shipBatch {
 			return

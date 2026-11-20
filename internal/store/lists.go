@@ -269,6 +269,17 @@ func (s *Store) GetMetaInt(key string) (int64, error) {
 	return v, err
 }
 
+// LookupMetaInt returns an integer meta value and whether it is set at all
+// (GetMetaInt reads an unset key as 0).
+func (s *Store) LookupMetaInt(key string) (int64, bool, error) {
+	var v int64
+	err := s.read.QueryRow(`SELECT value FROM meta WHERE key=?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return v, err == nil, err
+}
+
 // SetMetaInt upserts an integer meta value.
 func (s *Store) SetMetaInt(key string, v int64) error {
 	_, err := s.db.Exec(

@@ -1,0 +1,57 @@
+# Disk-write benchmark cluster (dev/iobench/run.sh): a control plane and two
+# resolvers built from this checkout, no traffic clients. run.sh drives the
+# load itself and reads each process's write_bytes from /proc.
+name: mazedns-iobench
+
+services:
+  control-plane:
+    build:
+      context: ../..
+      target: control-plane
+    image: mazedns-control-plane:iobench
+    environment:
+      MAZEDNS_API_ADDRESS: "0.0.0.0"
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_JOIN_TOKEN: "iobench-join-token"
+      MAZEDNS_UPDATE_CHECK: "off"
+    ports:
+      - "18080:8080"
+    volumes:
+      - cp-data:/data
+
+  resolver-a:
+    build:
+      context: ../..
+      target: dns-resolver
+    image: mazedns-resolver:iobench
+    depends_on: [control-plane]
+    environment:
+      MAZEDNS_API_ADDRESS: "0.0.0.0"
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_CP_URL: "http://control-plane:8080"
+      MAZEDNS_JOIN_TOKEN: "iobench-join-token"
+      MAZEDNS_NODE_NAME: "resolver-a"
+      MAZEDNS_CATEGORY_DB: "off"
+    volumes:
+      - resolver-a-data:/data
+
+  resolver-b:
+    build:
+      context: ../..
+      target: dns-resolver
+    image: mazedns-resolver:iobench
+    depends_on: [control-plane, resolver-a]
+    environment:
+      MAZEDNS_API_ADDRESS: "0.0.0.0"
+      MAZEDNS_DB_PATH: "/data/mazedns.db"
+      MAZEDNS_CP_URL: "http://control-plane:8080"
+      MAZEDNS_JOIN_TOKEN: "iobench-join-token"
+      MAZEDNS_NODE_NAME: "resolver-b"
+      MAZEDNS_CATEGORY_DB: "off"
+    volumes:
+      - resolver-b-data:/data
+
+volumes:
+  cp-data:
+  resolver-a-data:
+  resolver-b-data:

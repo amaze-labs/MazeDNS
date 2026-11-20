@@ -22,7 +22,7 @@ func init() {
 	if dsn == "" {
 		panic("pgtest build: set MAZEDNS_TEST_PG_DSN to a throwaway PostgreSQL database (URL form)")
 	}
-	openOverride = func(path string) (*Store, error) {
+	openOverride = func(path string, opts ...Option) (*Store, error) {
 		sum := sha256.Sum256([]byte(path))
 		schema := "t_" + hex.EncodeToString(sum[:8])
 		admin, err := openPostgres(dsn)
@@ -41,6 +41,6 @@ func init() {
 		q := u.Query()
 		q.Set("search_path", schema)
 		u.RawQuery = q.Encode()
-		return OpenWith("pgx", u.String())
+		return OpenWith("pgx", u.String(), opts...)
 	}
 }

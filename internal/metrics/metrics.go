@@ -104,7 +104,7 @@ func (m *Metrics) RegisterQueryLogDropped(fn func() float64) {
 	m.reg.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
 		Namespace: "mazedns",
 		Name:      "querylog_dropped_total",
-		Help:      "Query-log entries dropped because the async writer buffer was full.",
+		Help:      "Query-log entries dropped: the buffer spilled to disk faster than the database took them, or the database refused them.",
 	}, fn))
 }
 

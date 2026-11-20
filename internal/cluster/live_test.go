@@ -68,8 +68,10 @@ func TestShipLogsDrainsBacklog(t *testing.T) {
 		t.Fatal(err)
 	}
 	ag.shipLogs(context.Background())
-	if max, _ := st.MaxQueryLogID(); ag.lastShipped != max || len(cp.headers) != 3 {
-		t.Fatalf("shipped up to %d of %d in %d posts, want everything in 3", ag.lastShipped, max, len(cp.headers))
+	left, _ := st.CountQueryLog()
+	if ag.lastShipped != int64(len(backlog)) || len(cp.headers) != 3 || left != 0 {
+		t.Fatalf("shipped up to %d of %d in %d posts (%d rows left), want everything in 3, deleted",
+			ag.lastShipped, len(backlog), len(cp.headers), left)
 	}
 }
 

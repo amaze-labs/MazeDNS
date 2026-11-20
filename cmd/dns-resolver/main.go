@@ -84,7 +84,9 @@ func main() {
 		slog.Warn("the dns-agent binary name is deprecated and will be removed in the next major release; run dns-resolver instead")
 	}
 
-	st, err := boot.OpenStore(cfg)
+	// The resolver's query log is an outbox for the control plane: it is read
+	// only by id, so it goes without the dashboard's indexes.
+	st, err := boot.OpenStore(cfg, store.WithoutQueryLogIndexes())
 	if err != nil {
 		slog.Error("open store", "err", err)
 		os.Exit(1)
@@ -93,7 +95,9 @@ func main() {
 
 	mx := metrics.New()
 
-	qlog := store.NewQueryLogWriter(st, 4096)
+	// Query-log entries wait in memory for the agent to ship them; the
+	// database only gets what memory can't hold (see store.QueryLogBuffer).
+	qlog := store.NewQueryLogBuffer(st, store.DefaultQueryLogBuffer)
 	liveTap := cluster.NewLiveTap() // live query stream to the control plane's Live view
 	defer qlog.Close()
 	mx.RegisterQueryLogDropped(func() float64 { return float64(qlog.Dropped()) })
@@ -157,7 +161,7 @@ func main() {
 	if cfg.Cluster.ControlPlaneURL() != "" {
 		syncHealth = &cluster.SyncHealth{}
 	}
-	startAgent(agentCtx, st, cfg, res, reload, procRing, liveTap, syncHealth)
+	startAgent(agentCtx, st, cfg, res, reload, procRing, liveTap, qlog, syncHealth)
 	registerHealthMetrics(mx, res, syncHealth)
 
 	// Bound local query-log growth: the agent only needs a short buffer before
@@ -254,7 +258,7 @@ func main() {
 
 // startAgent resolves this node's API key and launches the replication agent. It
 // no-ops (serving standalone DNS) when no control plane is configured.
-func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer, liveTap *cluster.LiveTap, syncHealth *cluster.SyncHealth) {
+func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *resolver.Resolver, reload func() error, procRing *logbuf.Buffer, liveTap *cluster.LiveTap, qlog *store.QueryLogBuffer, syncHealth *cluster.SyncHealth) {
 	cpURL := cfg.Cluster.ControlPlaneURL()
 	if cpURL == "" {
 		slog.Info("standalone mode: no control plane configured (set MAZEDNS_CP_URL)")
@@ -348,7 +352,7 @@ func startAgent(ctx context.Context, st *store.Store, cfg config.Config, res *re
 		// (central forwarders win per suffix).
 		ag.SetApplySettings(func() { res.ApplySettings(boot.EffectiveSettings(st, cfg)) })
 		ag.SetFlushCache(res.FlushCache)
-		ag.SetPurgeShipped(func() bool { level, _, _ := res.Privacy(); return level > 0 })
+		ag.SetQueryLog(qlog)
 		relay := ag.RelayMetrics
 		metricsRelay.Store(&relay)
 		if cfg.Cluster.JoinToken != "" {

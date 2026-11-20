@@ -66,12 +66,12 @@ func FirstNonEmpty(vals ...string) string {
 
 // OpenStore opens the datastore selected by the config: embedded SQLite by
 // default, or an external PostgreSQL server when Database.Driver is postgres/pgx.
-func OpenStore(cfg config.Config) (*store.Store, error) {
+func OpenStore(cfg config.Config, opts ...store.Option) (*store.Store, error) {
 	switch cfg.Database.Driver {
 	case "postgres", "pgx":
-		return store.OpenWith("pgx", cfg.Database.DSN)
+		return store.OpenWith("pgx", cfg.Database.DSN, opts...)
 	default:
-		return store.Open(cfg.Database.Path)
+		return store.Open(cfg.Database.Path, opts...)
 	}
 }
 

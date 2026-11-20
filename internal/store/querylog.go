@@ -3,8 +3,8 @@ package store
 import (
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // QueryLogEntry is one logged DNS query. Node is the resolver that handled it
@@ -266,75 +266,154 @@ func (s *Store) SearchQueryLog(q QueryLogQuery) ([]QueryLogEntry, int64, error) 
 	return out, total, rows.Err()
 }
 
-// QueryLogWriter batches query-log entries and writes them asynchronously so the
-// DNS hot path never blocks on the database.
-type QueryLogWriter struct {
-	ch      chan QueryLogEntry
+// QueryLogBuffer is a resolver's query-log outbox. Entries wait in memory until
+// the cluster agent takes them to ship to the control plane, which holds the
+// cluster-wide log; the database only receives what memory can't hold. That
+// is a full buffer (the control plane is unreachable, or this node runs
+// standalone), or whatever is still buffered at shutdown, and it goes in one
+// large batch, which the agent ships from the database later. A node that
+// ships on time writes no query log to disk at all.
+//
+// Committing every entry within a second, as before, cost far more than the
+// entries themselves: each small commit rewrote whole pages of the table and
+// its indexes, twice with the WAL checkpoint.
+//
+// The trade-off: if the process dies without shutting down, it loses what is
+// buffered: one ship interval's worth when the control plane is reachable.
+type QueryLogBuffer struct {
+	mu      sync.Mutex
+	pending []QueryLogEntry
+	max     int
+	closed  bool
+	st      *Store
+	spill   chan []QueryLogEntry
 	done    chan struct{}
 	dropped atomic.Uint64
 }
 
-// NewQueryLogWriter starts a background writer. Entries are dropped if the buffer
-// is full — logging must never stall DNS resolution.
-func NewQueryLogWriter(s *Store, buffer int) *QueryLogWriter {
-	if buffer <= 0 {
-		buffer = 4096
+// DefaultQueryLogBuffer is how many entries a resolver holds in memory
+// (a few MB) before spilling them to the database.
+const DefaultQueryLogBuffer = 50000
+
+// NewQueryLogBuffer returns a buffer holding up to max entries in memory
+// before it spills them to s.
+func NewQueryLogBuffer(s *Store, max int) *QueryLogBuffer {
+	if max <= 0 {
+		max = DefaultQueryLogBuffer
 	}
-	w := &QueryLogWriter{
-		ch:   make(chan QueryLogEntry, buffer),
-		done: make(chan struct{}),
-	}
-	go w.run(s)
-	return w
+	b := &QueryLogBuffer{max: max, st: s, spill: make(chan []QueryLogEntry, 4), done: make(chan struct{})}
+	go b.runSpill()
+	return b
 }
 
-func (w *QueryLogWriter) run(s *Store) {
-	defer close(w.done)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	batch := make([]QueryLogEntry, 0, 256)
-	flush := func() {
-		if len(batch) == 0 {
-			return
-		}
-		if err := s.InsertQueryLogBatch(batch); err != nil {
-			slog.Warn("query log flush failed", "err", err, "dropped", len(batch))
-		}
-		batch = batch[:0]
-	}
-	for {
-		select {
-		case e, ok := <-w.ch:
-			if !ok {
-				flush()
-				return
-			}
-			batch = append(batch, e)
-			if len(batch) >= 256 {
-				flush()
-			}
-		case <-ticker.C:
-			flush()
-		}
+func (b *QueryLogBuffer) runSpill() {
+	defer close(b.done)
+	for batch := range b.spill {
+		b.insert(batch)
 	}
 }
 
-// Write enqueues an entry, dropping it if the buffer is full.
-func (w *QueryLogWriter) Write(e QueryLogEntry) {
+func (b *QueryLogBuffer) insert(batch []QueryLogEntry) {
+	if err := b.st.InsertQueryLogBatch(batch); err != nil {
+		b.dropped.Add(uint64(len(batch)))
+		slog.Warn("query log spill failed", "err", err, "dropped", len(batch))
+	}
+}
+
+// toDiskLocked hands a batch to the spill goroutine without waiting on the
+// database: if it is still busy with earlier batches, this one is dropped
+// (logging must never stall DNS resolution). b.mu must be held and the buffer
+// open.
+func (b *QueryLogBuffer) toDiskLocked(batch []QueryLogEntry) {
 	select {
-	case w.ch <- e:
-	default: // buffer full: drop rather than block the DNS path
-		w.dropped.Add(1)
+	case b.spill <- batch:
+	default:
+		b.dropped.Add(uint64(len(batch)))
 	}
 }
 
-// Dropped returns the number of entries dropped because the buffer was full.
-// Exposed as the mazedns_querylog_dropped_total metric so sustained overload
-// (the dashboard/VictoriaLogs undercounting) is observable rather than silent.
-func (w *QueryLogWriter) Dropped() uint64 { return w.dropped.Load() }
+// Write appends an entry. It never waits on the database.
+func (b *QueryLogBuffer) Write(e QueryLogEntry) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		b.dropped.Add(1)
+		return
+	}
+	b.pending = append(b.pending, e)
+	if len(b.pending) >= b.max {
+		b.toDiskLocked(b.pending)
+		b.pending = nil
+	}
+}
 
-// Close stops the writer, flushing any buffered entries.
-func (w *QueryLogWriter) Close() {
-	close(w.ch)
-	<-w.done
+// Take removes and returns up to n of the oldest entries.
+func (b *QueryLogBuffer) Take(n int) []QueryLogEntry {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	k := min(n, len(b.pending))
+	if k == 0 {
+		return nil
+	}
+	out := make([]QueryLogEntry, k)
+	copy(out, b.pending)
+	if k == len(b.pending) {
+		b.pending = nil // let the backing array go
+	} else {
+		b.pending = b.pending[k:]
+	}
+	return out
+}
+
+// Requeue puts back entries taken for a ship that failed, ahead of the newer
+// ones. Once the buffer is closed they go straight to the database.
+func (b *QueryLogBuffer) Requeue(entries []QueryLogEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		b.insert(entries)
+		return
+	}
+	defer b.mu.Unlock()
+	b.pending = append(append(make([]QueryLogEntry, 0, len(entries)+len(b.pending)), entries...), b.pending...)
+	if len(b.pending) >= b.max {
+		b.toDiskLocked(b.pending)
+		b.pending = nil
+	}
+}
+
+// Len returns how many entries are held in memory.
+func (b *QueryLogBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.pending)
+}
+
+// Dropped returns the number of entries lost: the spill could not keep up, or
+// the database refused them. Exposed as the mazedns_querylog_dropped_total
+// metric so sustained overload (the dashboard undercounting) is observable
+// rather than silent.
+func (b *QueryLogBuffer) Dropped() uint64 { return b.dropped.Load() }
+
+// Close writes everything still in memory to the database and waits for it.
+// Later writes are dropped; later requeues go to the database directly.
+func (b *QueryLogBuffer) Close() {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return
+	}
+	b.closed = true
+	rest := b.pending
+	b.pending = nil
+	b.mu.Unlock()
+	// No other sender can reach the channel now that closed is set.
+	if len(rest) > 0 {
+		b.spill <- rest
+	}
+	close(b.spill)
+	<-b.done
 }

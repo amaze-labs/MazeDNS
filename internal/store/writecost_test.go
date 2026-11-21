@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 )
 
@@ -132,9 +133,119 @@ func TestWriteCostReport(t *testing.T) {
 		add("control plane: rollup advance, 2-minute batch", p, perDay/120, "")
 		id, _ := s.CreateNode("r1", "h", "p")
 		p = wal(func() { _ = s.TouchNode(id, "addr", "v", "a", NodeStats{Total: 1}) })
-		add("control plane: node heartbeat", p, perDay/shipEvery, "per resolver")
+		add("control plane: node heartbeat write", p, perDay/int64(heartbeatFlush.Seconds()), "per resolver, every 5 minutes")
+		p = wal(func() { _ = s.TouchNode(id, "addr", "v", "a", NodeStats{Total: 2}) })
+		add("control plane: routine heartbeat", p, perDay/shipEvery, "per resolver, held in memory")
+
+		// Relabelling "other" queries the category database now knows.
+		others, err := s.OtherQueries(0, 0, 0, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = wal(func() { _, _ = s.RelabelContent(nil) })
+		add("control plane: relabel, nothing new", p, perDay/300, "every 5 minutes")
+		labels := map[int64]string{}
+		for _, q := range others {
+			labels[q.ID] = "news"
+		}
+		p = wal(func() { _, _ = s.RelabelContent(labels) })
+		add(fmt.Sprintf("control plane: relabel of %d queries", len(labels)), p, 0, "when the category database learns their domains")
+
 		p = wal(func() { _, _ = s.PruneQueryLog(int64(1_700_000_000_000 + 3600*1000)) })
 		add("control plane: hourly prune", p, 24, fmt.Sprintf("removes an hour of rows (%d)", 3600*qps))
+		_ = s.Close()
+	}
+	{
+		// The classifier: one verdict per newly seen domain, plus the usage
+		// counters of the lookups behind it.
+		s, wal := openMeasured(t)
+		for i := 0; i < 20000; i++ {
+			_, _ = s.InsertClassification(Classification{Domain: fmt.Sprintf("seen%d.example", i), Category: "clean", Status: ClassClean})
+		}
+		p := wal(func() {
+			_, _ = s.InsertClassification(Classification{Domain: "new.example", Category: "clean", Status: ClassClean})
+		})
+		add("classifier: verdict for a new domain", p, 0, "per newly seen domain, 20k verdicts held")
+		_ = s.RecordReputationUsage("svc", false, false, 1, 1)
+		p = wal(func() { _ = s.RecordReputationUsage("svc", false, false, 1, 1) })
+		add("classifier: reputation usage counter", p, 0, "per reputation lookup")
+		_ = s.RecordLLMUsage(false, 1, 1, 1)
+		p = wal(func() { _ = s.RecordLLMUsage(false, 1, 1, 1) })
+		add("classifier: model usage counter", p, 0, "per model call")
+		_ = s.Close()
+	}
+
+	// ---- Control plane: 10 minutes of a three-resolver cluster ----
+	// One busy resolver and two quiet ones, one of them on an older build
+	// that still ships every 30 s, each with its own clients. Ingested as
+	// one commit per shipped batch, or coalesced into one commit for all
+	// resolvers per interval; each commit is followed by a rollup advance.
+	type node struct {
+		name           string
+		qps            float64
+		clients, every int // distinct clients, ship interval (s)
+		offset         int // first ship (s)
+	}
+	cluster := []node{{"busy", 9, 150, 120, 0}, {"quiet", 1, 20, 120, 60}, {"old-build", 0.5, 10, 30, 10}}
+	type ship struct {
+		at    int
+		batch NodeQueryLog
+	}
+	var ships []ship
+	for _, nd := range cluster {
+		last := 0
+		for at := nd.offset; at <= 600; at += nd.every {
+			n := int(float64(at-last) * nd.qps)
+			es := make([]QueryLogEntry, n)
+			for i := range es {
+				ts := int64(1_800_000_000_000 + (last*1000 + i*int(1000/nd.qps)))
+				action, cat := "forward", ""
+				if i%5 == 0 {
+					action, cat = "blocked", "ads"
+				}
+				es[i] = QueryLogEntry{TS: ts, Client: fmt.Sprintf("%s-c%d", nd.name, i%nd.clients),
+					Name: fmt.Sprintf("n%d.example", i%3000), QType: "A", Action: action, Category: cat, Rcode: "NOERROR",
+					ElapsedMS: 1, ContentCategory: fmt.Sprintf("cat%d", i%12)}
+			}
+			ships = append(ships, ship{at, NodeQueryLog{nd.name, es}})
+			last = at
+		}
+	}
+	sort.Slice(ships, func(i, j int) bool { return ships[i].at < ships[j].at })
+	for _, mode := range []struct {
+		label string
+		every int // 0 = one commit per shipped batch
+	}{{"one commit per shipped batch", 0}, {"coalesced, one commit per minute", 60}, {"coalesced, one commit per 2 minutes", 120}} {
+		s, wal := openMeasured(t)
+		if err := s.InsertNodeQueryLog("busy", batch(0, logRows)); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = s.RollupAdvance(logRows + 1)
+		commits := 0
+		p := wal(func() {
+			var pending []NodeQueryLog
+			flush := func() {
+				if len(pending) > 0 {
+					_ = s.InsertNodeQueryLogs(pending)
+					_, _ = s.RollupAdvance(50000)
+					commits++
+					pending = nil
+				}
+			}
+			next := mode.every
+			for _, sh := range ships {
+				for mode.every > 0 && sh.at >= next {
+					flush()
+					next += mode.every
+				}
+				pending = append(pending, sh.batch)
+				if mode.every == 0 {
+					flush()
+				}
+			}
+			flush()
+		})
+		add("cluster, 10 min: "+mode.label, p, perDay/600, fmt.Sprintf("%d commits", commits))
 		_ = s.Close()
 	}
 

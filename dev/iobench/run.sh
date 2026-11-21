@@ -16,7 +16,7 @@ QPS=${QPS:-6}                 # steady load on resolver-a (resolver-b stays idle
 CLIENTS=${CLIENTS:-4}         # load generators (distinct client IPs), sharing QPS
 LOAD_SECS=${LOAD_SECS:-180}
 IDLE_SECS=${IDLE_SECS:-120}
-SETTLE_SECS=${SETTLE_SECS:-155} # after the load: one query-log ship interval + a sync
+SETTLE_SECS=${SETTLE_SECS:-335} # after the load: one control-plane flush (5m) + a sync
 RULES=${RULES:-369000}        # replicated rules
 CP_URL=http://127.0.0.1:18080
 
@@ -98,8 +98,8 @@ while [ $i -lt "$CLIENTS" ]; do
 done
 sleep "$LOAD_SECS"
 # Let the last queries reach the control plane's database: resolvers ship
-# every 30s sync and the control plane writes what they shipped every 2
-# minutes (each 30s sync on older builds).
+# every 30s sync and the control plane writes what they shipped every
+# MAZEDNS_QUERYLOG_FLUSH_INTERVAL (5 minutes by default).
 sleep "$SETTLE_SECS"
 load_a=$(($(wb "$ra") - la0)); load_cp=$(($(wb "$cp") - lc0)); nq=$(($(queries resolver-a) - q0))
 span=$((LOAD_SECS + SETTLE_SECS))

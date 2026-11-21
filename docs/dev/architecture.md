@@ -104,10 +104,13 @@ published as `mazedns-agent`, its pre-rename name).
   changed.
 - **The control plane coalesces what resolvers ship.** Shipped batches wait
   in `store.IngestBuffer` and every resolver's are written in one
-  transaction every 2 minutes: each commit rewrites the newest index page of
-  every client, category and action it touches, however few rows it adds.
-  The dashboard trails by up to that much (the Live view streams
-  separately); a control-plane crash loses up to one interval. A node's
+  transaction every `MAZEDNS_QUERYLOG_FLUSH_INTERVAL` (5 minutes by
+  default): each commit rewrites the newest index page of every client,
+  category and action it touches, however few rows it adds. The dashboard
+  trails by up to that much (the Live view streams separately); a
+  control-plane crash loses up to one interval. Its SQLite WAL is
+  checkpointed every 10,000 pages instead of 1,000, so a leaf rewritten by
+  every commit reaches the database file once per checkpoint. A node's
   routine heartbeat is written every 5 minutes, not every sync. `dev/iobench/run.sh` measures the bytes
   each process writes, `TestWriteCostReport` the pages each recurring
   operation writes.

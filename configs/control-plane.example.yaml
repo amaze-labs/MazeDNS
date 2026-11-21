@@ -85,6 +85,7 @@ database:
 
 log:
   level: "info"                # debug|info|warn|error (or MAZEDNS_LOG_LEVEL)
+  flush_interval: "5m"         # how often query logs from resolvers are written (min 30s; or MAZEDNS_QUERYLOG_FLUSH_INTERVAL)
 
 metrics:
   victoria_metrics:            # push the control plane's own process metrics to VictoriaMetrics

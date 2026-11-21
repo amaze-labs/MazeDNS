@@ -46,6 +46,7 @@ const (
 // Server is the HTTP API server.
 type Server struct {
 	store               *store.Store
+	ingest              *store.IngestBuffer // shipped query logs wait here for one coalesced write (nil = write each batch)
 	res                 *resolver.Resolver
 	reload              func() error
 	refresher           *lists.Refresher
@@ -140,6 +141,10 @@ func (s *Server) SetClassifierEnqueue(fn func(name string)) { s.enqueue = fn }
 // SetPrivacy wires the query-log privacy level into ingest (a nil Anonymizer
 // keeps everything).
 func (s *Server) SetPrivacy(a *privacy.Anonymizer) { s.priv = a }
+
+// SetIngestBuffer makes shipped query logs wait in buf, which writes every
+// resolver's batches in one transaction per interval (see store.IngestBuffer).
+func (s *Server) SetIngestBuffer(buf *store.IngestBuffer) { s.ingest = buf }
 
 // SetEnricher wires the running client-name enricher into the API.
 func (s *Server) SetEnricher(e *clientname.Enricher) { s.enricher = e }
@@ -1074,7 +1079,9 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.priv.Ingest(entries, time.Now())
-	if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
+	if s.ingest != nil {
+		s.ingest.Add(node.Name, entries)
+	} else if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -97,8 +97,9 @@ while [ $i -lt "$CLIENTS" ]; do
 	i=$((i + 1))
 done
 sleep "$LOAD_SECS"
-# Let the last queries reach the control plane: resolvers ship query logs
-# every 2 minutes (one 30s sync cycle on builds before that change).
+# Let the last queries reach the control plane's database: resolvers ship
+# every 30s sync and the control plane writes what they shipped every 2
+# minutes (each 30s sync on older builds).
 sleep "$SETTLE_SECS"
 load_a=$(($(wb "$ra") - la0)); load_cp=$(($(wb "$cp") - lc0)); nq=$(($(queries resolver-a) - q0))
 span=$((LOAD_SECS + SETTLE_SECS))

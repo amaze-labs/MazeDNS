@@ -28,14 +28,7 @@ const (
 	// the config sync. At the default 30s interval that drains ~3300 queries/s;
 	// an agent sustaining more still falls behind and would need its own ticker.
 	shipMaxBatches = 20
-	// logShipInterval is how often query logs go to the control plane (or
-	// every sync, if that is slower). Each ingested batch rewrites one index
-	// page per active client, category and action on the control plane
-	// whatever its size, so fewer, larger batches cost it several times fewer
-	// disk writes than one per 30s sync. The Live view is unaffected (it
-	// streams on its own); the dashboard trails by up to this much.
-	logShipInterval = 2 * time.Minute
-	procLogBatch    = 1000 // max process-log lines shipped to the master per cycle
+	procLogBatch   = 1000 // max process-log lines shipped to the master per cycle
 	// procLogByteBudget bounds one proc-log batch's payload so it stays well
 	// under the master's 1MB request-body cap — a rejected batch would re-ship
 	// identically every cycle and wedge shipping for good.
@@ -67,8 +60,6 @@ type Agent struct {
 	qlog            *store.QueryLogBuffer
 	lastShipped     int64
 	staleRowsPurged bool
-	lastLogShip     time.Time                                 // when query logs last went out (see logsDue)
-	now             func() time.Time                          // clock (tests replace it)
 	reenroll        func(ctx context.Context) (string, error) // re-obtain a node key on revocation (nil = disabled)
 	nodeID          string                                    // persisted immutable node id ('' until learned)
 	saveNodeID      func(string)                              // persist a newly-learned node id (nil = disabled)
@@ -175,7 +166,6 @@ func NewAgent(masterURL, masterIP, nodeKey, advertiseAddr string, interval time.
 	_, _ = rand.Read(nonce)
 	settings, _ := st.ClusterSettings()
 	return &Agent{
-		now:            time.Now,
 		masterURL:      strings.TrimRight(masterURL, "/"),
 		nodeKey:        nodeKey,
 		advertiseAddr:  strings.TrimSpace(advertiseAddr),
@@ -317,22 +307,8 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) cycle(ctx context.Context) {
 	a.syncOnce(ctx)
-	if a.logsDue() {
-		a.shipLogs(ctx)
-	}
+	a.shipLogs(ctx)
 	a.shipProcLogs(ctx)
-}
-
-// logsDue reports whether this cycle ships query logs: every
-// logShipInterval, or at once when the buffer holds a full batch (a busy
-// node must not fill its buffer and spill to disk while it waits).
-func (a *Agent) logsDue() bool {
-	now := a.now()
-	if now.Sub(a.lastLogShip) < logShipInterval && (a.qlog == nil || a.qlog.Len() < shipBatch) {
-		return false
-	}
-	a.lastLogShip = now
-	return true
 }
 
 // procLogBody is the payload of POST /api/cluster/proclog. BootID identifies

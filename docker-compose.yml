@@ -97,6 +97,7 @@ services:
     depends_on: [resolver-a]
     environment:
       TARGET: resolver-a
+      PORT: "53"          # the resolvers listen on 53 inside the container
       SLEEP: "2"
       DOMAINS: "google.com youtube.com github.com wikipedia.org netflix.com doubleclick.net ads.example.com"
 
@@ -108,6 +109,7 @@ services:
     depends_on: [resolver-a]
     environment:
       TARGET: resolver-a
+      PORT: "53"          # the resolvers listen on 53 inside the container
       SLEEP: "5"
       DOMAINS: "microsoft.com slack.com atlassian.com zoom.us googleadservices.com tracking.example.org example.com"
 
@@ -119,6 +121,7 @@ services:
     depends_on: [resolver-b]
     environment:
       TARGET: resolver-b
+      PORT: "53"          # the resolvers listen on 53 inside the container
       SLEEP: "6"
       DOMAINS: "spotify.com twitch.tv linkedin.com ads.example.com bbc.co.uk"
 

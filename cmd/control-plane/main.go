@@ -213,6 +213,14 @@ func main() {
 	// endpoints (including token self-enrollment) are always available.
 	apiAddr := net.JoinHostPort(cfg.API.Address, strconv.Itoa(cfg.API.Port))
 	apiSrv := api.New(apiAddr, st, res, mx, reload, refresher, authMgr, cfg.Auth.Enabled, false, true)
+	// Query logs shipped by every resolver are written together, once per
+	// interval: each commit rewrites the newest index pages of every client,
+	// category and action it touches, so one commit for all resolvers costs
+	// far fewer disk writes than one per shipped batch (store.IngestBuffer).
+	// Closed before the store, so a clean shutdown writes what is pending.
+	ingest := store.NewIngestBuffer(st, queryLogIngestEvery)
+	defer ingest.Close()
+	apiSrv.SetIngestBuffer(ingest)
 	// Whether a newer release exists, from the project's public GitHub
 	// releases. Off with MAZEDNS_UPDATE_CHECK=off (air-gapped installs).
 	updateCheckOff := false
@@ -286,6 +294,11 @@ func main() {
 	defer cancel()
 	_ = apiSrv.Shutdown(ctx)
 }
+
+// queryLogIngestEvery is how often the control plane writes the query logs
+// resolvers shipped. The dashboard trails by up to this much (plus a resolver
+// sync); the Live view streams separately.
+const queryLogIngestEvery = 2 * time.Minute
 
 // newClassifier builds the classifier worker, seeding its persisted settings from
 // the config file on first run.

@@ -60,28 +60,7 @@ func (s *Store) InsertQueryLogBatch(entries []QueryLogEntry) error {
 // InsertNodeQueryLog writes a batch of entries received from a worker, tagged
 // with the worker's node name (preserving the original timestamps).
 func (s *Store) InsertNodeQueryLog(node string, entries []QueryLogEntry) error {
-	if len(entries) == 0 {
-		return nil
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	stmt, err := tx.Prepare(
-		`INSERT INTO query_log(ts, client, name, qtype, action, category, rcode, elapsed_ms, node, content_category, upstream, forwarder)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	defer stmt.Close()
-	for _, e := range entries {
-		if _, err := stmt.Exec(e.TS, e.Client, e.Name, e.QType, e.Action, e.Category, e.Rcode, e.ElapsedMS, node, e.ContentCategory, e.Upstream, e.Forwarder); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	}
-	return tx.Commit()
+	return s.InsertNodeQueryLogs([]NodeQueryLog{{node, entries}})
 }
 
 // QueryLogSince returns up to limit entries with id greater than afterID

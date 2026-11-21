@@ -96,16 +96,19 @@ published as `mazedns-agent`, its pre-rename name).
   ships its query log + counters back for the dashboard. Agents keep resolving
   from their local copy even if the control plane is unreachable.
 - **An agent's query log is an outbox.** Entries wait in memory
-  (`store.QueryLogBuffer`) and go to the control plane every 2 minutes
-  (sooner once a full batch is buffered): fewer, larger batches cost the
-  control plane's indexes far fewer page writes than one per sync. The
+  (`store.QueryLogBuffer`) and go to the control plane on every sync. The
   agent's database only gets what memory can't hold (control plane
   unreachable, or shutdown), with no secondary indexes, and shipped rows are
   deleted. Steady state writes no query log on the agent; a hard crash loses
-  up to one ship interval of entries, and the dashboard trails by as much
-  (the Live view streams separately). Config applies write only the rules
-  that changed, and the control plane writes a node's routine heartbeat
-  every 5 minutes, not every sync. `dev/iobench/run.sh` measures the bytes
+  up to one sync of entries. Config applies write only the rules that
+  changed.
+- **The control plane coalesces what resolvers ship.** Shipped batches wait
+  in `store.IngestBuffer` and every resolver's are written in one
+  transaction every 2 minutes: each commit rewrites the newest index page of
+  every client, category and action it touches, however few rows it adds.
+  The dashboard trails by up to that much (the Live view streams
+  separately); a control-plane crash loses up to one interval. A node's
+  routine heartbeat is written every 5 minutes, not every sync. `dev/iobench/run.sh` measures the bytes
   each process writes, `TestWriteCostReport` the pages each recurring
   operation writes.
 

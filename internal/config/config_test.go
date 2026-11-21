@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeConfig writes a minimal valid config file and returns its path.
@@ -263,5 +264,30 @@ func TestUpstreamStrategyConfig(t *testing.T) {
 	}
 	if _, err := Load(writeConfig(t, minimalConfig+"upstream_timeout: -1s\n")); err == nil {
 		t.Error("expected an error for a negative upstream_timeout")
+	}
+}
+
+// The control plane writes shipped query logs every 5 minutes unless
+// MAZEDNS_QUERYLOG_FLUSH_INTERVAL says otherwise; below 30s (resolvers ship
+// once a sync) it is raised to 30s, and an unparsable value keeps the default.
+func TestQueryLogFlushInterval(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		want time.Duration
+	}{
+		{"", 5 * time.Minute},
+		{"2m", 2 * time.Minute},
+		{"90s", 90 * time.Second},
+		{"5s", 30 * time.Second},
+		{"soon", 5 * time.Minute},
+	} {
+		t.Setenv("MAZEDNS_QUERYLOG_FLUSH_INTERVAL", tc.env)
+		cfg, err := Load(writeConfig(t, minimalConfig))
+		if err != nil {
+			t.Fatalf("%q: load: %v", tc.env, err)
+		}
+		if got := cfg.Log.FlushInterval.Std(); got != tc.want {
+			t.Errorf("%q: flush interval = %v, want %v", tc.env, got, tc.want)
+		}
 	}
 }

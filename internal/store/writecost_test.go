@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +11,11 @@ import (
 
 // TestWriteCostReport measures how many database pages each recurring write
 // costs, by counting the frames it appends to the WAL with automatic
-// checkpoints off. Each page is written once more when a checkpoint copies it
-// into the database, so the disk cost is about twice what is reported here.
-// The per-day column multiplies by how often the operation runs.
+// checkpoints off. A checkpoint then copies each page into the database once,
+// however often it was rewritten, so the disk cost is between one and two
+// times what is reported (the "×2" per-day column is the upper bound; the
+// cluster simulation reports the checkpoint's share for two checkpoint
+// sizes). The per-day column multiplies by how often the operation runs.
 //
 //	MAZEDNS_WRITECOST=1 go test ./internal/store -run TestWriteCostReport -v
 //
@@ -194,7 +197,7 @@ func TestWriteCostReport(t *testing.T) {
 	var ships []ship
 	for _, nd := range cluster {
 		last := 0
-		for at := nd.offset; at <= 600; at += nd.every {
+		for at := nd.offset; at <= 3600; at += nd.every {
 			n := int(float64(at-last) * nd.qps)
 			es := make([]QueryLogEntry, n)
 			for i := range es {
@@ -215,7 +218,7 @@ func TestWriteCostReport(t *testing.T) {
 	for _, mode := range []struct {
 		label string
 		every int // 0 = one commit per shipped batch
-	}{{"one commit per shipped batch", 0}, {"coalesced, one commit per minute", 60}, {"coalesced, one commit per 2 minutes", 120}} {
+	}{{"one commit per shipped batch", 0}, {"coalesced every 2 minutes", 120}, {"coalesced every 5 minutes", 300}} {
 		s, wal := openMeasured(t)
 		if err := s.InsertNodeQueryLog("busy", batch(0, logRows)); err != nil {
 			t.Fatal(err)
@@ -245,7 +248,16 @@ func TestWriteCostReport(t *testing.T) {
 			}
 			flush()
 		})
-		add("cluster, 10 min: "+mode.label, p, perDay/600, fmt.Sprintf("%d commits", commits))
+		add("cluster, 1 h: "+mode.label, p, perDay/3600, fmt.Sprintf("%d commits; WAL only, see checkpoint lines", commits))
+		// The checkpoint copies each page the WAL holds once: replay the
+		// frame sequence and count what checkpoints every N pages would copy.
+		seq := walFrames(t, s)
+		for _, every := range []int{1000, 10000} {
+			cp := checkpointPages(seq, every)
+			add(fmt.Sprintf("  + checkpoint every %d pages", every), cp, 0,
+				fmt.Sprintf("copied into the database: %.0f MiB/day; WAL + checkpoint %.0f MiB/day",
+					float64(cp*4096*24)/(1<<20), float64((p+cp)*4096*24)/(1<<20)))
+		}
 		_ = s.Close()
 	}
 
@@ -295,4 +307,66 @@ func openMeasuredAt(t *testing.T, path string, opts ...Option) (*Store, func(fn 
 		fn()
 		return frames() - before
 	}
+}
+
+// WithCheckpointPages sets how many WAL pages trigger a checkpoint.
+func TestWithCheckpointPages(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "cp.db"), WithCheckpointPages(10000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.db.pg {
+		t.Skip("SQLite-only")
+	}
+	var n int
+	if err := s.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&n); err != nil || n != 10000 {
+		t.Fatalf("wal_autocheckpoint = %d (%v), want 10000", n, err)
+	}
+	d, err := Open(filepath.Join(t.TempDir(), "default.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.db.QueryRow(`PRAGMA wal_autocheckpoint`).Scan(&n); err != nil || n != 1000 {
+		t.Fatalf("default wal_autocheckpoint = %d (%v), want 1000", n, err)
+	}
+}
+
+// walFrames returns the page number of every frame in the store's WAL, in
+// order (the store runs with automatic checkpoints off).
+func walFrames(t *testing.T, s *Store) []uint32 {
+	t.Helper()
+	var path string
+	if err := s.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path + "-wal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) < 32 {
+		return nil
+	}
+	pg := int(binary.BigEndian.Uint32(b[8:12]))
+	var out []uint32
+	for off := 32; off+24+pg <= len(b); off += 24 + pg {
+		out = append(out, binary.BigEndian.Uint32(b[off:off+4]))
+	}
+	return out
+}
+
+// checkpointPages counts the pages checkpoints copy when one runs every
+// `every` frames: the distinct pages in each window.
+func checkpointPages(frames []uint32, every int) int64 {
+	var n int64
+	seen := map[uint32]bool{}
+	for i, p := range frames {
+		seen[p] = true
+		if (i+1)%every == 0 || i == len(frames)-1 {
+			n += int64(len(seen))
+			seen = map[uint32]bool{}
+		}
+	}
+	return n
 }

@@ -70,7 +70,10 @@ func main() {
 	}
 	slog.Info("MazeDNS control plane starting", "version", version.Short())
 
-	st, err := boot.OpenStore(cfg)
+	// Checkpoint the WAL every walCheckpointPages instead of SQLite's 1000:
+	// ingest rewrites the same index leaves on every commit, and a checkpoint
+	// copies each page once however often it was rewritten.
+	st, err := boot.OpenStore(cfg, store.WithCheckpointPages(walCheckpointPages))
 	if err != nil {
 		slog.Error("open store", "err", err)
 		os.Exit(1)
@@ -218,7 +221,8 @@ func main() {
 	// category and action it touches, so one commit for all resolvers costs
 	// far fewer disk writes than one per shipped batch (store.IngestBuffer).
 	// Closed before the store, so a clean shutdown writes what is pending.
-	ingest := store.NewIngestBuffer(st, queryLogIngestEvery)
+	ingest := store.NewIngestBuffer(st, cfg.Log.FlushInterval.Std())
+	slog.Info("query logs from resolvers are written periodically", "every", cfg.Log.FlushInterval.Std())
 	defer ingest.Close()
 	apiSrv.SetIngestBuffer(ingest)
 	// Whether a newer release exists, from the project's public GitHub
@@ -295,10 +299,10 @@ func main() {
 	_ = apiSrv.Shutdown(ctx)
 }
 
-// queryLogIngestEvery is how often the control plane writes the query logs
-// resolvers shipped. The dashboard trails by up to this much (plus a resolver
-// sync); the Live view streams separately.
-const queryLogIngestEvery = 2 * time.Minute
+// walCheckpointPages is the WAL size (in 4 KB pages, about 40 MB) at which the
+// control plane's database is checkpointed: a few hours of writes at a home
+// network's query rate.
+const walCheckpointPages = 10000
 
 // newClassifier builds the classifier worker, seeding its persisted settings from
 // the config file on first run.

@@ -277,7 +277,21 @@ type Database struct {
 type Log struct {
 	Level    string `yaml:"level"` // debug|info|warn|error
 	QueryLog bool   `yaml:"query_log"`
+	// FlushInterval is how often the control plane writes the query logs
+	// resolvers shipped, all of them in one transaction (each commit rewrites
+	// the newest index page of every client, category and action it touches,
+	// so fewer commits mean fewer disk writes). Pages reading the stored log
+	// trail by up to this much; the Live view does not. At least
+	// MinFlushInterval. MAZEDNS_QUERYLOG_FLUSH_INTERVAL.
+	FlushInterval Duration `yaml:"flush_interval"`
 }
+
+// DefaultFlushInterval and MinFlushInterval bound Log.FlushInterval. Below a
+// resolver sync (30s) writing more often brings no fresher data.
+const (
+	DefaultFlushInterval = 5 * time.Minute
+	MinFlushInterval     = 30 * time.Second
+)
 
 // Metrics groups the metrics/logs export integrations.
 type Metrics struct {
@@ -342,7 +356,7 @@ func Default() Config {
 		},
 		Cluster:  Cluster{Interval: Duration(30 * time.Second)},
 		Database: Database{Path: "mazedns.db"},
-		Log:      Log{Level: "info", QueryLog: false},
+		Log:      Log{Level: "info", QueryLog: false, FlushInterval: Duration(DefaultFlushInterval)},
 		Metrics: Metrics{
 			VictoriaMetrics: VictoriaMetrics{
 				Interval: Duration(15 * time.Second),
@@ -460,6 +474,12 @@ func Load(path string) (Config, error) {
 			cfg.Cluster.KeyGrace = Duration(d)
 		}
 	}
+	// Control plane: how often shipped query logs are written.
+	if v := os.Getenv("MAZEDNS_QUERYLOG_FLUSH_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Log.FlushInterval = Duration(d)
+		}
+	}
 	if v := firstEnv("MAZEDNS_MASTER_IP", "MAZEDNS_CP_IP"); v != "" {
 		cfg.Cluster.MasterIP = v
 	}
@@ -489,6 +509,12 @@ func Load(path string) (Config, error) {
 		cfg.Classifier.APIKey = v
 	}
 	applyOIDCEnv(&cfg.Auth.OIDC)
+	switch d := cfg.Log.FlushInterval.Std(); {
+	case d <= 0:
+		cfg.Log.FlushInterval = Duration(DefaultFlushInterval)
+	case d < MinFlushInterval:
+		cfg.Log.FlushInterval = Duration(MinFlushInterval)
+	}
 	if err := cfg.validate(); err != nil {
 		return cfg, err
 	}

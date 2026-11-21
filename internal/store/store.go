@@ -44,6 +44,9 @@ type Store struct {
 	// noQueryLogIndexes leaves query_log without its secondary indexes (see
 	// WithoutQueryLogIndexes).
 	noQueryLogIndexes bool
+	// checkpointPages is the WAL size, in pages, that triggers a checkpoint
+	// (0 = SQLite's default, 1000). See WithCheckpointPages.
+	checkpointPages int
 
 	// Node heartbeats held in memory between writes (see TouchNode).
 	hbMu       sync.Mutex
@@ -61,6 +64,14 @@ type Option func(*Store)
 // query, so the agent drops them (and an existing database loses them on its
 // next open).
 func WithoutQueryLogIndexes() Option { return func(s *Store) { s.noQueryLogIndexes = true } }
+
+// WithCheckpointPages makes SQLite checkpoint the WAL into the database only
+// once it holds pages pages (SQLite's default is 1000, 4 MB). A checkpoint
+// copies every page the WAL holds, once however many times it was written,
+// so a page rewritten by every commit (the newest index leaf of a busy
+// client) costs one database write per checkpoint: fewer checkpoints, fewer
+// writes. The WAL file grows to about pages × 4 KB. SQLite only.
+func WithCheckpointPages(pages int) Option { return func(s *Store) { s.checkpointPages = pages } }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.
 type Rule struct {
@@ -99,7 +110,7 @@ func Open(path string, opts ...Option) (*Store, error) {
 	// connection in the read pool). WAL + NORMAL sync are the safe fast pairing; the
 	// bigger page cache + memory-mapped reads + in-memory temp B-trees cut the I/O
 	// thrash of the dashboard's GROUP BY/COUNT scans over a large query_log.
-	dsn := path + "?" + strings.Join([]string{
+	pragmas := []string{
 		"_pragma=busy_timeout(5000)",
 		"_pragma=journal_mode(WAL)",
 		"_pragma=foreign_keys(1)",
@@ -107,7 +118,15 @@ func Open(path string, opts ...Option) (*Store, error) {
 		"_pragma=cache_size(-65536)",   // 64 MiB page cache (negative = KiB)
 		"_pragma=mmap_size(268435456)", // 256 MiB memory-mapped I/O
 		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
-	}, "&")
+	}
+	var o Store
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if o.checkpointPages > 0 {
+		pragmas = append(pragmas, fmt.Sprintf("_pragma=wal_autocheckpoint(%d)", o.checkpointPages))
+	}
+	dsn := path + "?" + strings.Join(pragmas, "&")
 	if openOverride != nil {
 		return openOverride(path, opts...)
 	}

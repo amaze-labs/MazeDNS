@@ -46,7 +46,7 @@ const (
 // Server is the HTTP API server.
 type Server struct {
 	store               *store.Store
-	ingest              *store.IngestBuffer // shipped query logs wait here for one coalesced write (nil = write each batch)
+	ingest              queryLogIngest // shipped query logs wait here for one coalesced write (nil = write each batch)
 	res                 *resolver.Resolver
 	reload              func() error
 	refresher           *lists.Refresher
@@ -141,6 +141,12 @@ func (s *Server) SetClassifierEnqueue(fn func(name string)) { s.enqueue = fn }
 // SetPrivacy wires the query-log privacy level into ingest (a nil Anonymizer
 // keeps everything).
 func (s *Server) SetPrivacy(a *privacy.Anonymizer) { s.priv = a }
+
+// queryLogIngest takes the query-log batches resolvers ship
+// (store.IngestBuffer).
+type queryLogIngest interface {
+	Add(node string, entries []store.QueryLogEntry) error
+}
 
 // SetIngestBuffer makes shipped query logs wait in buf, which writes every
 // resolver's batches in one transaction per interval (see store.IngestBuffer).
@@ -1080,7 +1086,12 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 	}
 	s.priv.Ingest(entries, time.Now())
 	if s.ingest != nil {
-		s.ingest.Add(node.Name, entries)
+		if err := s.ingest.Add(node.Name, entries); err != nil {
+			// The database has been refusing writes: the resolver keeps the
+			// batch and ships it again.
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 	} else if err := s.store.InsertNodeQueryLog(node.Name, entries); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

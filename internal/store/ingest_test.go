@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -85,4 +86,61 @@ func TestIngestBufferFlushesWhenFull(t *testing.T) {
 	defer b.Close()
 	b.Add("r1", nodeEntries(maxIngestPending))
 	waitRows(t, s, int64(maxIngestPending))
+}
+
+// A batch the database keeps refusing is dropped after a few attempts and
+// never holds back the other resolvers' batches.
+func TestIngestBufferDropsAPoisonBatch(t *testing.T) {
+	s := openTestStore(t)
+	b := NewIngestBuffer(s, time.Hour)
+	defer b.Close()
+	b.insert = func(batches []NodeQueryLog) error {
+		for _, x := range batches {
+			if x.Node == "bad" {
+				return errors.New("refused")
+			}
+		}
+		return s.InsertNodeQueryLogs(batches)
+	}
+	_ = b.Add("good", nodeEntries(2))
+	_ = b.Add("bad", nodeEntries(1))
+	_ = b.Flush()
+	if got := countByNode(t, s); got["good"] != 2 {
+		t.Fatalf("rows by node = %v: the good batch must be written despite the bad one", got)
+	}
+	// Other resolvers keep shipping; the refused batch is dropped once it
+	// failed ingestAttempts flushes that wrote theirs.
+	for i := 1; i < ingestAttempts; i++ {
+		_ = b.Add("good", nodeEntries(1))
+		_ = b.Flush()
+	}
+	if b.Pending() != 0 {
+		t.Fatalf("%d entries still pending: the refused batch must be dropped after %d attempts", b.Pending(), ingestAttempts)
+	}
+	if got := countByNode(t, s); got["good"] != 2+ingestAttempts-1 {
+		t.Fatalf("rows by node = %v", got)
+	}
+}
+
+// While the database refuses everything, the buffer holds a bounded amount
+// and then refuses new batches (the resolver keeps them and ships again).
+func TestIngestBufferRefusesWhenFull(t *testing.T) {
+	s := openTestStore(t)
+	b := NewIngestBuffer(s, time.Hour)
+	defer b.Close()
+	b.insert = func([]NodeQueryLog) error { return errors.New("database down") }
+	if err := b.Add("r1", nodeEntries(MaxIngestHeld)); err != nil {
+		t.Fatalf("up to the limit: %v", err)
+	}
+	if err := b.Add("r1", nodeEntries(1)); !errors.Is(err, ErrIngestFull) {
+		t.Fatalf("past the limit: err = %v, want ErrIngestFull", err)
+	}
+	// A database that is down drops nothing: every batch fails alike.
+	for i := 0; i < ingestAttempts+1; i++ {
+		_ = b.Flush()
+	}
+	if b.Pending() != MaxIngestHeld {
+		t.Fatalf("pending = %d after failed flushes, want %d kept", b.Pending(), MaxIngestHeld)
+	}
+	b.insert = s.InsertNodeQueryLogs // let Close write
 }

@@ -38,3 +38,24 @@ func TestClusterLogUsesIngestBuffer(t *testing.T) {
 		t.Fatalf("after flush: %d rows, want 2", n)
 	}
 }
+
+// A full ingest buffer answers 503, so the resolver keeps its batch and ships
+// it again.
+func TestClusterLogFullIngestBuffer(t *testing.T) {
+	s, st := newEnrollServer(t, "", false)
+	if _, err := st.CreateNode("agent-a", hashKey("node-key"), "node"); err != nil {
+		t.Fatal(err)
+	}
+	s.ingest = fullIngest{}
+	r := httptest.NewRequest(http.MethodPost, "/api/cluster/log", strings.NewReader(`[{"ts":1,"name":"a.example.","action":"forward"}]`))
+	r.Header.Set("Authorization", "Bearer node-key")
+	rr := httptest.NewRecorder()
+	s.clusterLog(rr, r)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("full buffer: %d, want 503", rr.Code)
+	}
+}
+
+type fullIngest struct{}
+
+func (fullIngest) Add(string, []store.QueryLogEntry) error { return store.ErrIngestFull }

@@ -274,3 +274,31 @@ func TestStructuredOutputAnthropic(t *testing.T) {
 		t.Fatalf("verdict %+v %v", v, err)
 	}
 }
+
+// A CDN CNAME target carries the customer's hostname ("www.apple.com" on
+// akadns.net): no brand-in-subdomain there, but still on a publishing
+// platform, where anyone can put a brand in front.
+func TestBrandInSubdomainSkipsCDNTargets(t *testing.T) {
+	l := testLexicon(t)
+	score := func(name string) Score {
+		d := RegisteredDomain(name)
+		return computeScore(ScoreInput{Domain: d, Platform: HostingPlatform(name), Lex: l,
+			Behaviour: Behaviour{Queries: 1, Clients: 1, Subdomains: 1, Names: []string{name}}})
+	}
+	has := func(s Score) bool {
+		for _, f := range s.Factors {
+			if f.Label == "Brand in subdomain" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, n := range []string{"www.paypal.com.akadns.net", "www.paypal.com.edgesuite.net", "paypal.z01.azurefd.net"} {
+		if has(score(n)) {
+			t.Errorf("%s: brand in subdomain on a CDN target", n)
+		}
+	}
+	if !has(score("paypal.com.evil.github.io")) {
+		t.Error("paypal.com.evil.github.io: brand in subdomain missed on a publishing platform")
+	}
+}

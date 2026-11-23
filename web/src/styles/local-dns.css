@@ -50,7 +50,7 @@
   font-family: var(--mono);
   font-size: 11.5px;
 }
-:is(.pg-local-dns, .scoped-ui) .rw-table tr.off td:not(.rw-switch):not(.actions) {
+:is(.pg-local-dns, .scoped-ui) .rw-table tr.off td:not(.rw-switch):not(.actions):not(.rw-ctl) {
   opacity: 0.55;
 }
 :is(.pg-local-dns, .scoped-ui) .rw-table td.rw-switch {
@@ -132,6 +132,104 @@
   margin-left: 6px;
 }
 
+/* Denser rows: a long list of records reads as a list, not a form. */
+:is(.pg-local-dns, .scoped-ui) .rw-table tbody td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+/* Grouped by zone: a header row per zone, records indented under it with
+   their short name. */
+:is(.pg-local-dns, .scoped-ui) .rw-table tr.rw-zone th {
+  text-align: left;
+  padding: 6px 12px;
+  background: var(--sunk);
+  border-top: 1px solid var(--soft);
+  border-bottom: 1px solid var(--soft);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-table tbody.rw-group:first-of-type tr.rw-zone th {
+  border-top: 0;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-zone-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: none;
+  padding: 2px 4px 2px 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-zone-btn .domain {
+  font-weight: 600;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-zone-btn .muted {
+  font-size: 12.5px;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-zone-btn svg {
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-zone-btn svg.folded {
+  transform: rotate(-90deg);
+}
+:is(.pg-local-dns, .scoped-ui) .rw-zone-btn:focus-visible,
+:is(.pg-local-dns, .scoped-ui) .icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-table.grouped td.lead {
+  padding-left: 36px; /* under the zone name, past the chevron */
+}
+:is(.pg-local-dns, .scoped-ui) .rw-hint {
+  font-family: var(--sans);
+  font-size: 12.5px;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-everyone {
+  font-size: 12.5px;
+}
+
+/* Switch and icon actions, right-aligned in one cell. */
+:is(.pg-local-dns, .scoped-ui) .rw-table td.rw-ctl {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-ctl-in {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+:is(.pg-local-dns, .scoped-ui) .rw-ctl-in .switch-btn {
+  margin: 0 6px 0 0;
+}
+:is(.pg-local-dns, .scoped-ui) .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+:is(.pg-local-dns, .scoped-ui) .icon-btn:hover {
+  background: var(--raise);
+  color: var(--text);
+}
+:is(.pg-local-dns, .scoped-ui) .icon-btn.rw-del:hover {
+  color: var(--block);
+  background: color-mix(in srgb, var(--block) 10%, transparent);
+}
 @media (max-width: 900px) {
   :is(.pg-local-dns, .scoped-ui) .rw-addrow,
   :is(.pg-local-dns, .scoped-ui) .rw-addrow.fw {
@@ -168,5 +266,20 @@
   }
   :is(.pg-local-dns, .scoped-ui) table.stackable td .domain {
     color: var(--text);
+  }
+  /* A zone header stays a full-width bar above its cards. */
+  :is(.pg-local-dns, .scoped-ui) table.stackable tr.rw-zone {
+    display: block;
+    padding: 0;
+  }
+  :is(.pg-local-dns, .scoped-ui) table.stackable tr.rw-zone th {
+    display: block;
+    padding: 8px 16px;
+  }
+  :is(.pg-local-dns, .scoped-ui) .rw-table.grouped td.lead {
+    padding-left: 0;
+  }
+  :is(.pg-local-dns, .scoped-ui) table.stackable td.rw-ctl {
+    width: auto;
   }
 }

@@ -230,6 +230,30 @@ export interface AuthInfo {
   setup_required: boolean
 }
 
+// ClientGroup / BlockSchedule mirror resolver.ClientGroup / BlockSchedule:
+// domains or categories blocked during a weekly time window (GET/PUT /api/schedules).
+export interface ClientGroup {
+  name: string
+  members: string[] // IPs or CIDR ranges
+}
+
+export interface BlockSchedule {
+  name: string
+  enabled: boolean
+  domains?: string[]
+  categories?: string[]
+  days: number[] // 0 = Sunday … 6 = Saturday
+  start: string // "HH:MM"
+  end: string // at or before start = runs past midnight; equal = all day
+  time_zone?: string
+  groups?: string[] // empty = everyone
+}
+
+export interface Schedules {
+  client_groups: ClientGroup[]
+  schedules: BlockSchedule[]
+}
+
 // TestQuery* mirror the "Test a query" tool (POST /api/tools/resolve).
 export interface TestQueryRecord {
   name: string
@@ -259,6 +283,8 @@ export interface TestQueryResult {
   rewrite_yielded?: string
   category?: string
   category_block?: boolean
+  schedule?: string
+  client?: string
   allowed?: boolean
   block_paused?: boolean
   forwarder?: string
@@ -1048,7 +1074,18 @@ export const api = {
   deleteEnrollKey: (id: string) =>
     fetch(`/api/cluster/enroll-keys/${encodeURIComponent(id)}?forever=true`, { method: 'DELETE' }).then(ok),
   clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
-  testQuery: (q: { name: string; type: string; node?: string; site?: string; dnssec?: boolean; forward_blocked?: boolean }) =>
+  schedules: () => fetch('/api/schedules').then(j<Schedules>),
+  saveSchedules: (body: Schedules) =>
+    fetch('/api/schedules', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(body) }).then(j<Schedules>),
+  testQuery: (q: {
+    name: string
+    type: string
+    node?: string
+    site?: string
+    client?: string
+    dnssec?: boolean
+    forward_blocked?: boolean
+  }) =>
     fetch('/api/tools/resolve', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(q) }).then(j<TestQueryResult>),
   createSite: (name: string, description = '') =>
     fetch('/api/cluster/sites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name, description }) }).then(j),

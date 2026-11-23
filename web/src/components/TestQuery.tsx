@@ -52,7 +52,24 @@ function verdict(r: TestQueryResult): { tone: 'ok' | 'bad' | 'warn' | ''; title:
       return {
         tone: 'bad',
         title: 'Blocked',
-        detail: r.category_block ? (
+        detail: r.schedule ? (
+          <>
+            The schedule <b>{r.schedule}</b> is on right now
+            {r.client ? (
+              <>
+                {' '}
+                and covers <b className="mono">{r.client}</b>
+              </>
+            ) : null}
+            {r.category && r.category !== 'scheduled' ? (
+              <>
+                {' '}
+                (category <b>{r.category}</b>)
+              </>
+            ) : null}
+            .
+          </>
+        ) : r.category_block ? (
           <>
             The category <b>{r.category}</b> is blocked network-wide.
           </>
@@ -131,6 +148,7 @@ export default function TestQuery({ initialName = '', onClose }: { initialName?:
   const [name, setName] = useState(initialName)
   const [type, setType] = useState('A')
   const [view, setView] = useState('')
+  const [client, setClient] = useState('')
   const [forwardBlocked, setForwardBlocked] = useState(false)
   const [nodes, setNodes] = useState<string[]>([])
   const [sites, setSites] = useState<string[]>([])
@@ -152,7 +170,15 @@ export default function TestQuery({ initialName = '', onClose }: { initialName?:
     setBusy(true)
     setErr('')
     try {
-      setRes(await api.testQuery({ name: name.trim(), type, ...parseView(view), forward_blocked: forwardBlocked }))
+      setRes(
+        await api.testQuery({
+          name: name.trim(),
+          type,
+          ...parseView(view),
+          client: client.trim() || undefined,
+          forward_blocked: forwardBlocked,
+        }),
+      )
     } catch (e) {
       setRes(null)
       setErr(errMsg(e))
@@ -227,6 +253,16 @@ export default function TestQuery({ initialName = '', onClose }: { initialName?:
             )}
           </select>
         </label>
+        <label className="field">
+          <span>Client IP</span>
+          <input
+            className="mono"
+            placeholder="optional, for schedules"
+            value={client}
+            onChange={(e) => setClient(e.target.value)}
+            spellCheck={false}
+          />
+        </label>
         <label className="tq-check">
           <input type="checkbox" checked={forwardBlocked} onChange={(e) => setForwardBlocked(e.target.checked)} />
           <span>Show what a blocked name would resolve to</span>
@@ -256,6 +292,11 @@ export default function TestQuery({ initialName = '', onClose }: { initialName?:
               {res.allowed && (
                 <p className="muted">
                   An allow rule lets this name through: it would be blocked otherwise (category <b>{res.category}</b>).
+                </p>
+              )}
+              {res.schedule && res.decision !== 'blocked' && (
+                <p className="muted">
+                  The schedule <b>{res.schedule}</b> is on right now and would block this name.
                 </p>
               )}
               {res.block_paused && (

@@ -1,0 +1,115 @@
+/* Filtering → Schedules (Schedules.tsx). */
+
+.sched {
+  display: grid;
+  gap: 16px;
+}
+.sched .card-head {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+.sched .card-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.sched .card-head .sub {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin: 4px 0 12px;
+  max-width: 68ch;
+}
+.sched-empty {
+  padding: 4px 20px 18px;
+  margin: 0;
+}
+.sched .sched-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.sched-row .grow {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.sched-row .grow b {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+.sched-row small {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.sched-row.off b {
+  color: var(--muted);
+}
+.sched-act {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sched-switch input {
+  width: 16px;
+  height: 16px;
+}
+
+.sched-form {
+  display: grid;
+  gap: 14px;
+}
+.sched-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.sched-form legend {
+  padding: 0;
+  margin-bottom: 6px;
+}
+.sched-days,
+.sched-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sched-times {
+  display: grid;
+  grid-template-columns: 110px 110px minmax(0, 1fr);
+  gap: 10px;
+}
+.sched-hint {
+  font-size: 12.5px;
+  margin: -6px 0 0;
+}
+.sched-radio {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-weight: 400;
+  margin: 2px 0;
+}
+
+@media (max-width: 640px) {
+  .sched .card-head {
+    flex-wrap: wrap;
+  }
+  .sched-times {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sched-times .field:last-child {
+    grid-column: 1 / -1;
+  }
+  .sched .sched-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sched .rowlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.sched .card-head > div {
+  flex: 1;
+  min-width: 0;
+}

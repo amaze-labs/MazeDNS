@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +64,8 @@ type testQueryRequest struct {
 	Site           string `json:"site,omitempty"`
 	DNSSEC         bool   `json:"dnssec,omitempty"`
 	ForwardBlocked bool   `json:"forward_blocked,omitempty"`
+	// Client is the client IP to evaluate for (schedules for client groups).
+	Client string `json:"client,omitempty"`
 }
 
 type testQueryRecord struct {
@@ -93,6 +97,8 @@ type testQueryResponse struct {
 	RewriteYielded string   `json:"rewrite_yielded,omitempty"`
 	Category       string   `json:"category,omitempty"`
 	CategoryBlock  bool     `json:"category_block,omitempty"`
+	Schedule       string   `json:"schedule,omitempty"`
+	Client         string   `json:"client,omitempty"`
 	Allowed        bool     `json:"allowed,omitempty"`
 	BlockPaused    bool     `json:"block_paused,omitempty"`
 	Forwarder      string   `json:"forwarder,omitempty"`
@@ -151,6 +157,15 @@ func (s *Server) testQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	client := strings.TrimSpace(in.Client)
+	if client != "" {
+		a, err := netip.ParseAddr(client)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "client is not an IP address")
+			return
+		}
+		client = a.Unmap().String()
+	}
 	nodeName, site := strings.TrimSpace(in.Node), strings.TrimSpace(in.Site)
 	if nodeName != "" {
 		n, ok, err := s.findNodeByName(nodeName)
@@ -185,7 +200,7 @@ func (s *Server) testQuery(w http.ResponseWriter, r *http.Request) {
 	req.SetQuestion(dns.Fqdn(name), qtype)
 	req.RecursionDesired = true
 	tr := s.res.Trace(req, view, resolver.TraceOptions{
-		CategoryDB: s.catDB, ForwardBlocked: in.ForwardBlocked, DNSSEC: in.DNSSEC,
+		CategoryDB: s.catDB, ForwardBlocked: in.ForwardBlocked, DNSSEC: in.DNSSEC, Client: client,
 	})
 	slog.Info("test query", "user", who, "name", name, "type", dns.TypeToString[qtype],
 		"node", nodeName, "site", site, "decision", tr.Decision)
@@ -193,7 +208,7 @@ func (s *Server) testQuery(w http.ResponseWriter, r *http.Request) {
 	out := testQueryResponse{
 		Name: name, Type: dns.TypeToString[qtype], Node: nodeName, Site: site, RanOn: "control-plane",
 		Decision: tr.Decision, Zone: tr.Zone, Rewrite: tr.Rewrite, RewriteYielded: tr.RewriteYielded,
-		Category: tr.Category, CategoryBlock: tr.CategoryBlock, Allowed: tr.Allowed, BlockPaused: tr.BlockPaused,
+		Category: tr.Category, CategoryBlock: tr.CategoryBlock, Schedule: tr.Schedule, Client: client, Allowed: tr.Allowed, BlockPaused: tr.BlockPaused,
 		Forwarder: tr.Forwarder, Upstream: tr.Upstream, Error: tr.Error,
 		Answer: answerOf(tr.Response),
 	}
@@ -226,7 +241,7 @@ func (s *Server) traceCategoryDomains() map[string]string {
 	if err != nil {
 		return out
 	}
-	for d, c := range s.categorizer.DomainsFor(set.BlockedCategories) {
+	for d, c := range s.categorizer.DomainsFor(append(slices.Clone(set.BlockedCategories), resolver.ScheduleCategories(set)...)) {
 		out[d] = c
 	}
 	return out

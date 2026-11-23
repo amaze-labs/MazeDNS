@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -214,6 +215,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("PUT /api/categories/override", s.requireRole(roleAdmin, s.putCategoryOverride))
 		mux.HandleFunc("DELETE /api/categories/override", s.requireRole(roleAdmin, s.deleteCategoryOverride))
 		mux.HandleFunc("PUT /api/categories/blocked", s.requireRole(roleAdmin, s.putBlockedCategories))
+		mux.HandleFunc("GET /api/schedules", s.requireRole(roleReadonly, s.getSchedules))
+		mux.HandleFunc("PUT /api/schedules", s.requireRole(roleAdmin, s.putSchedules))
 		mux.HandleFunc("GET /api/stats/insights", s.requireRole(roleReadonly, s.cached(s.getInsights)))
 		mux.HandleFunc("GET /api/stats/latency", s.requireRole(roleReadonly, s.cached(s.getLatency)))
 		mux.HandleFunc("GET /api/stats/top-domains", s.requireRole(roleReadonly, s.cached(s.getTopDomains)))
@@ -953,7 +956,8 @@ func (s *Server) replicatedSettings() (json.RawMessage, error) {
 	if s.categorizer != nil {
 		// Per-domain corrections for the blocked categories. Part of the
 		// settings payload, so its version changes with them and agents re-sync.
-		set.CategoryDomains = s.categorizer.DomainsFor(set.BlockedCategories)
+		// Schedules can block categories too: their corrections travel as well.
+		set.CategoryDomains = s.categorizer.DomainsFor(append(slices.Clone(set.BlockedCategories), resolver.ScheduleCategories(set)...))
 	}
 	// The VictoriaMetrics export, so every agent's metrics are exported — the
 	// query counters live on the agents; the control plane answers no queries.
@@ -1796,6 +1800,13 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		cur, curErr := s.loadSettings()
 		if _, sent := keys["blocked_categories"]; !sent && curErr == nil {
 			in.BlockedCategories = cur.BlockedCategories
+		}
+		// Schedules and client groups have their own endpoint too.
+		if _, sent := keys["schedules"]; !sent && curErr == nil {
+			in.Schedules = cur.Schedules
+		}
+		if _, sent := keys["client_groups"]; !sent && curErr == nil {
+			in.ClientGroups = cur.ClientGroups
 		}
 		// Likewise the privacy level: a save that doesn't mention it must never
 		// quietly turn privacy off.

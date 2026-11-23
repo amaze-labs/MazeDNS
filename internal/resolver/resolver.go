@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -122,6 +123,10 @@ type Settings struct {
 	// network-wide: each agent loads the category database for just these and
 	// blocks what it lists, unless an allow rule says otherwise.
 	BlockedCategories []string `json:"blocked_categories,omitempty"`
+	// ClientGroups and Schedules block domains or categories during weekly
+	// time windows, for everyone or some groups of clients (see schedule.go).
+	ClientGroups []ClientGroup   `json:"client_groups,omitempty"`
+	Schedules    []BlockSchedule `json:"schedules,omitempty"`
 	// CategoryDomains corrects the category database per domain (registered
 	// domain -> category): operator overrides, and the language model's labels
 	// in blocked categories. Filled in by the control plane when it replicates
@@ -197,6 +202,8 @@ type runtime struct {
 	// per-domain corrections to the category database (Settings.CategoryDomains).
 	blockedCats map[string]bool
 	catDomains  map[string]string
+	// schedules are the enabled time-window blocks.
+	schedules []compiledSchedule
 	// privacyLevel, privacyDetailHours and privacyDomainK are the Settings
 	// fields of the same names.
 	privacyLevel       int
@@ -419,18 +426,22 @@ func (r *Resolver) ApplySettings(s Settings) {
 				time.Duration(s.Cache.MinTTLSec)*time.Second, time.Duration(s.Cache.MaxTTLSec)*time.Second)
 		}
 	}
+	rt.schedules = compileSchedules(s.Schedules, s.ClientGroups)
+	schedCats := ScheduleCategories(s)
 	if len(s.BlockedCategories) > 0 {
 		rt.blockedCats = make(map[string]bool, len(s.BlockedCategories))
 		for _, c := range s.BlockedCategories {
 			rt.blockedCats[c] = true
 		}
+	}
+	if len(s.BlockedCategories) > 0 || len(schedCats) > 0 {
 		rt.catDomains = make(map[string]string, len(s.CategoryDomains))
 		for d, c := range s.CategoryDomains {
 			rt.catDomains[strings.ToLower(strings.TrimSuffix(d, "."))] = c
 		}
 	}
 	if db := r.catDB.Load(); db != nil {
-		db.SetWanted(s.BlockedCategories)
+		db.SetWanted(append(slices.Clone(s.BlockedCategories), schedCats...))
 	}
 	r.rt.Store(rt)
 	slog.Info("settings applied", "upstreams", len(rt.defaultUpstreams), "forwarders", len(rt.conditional),
@@ -655,6 +666,13 @@ func (r *Resolver) resolve(req *dns.Msg, client string, via *route) (*dns.Msg, s
 		if cat, blocked := r.blockedCategory(rt, name); blocked && !pol.Allow.IsBlockedNormalized(name) {
 			r.stats.Blocked.Add(1)
 			return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
+		}
+		// 3c. A schedule open right now that covers this client (downtime).
+		if len(rt.schedules) > 0 {
+			if _, cat, blocked := scheduledBlock(rt, r.catDB.Load(), name, client, time.Now()); blocked && !pol.Allow.IsBlockedNormalized(name) {
+				r.stats.Blocked.Add(1)
+				return r.blockedResponse(req, q, rt.blockMode), "blocked", cat
+			}
 		}
 	}
 

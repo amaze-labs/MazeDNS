@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type ClassifierStatus, type List, type Protection, type Rule } from '../api'
 import { pollWhileVisible } from '../poll'
 import Lists from './Lists'
+import Schedules from './Schedules'
 import TestQuery from './TestQuery'
 import Rules from './Rules'
 import Classifier from './Classifier'
@@ -9,7 +10,7 @@ import CategoryBlocking from './CategoryBlocking'
 import { useCategories } from '../categories'
 import '../styles/filtering.css'
 
-type Sub = 'review' | 'lists' | 'categories' | 'rules'
+type Sub = 'review' | 'lists' | 'categories' | 'rules' | 'schedules'
 
 // Pause presets for the global block switch (seconds; 0 = until resumed).
 const PAUSE_PRESETS = [
@@ -37,7 +38,7 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
   // A tab can be linked to: /filtering?tab=categories.
   const [sub, setSub] = useState<Sub>(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
-    return t === 'review' || t === 'lists' || t === 'categories' || t === 'rules' ? t : classifier ? 'review' : 'lists'
+    return t === 'review' || t === 'lists' || t === 'categories' || t === 'rules' || t === 'schedules' ? t : classifier ? 'review' : 'lists'
   })
   // If the classifier gets disabled while Review is open, fall back.
   const active: Sub = sub === 'review' && !classifier ? 'lists' : sub
@@ -273,6 +274,9 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
         <button role="tab" aria-selected={active === 'rules'} className={active === 'rules' ? 'on' : ''} onClick={() => setSub('rules')}>
           Your rules {rulesLoaded && <span className="n">{rules.length.toLocaleString()}</span>}
         </button>
+        <button role="tab" aria-selected={active === 'schedules'} className={active === 'schedules' ? 'on' : ''} onClick={() => setSub('schedules')}>
+          Schedules
+        </button>
         {classifier && (
           <button role="tab" aria-selected={active === 'review'} className={active === 'review' ? 'on' : ''} onClick={() => setSub('review')}>
             Review {info && <span className={`n${toCheck > 0 ? ' warn' : ''}`}>{toCheck > 0 ? `${toCheck.toLocaleString()} to check` : 'all clear'}</span>}
@@ -287,6 +291,7 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
       {active === 'rules' && (
         <Rules rules={rules} loaded={rulesLoaded} loadErr={rulesErr} reload={loadRules} canEdit={canEdit} />
       )}
+      {active === 'schedules' && <Schedules canEdit={canEdit} />}
       {active === 'review' && <Classifier info={info} infoErr={infoErr} reloadInfo={loadInfo} canEdit={canEdit} />}
     </div>
   )

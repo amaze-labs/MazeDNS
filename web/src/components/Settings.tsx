@@ -122,10 +122,12 @@ const upstreamDisplay = (r: UpRow): { addr: string; sub: string } => {
 // to tell whether the resolver section has unsaved changes. Its `forwarders`
 // (the control plane's own, which it never uses: it answers no queries) pass
 // through untouched; conditional forwarding is the cluster list instead.
-const resolverBody = (s: S, upstreamsText: string): S => ({
-  ...s,
-  upstreams: linesToList(upstreamsText),
-})
+// Schedules and client groups have their own endpoint (Filtering → Schedules):
+// never send back the copy this page loaded, which may be stale by now.
+const resolverBody = (s: S, upstreamsText: string): S => {
+  const { client_groups: _groups, schedules: _schedules, ...rest } = s as S & { client_groups?: unknown; schedules?: unknown }
+  return { ...rest, upstreams: linesToList(upstreamsText) }
+}
 
 type View = 'resolver' | 'access' | 'classification' | 'integrations' | 'backup' | 'about'
 const VIEW_LABEL: Record<View, string> = {

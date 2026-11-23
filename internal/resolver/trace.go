@@ -38,6 +38,11 @@ type TraceOptions struct {
 	ForwardBlocked bool
 	// DNSSEC asks the upstream for the signed answer (DO bit).
 	DNSSEC bool
+	// Client is the client address the query is evaluated for (client-group
+	// schedules); empty = an unknown client, which only everyone-schedules
+	// cover. Now is the time schedules are evaluated at (zero = now).
+	Client string
+	Now    time.Time
 }
 
 // TraceResult says how a query was decided, step by step.
@@ -60,6 +65,9 @@ type TraceResult struct {
 	// CategoryBlock is set when the block came from a network-wide blocked
 	// category (not a rule or list).
 	CategoryBlock bool
+	// Schedule is the time-window block that matched (blocked, or let through
+	// by an allow rule or the pause).
+	Schedule string
 	// Allowed is set when a block matched but an allow rule exempts the name.
 	Allowed bool
 	// BlockPaused is set when blocking is paused; Category then says what would
@@ -131,11 +139,19 @@ func (r *Resolver) Trace(req *dns.Msg, view *TraceView, opts TraceOptions) Trace
 		}
 	}
 
-	// 3. Blocking: rules and lists, then network-wide categories.
+	// 3. Blocking: rules and lists, then network-wide categories, then the
+	// schedules open now that cover the client.
 	cat, blocked := pol.Block.MatchNormalized(name)
 	if !blocked {
 		cat, blocked = blockedCategoryIn(rt, db, name)
 		res.CategoryBlock = blocked
+	}
+	if !blocked {
+		now := opts.Now
+		if now.IsZero() {
+			now = time.Now()
+		}
+		res.Schedule, cat, blocked = scheduledBlock(rt, db, name, opts.Client, now)
 	}
 	if blocked {
 		res.Category = cat

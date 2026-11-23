@@ -2,7 +2,7 @@
 
 .tq-form {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) 110px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.6fr) 110px minmax(0, 1fr) minmax(0, 0.9fr);
   gap: 10px 12px;
   align-items: start;
 }

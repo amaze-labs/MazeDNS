@@ -127,3 +127,56 @@ func TestOIDCLoaderStopsOnContextCancel(t *testing.T) {
 		t.Fatal("provider installed despite failures")
 	}
 }
+
+// statusLoader is fakeLoader wired to a real auth.Manager, the way main wires it,
+// so the tests see the SSO status the UI gets.
+func statusLoader(fails int32) (*oidcLoader, *auth.Manager, map[string]*auth.OIDCProvider) {
+	l, _, _, prov := fakeLoader(fails)
+	m := auth.NewManager(nil, nil, time.Hour)
+	l.install, l.status = m.SetOIDC, m
+	return l, m, prov
+}
+
+// Issue #94: SSO switched on but the issuer unreachable must read as
+// "configured, unavailable" with the reason, not as "SSO off".
+func TestOIDCStatusReportsBootFailureUntilUp(t *testing.T) {
+	l, m, _ := statusLoader(3)
+	l.Start(context.Background(), store.OIDCSettings{Enabled: true, Issuer: "boot"})
+	waitFor(t, func() bool { return m.OIDCStatus().Available })
+	st := m.OIDCStatus()
+	if !st.Configured || st.Error != "" || st.Retrying {
+		t.Fatalf("after recovery: %+v, want configured, no error", st)
+	}
+
+	l, m, _ = statusLoader(1 << 30)
+	l.Start(context.Background(), store.OIDCSettings{Enabled: true, Issuer: "boot"})
+	st = m.OIDCStatus()
+	if !st.Configured || st.Available || !st.Retrying || st.Error != "issuer unreachable" || st.ErrorAt == 0 {
+		t.Fatalf("while down: %+v", st)
+	}
+	// Turning SSO off clears the failure.
+	if err := l.Apply(store.OIDCSettings{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if st := m.OIDCStatus(); st != (auth.OIDCStatus{}) {
+		t.Fatalf("after disable: %+v, want zero", st)
+	}
+}
+
+func TestOIDCStatusApplyFailureKeepsProvider(t *testing.T) {
+	l, m, prov := statusLoader(0)
+	l.Start(context.Background(), store.OIDCSettings{Enabled: true, Issuer: "new"})
+	if m.OIDC() != prov["new"] {
+		t.Fatal("provider not installed")
+	}
+	l.build = func(context.Context, store.OIDCSettings) (*auth.OIDCProvider, error) {
+		return nil, errors.New("bad issuer")
+	}
+	if err := l.Apply(store.OIDCSettings{Enabled: true, Issuer: "typo"}); err == nil {
+		t.Fatal("Apply succeeded, want error")
+	}
+	st := m.OIDCStatus()
+	if !st.Available || st.Error != "bad issuer" || st.Retrying {
+		t.Fatalf("after failed apply: %+v, want old provider kept, error shown, no retry", st)
+	}
+}

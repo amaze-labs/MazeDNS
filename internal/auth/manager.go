@@ -35,6 +35,9 @@ type Manager struct {
 	mu    sync.RWMutex
 	oidc  *OIDCProvider // nil if OIDC is not configured
 	ttl   time.Duration
+	// oidcState says why oidc may be nil although SSO is switched on: the last
+	// provider build failed (and whether a background retry is running).
+	oidcState OIDCStatus
 	// tokenTouched maps an API token id to the last last_used_at written (unix
 	// secs), so its use is recorded at most once per apiTokenTouchEvery.
 	tokenTouched sync.Map
@@ -53,7 +56,53 @@ func NewManager(st *store.Store, oidc *OIDCProvider, ttl time.Duration) *Manager
 func (m *Manager) SetOIDC(p *OIDCProvider) {
 	m.mu.Lock()
 	m.oidc = p
+	if p != nil {
+		m.oidcState = OIDCStatus{Configured: true}
+	}
 	m.mu.Unlock()
+}
+
+// OIDCStatus is the state of single sign-on as the UI shows it. Configured means
+// SSO is switched on in the settings; Available means a provider is loaded and
+// the sign-in button works. Error is the last failed provider build (issuer
+// discovery), Retrying whether a background retry is still running.
+type OIDCStatus struct {
+	Configured bool   `json:"configured"`
+	Available  bool   `json:"available"`
+	Error      string `json:"error,omitempty"`
+	ErrorAt    int64  `json:"error_at,omitempty"` // unix seconds
+	Retrying   bool   `json:"retrying,omitempty"`
+}
+
+// SetOIDCConfigured records whether SSO is switched on in the settings and
+// clears any earlier failure (a new attempt is starting).
+func (m *Manager) SetOIDCConfigured(on bool) {
+	m.mu.Lock()
+	m.oidcState = OIDCStatus{Configured: on}
+	m.mu.Unlock()
+}
+
+// SetOIDCError records a failed provider build. The current provider, if any,
+// stays installed.
+func (m *Manager) SetOIDCError(err error, retrying bool) {
+	if err == nil {
+		return
+	}
+	m.mu.Lock()
+	m.oidcState.Configured = true
+	m.oidcState.Error = err.Error()
+	m.oidcState.ErrorAt = time.Now().Unix()
+	m.oidcState.Retrying = retrying
+	m.mu.Unlock()
+}
+
+// OIDCStatus reports the current SSO state.
+func (m *Manager) OIDCStatus() OIDCStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	st := m.oidcState
+	st.Available = m.oidc != nil
+	return st
 }
 
 // SetSessionTTL updates the session lifetime for newly-issued sessions/cookies.

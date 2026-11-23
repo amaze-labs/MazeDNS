@@ -221,12 +221,23 @@ export interface MFASetup {
 export interface AuthInfo {
   auth_enabled: boolean
   oidc_enabled: boolean
+  oidc_unavailable?: boolean // SSO switched on, but its provider failed to load
   password_login_disabled: boolean
   oidc_auto_login: boolean
   cluster_enabled: boolean
   classifier_available: boolean
   classifier_enabled: boolean
   setup_required: boolean
+}
+
+// OIDCStatus mirrors auth.OIDCStatus: whether SSO is switched on, whether its
+// provider actually loaded, and if not, why (admin-only).
+export interface OIDCStatus {
+  configured: boolean
+  available: boolean
+  error?: string
+  error_at?: number // unix seconds
+  retrying?: boolean
 }
 
 // CPSettings mirrors store.CPSettings (control-plane runtime settings). The OIDC
@@ -624,11 +635,21 @@ export const api = {
   // control-plane runtime settings
   cpSettings: () =>
     fetch('/api/settings/cp').then(
-      j<{ settings: CPSettings; oidc_has_client_secret: boolean; has_metrics_scrape_token: boolean }>,
+      j<{
+        settings: CPSettings
+        oidc_has_client_secret: boolean
+        has_metrics_scrape_token: boolean
+        oidc_status?: OIDCStatus
+      }>,
     ),
   saveCPSettings: (s: CPSettings) =>
     fetch('/api/settings/cp', { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(s) }).then(
-      j<{ settings: CPSettings; oidc_has_client_secret: boolean; has_metrics_scrape_token: boolean }>,
+      j<{
+        settings: CPSettings
+        oidc_has_client_secret: boolean
+        has_metrics_scrape_token: boolean
+        oidc_status?: OIDCStatus
+      }>,
     ),
   generateMetricsToken: () =>
     fetch('/api/settings/metrics-token', { method: 'POST', headers: jsonHeaders }).then(

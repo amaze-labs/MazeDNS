@@ -19,8 +19,9 @@ import (
 type oidcLoader struct {
 	build      func(context.Context, store.OIDCSettings) (*auth.OIDCProvider, error)
 	install    func(*auth.OIDCProvider)
-	timeout    time.Duration // per discovery attempt
-	backoff    time.Duration // first retry delay, doubled up to maxBackoff
+	status     oidcStatusSink // optional: records why SSO is off, for the UI
+	timeout    time.Duration  // per discovery attempt
+	backoff    time.Duration  // first retry delay, doubled up to maxBackoff
 	maxBackoff time.Duration
 
 	mu     sync.Mutex
@@ -28,10 +29,18 @@ type oidcLoader struct {
 	cancel context.CancelFunc // stops the pending boot retry, if any
 }
 
-func newOIDCLoader(install func(*auth.OIDCProvider)) *oidcLoader {
+// oidcStatusSink receives the loader's outcome so the UI can tell "SSO is on but
+// unavailable" apart from "SSO is off" (auth.Manager implements it).
+type oidcStatusSink interface {
+	SetOIDCConfigured(on bool)
+	SetOIDCError(err error, retrying bool)
+}
+
+func newOIDCLoader(install func(*auth.OIDCProvider), status oidcStatusSink) *oidcLoader {
 	return &oidcLoader{
 		build:      buildOIDC,
 		install:    install,
+		status:     status,
 		timeout:    15 * time.Second,
 		backoff:    5 * time.Second,
 		maxBackoff: 5 * time.Minute,
@@ -42,10 +51,12 @@ func newOIDCLoader(install func(*auth.OIDCProvider)) *oidcLoader {
 // retrying in the background until it succeeds, ctx ends, or Apply supersedes it.
 func (l *oidcLoader) Start(ctx context.Context, o store.OIDCSettings) bool {
 	gen, ctx := l.begin(ctx)
+	l.configuredIf(gen, o.Enabled)
 	p, err := l.attempt(ctx, o)
 	if err == nil {
 		return l.installIf(gen, p)
 	}
+	l.failedIf(gen, err, true)
 	slog.Error("oidc init failed; SSO is off until the issuer is reachable, retrying in the background",
 		"issuer", o.Issuer, "err", err)
 	go l.retry(ctx, gen, o)
@@ -56,12 +67,14 @@ func (l *oidcLoader) Start(ctx context.Context, o store.OIDCSettings) bool {
 // any pending boot retry. On error the current provider is left as it is.
 func (l *oidcLoader) Apply(o store.OIDCSettings) error {
 	gen, ctx := l.begin(context.Background())
+	l.configuredIf(gen, o.Enabled)
 	if !o.Enabled {
 		l.installIf(gen, nil)
 		return nil
 	}
 	p, err := l.attempt(ctx, o)
 	if err != nil {
+		l.failedIf(gen, err, false)
 		return err
 	}
 	l.installIf(gen, p)
@@ -98,6 +111,24 @@ func (l *oidcLoader) installIf(gen uint64, p *auth.OIDCProvider) bool {
 	return true
 }
 
+// configuredIf and failedIf report status for gen only while it is the latest
+// generation, so a superseded attempt never overwrites a newer outcome.
+func (l *oidcLoader) configuredIf(gen uint64, on bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if gen == l.gen && l.status != nil {
+		l.status.SetOIDCConfigured(on)
+	}
+}
+
+func (l *oidcLoader) failedIf(gen uint64, err error, retrying bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if gen == l.gen && l.status != nil {
+		l.status.SetOIDCError(err, retrying)
+	}
+}
+
 func (l *oidcLoader) retry(ctx context.Context, gen uint64, o store.OIDCSettings) {
 	delay := l.backoff
 	for attempt := 2; ; attempt++ {
@@ -116,6 +147,7 @@ func (l *oidcLoader) retry(ctx context.Context, gen uint64, o store.OIDCSettings
 		if ctx.Err() != nil {
 			return
 		}
+		l.failedIf(gen, err, true)
 		delay = min(delay*2, l.maxBackoff)
 		slog.Warn("oidc init retry failed", "issuer", o.Issuer, "attempt", attempt, "next_in", delay, "err", err)
 	}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { api, type Rewrite } from '../api'
 import EditScopedModal from './EditScopedModal'
+import TestQuery from './TestQuery'
 import ScopePicker, { ALL_SCOPE, scopeBadge, useIsAdmin, type Scope } from './ScopePicker'
 import { useTable, Th, Pager, SearchBox, TableStatusRow, type SortAccessors } from './tableKit'
 import { invalidateAllClientNames } from '../useClientNames'
@@ -23,6 +24,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e)) || '
 
 export default function LocalDNS() {
   const admin = useIsAdmin() === true
+  const [testing, setTesting] = useState(false)
   const [rows, setRows] = useState<Rewrite[]>([])
   const [loaded, setLoaded] = useState(false)
   const [domain, setDomain] = useState('')
@@ -156,7 +158,12 @@ export default function LocalDNS() {
     <div className="pg-local-dns">
       <header className="page-head">
         <h1>Local DNS</h1>
+        <span className="spacer" />
+        <button className="btn sm" onClick={() => setTesting(true)}>
+          Test a query
+        </button>
       </header>
+      {testing && <TestQuery onClose={() => setTesting(false)} />}
       <p className="intro">
         Answer names on your own network. Records are pushed to every resolver; scope one to a site or a single resolver for
         split-horizon answers. To send a whole domain to another DNS server, use the conditional forwarders in{' '}

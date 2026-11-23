@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type ClassifierStatus, type List, type Protection, type Rule } from '../api'
 import { pollWhileVisible } from '../poll'
 import Lists from './Lists'
+import TestQuery from './TestQuery'
 import Rules from './Rules'
 import Classifier from './Classifier'
 import CategoryBlocking from './CategoryBlocking'
@@ -32,6 +33,7 @@ function fmtLeft(s: number): string {
 // (protection state, list/rule/review counts, the viewer's role) so the header
 // and tab counts stay current whichever tab is open.
 export default function Filtering({ classifier = false }: { classifier?: boolean }) {
+  const [testing, setTesting] = useState(false)
   // A tab can be linked to: /filtering?tab=categories.
   const [sub, setSub] = useState<Sub>(() => {
     const t = new URLSearchParams(window.location.search).get('tab')
@@ -194,7 +196,11 @@ export default function Filtering({ classifier = false }: { classifier?: boolean
             {st?.mode === 'off' ? 'Classifier paused' : 'Classifier on'} · {aiOn ? `static analysis + ${st?.model}` : 'static analysis'}
           </span>
         )}
+        <button className="btn sm" onClick={() => setTesting(true)}>
+          Test a query
+        </button>
       </header>
+      {testing && <TestQuery onClose={() => setTesting(false)} />}
 
       <section className={`card protect${prot?.paused ? ' paused' : ''}`}>
         {!prot ? (

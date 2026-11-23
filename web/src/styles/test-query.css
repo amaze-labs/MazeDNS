@@ -1,0 +1,76 @@
+/* "Test a query" tool (TestQuery.tsx). */
+
+.tq-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) 110px minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: start;
+}
+.tq-form .tq-check {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.tq-hint {
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.tq-result {
+  margin-top: 18px;
+}
+.tq-result h3 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  margin: 18px 0 8px;
+}
+.tq-result .tq-rcode {
+  font-weight: 400;
+  font-size: 13px;
+}
+.tq-result .callout p {
+  margin: 4px 0 0;
+}
+.tq-empty {
+  margin: 0;
+}
+.tq-foot {
+  font-size: 12.5px;
+  margin: 16px 0 0;
+}
+
+.tq-records {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.tq-records th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.tq-records td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.tq-records .num {
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  .tq-form {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .tq-form .tq-name {
+    grid-column: 1 / -1;
+  }
+}

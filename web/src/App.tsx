@@ -207,6 +207,7 @@ export default function App() {
     return (
       <Login
         oidc={!!info?.oidc_enabled}
+        ssoUnavailable={!!info?.oidc_unavailable}
         passwordDisabled={!!info?.password_login_disabled}
         autoLogin={!!info?.oidc_auto_login}
         onLogin={() => refresh()}

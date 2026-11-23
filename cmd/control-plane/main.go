@@ -94,7 +94,7 @@ func main() {
 
 	// Auth: DB-backed session TTL + optional OIDC (built from DB settings).
 	authMgr := auth.NewManager(st, nil, time.Duration(cpset.SessionTTLSec)*time.Second)
-	oidcLoad := newOIDCLoader(authMgr.SetOIDC)
+	oidcLoad := newOIDCLoader(authMgr.SetOIDC, authMgr)
 	if cfg.Auth.Enabled {
 		if cpset.OIDC.Enabled && oidcLoad.Start(context.Background(), cpset.OIDC) {
 			slog.Info("oidc enabled", "issuer", cpset.OIDC.Issuer, "redirect_uri", cpset.OIDC.RedirectURL)

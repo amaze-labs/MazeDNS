@@ -1386,9 +1386,17 @@ func (s *Server) authInfo(w http.ResponseWriter, _ *http.Request) {
 		enabled = classifier.LoadSettings(s.store, classifier.Settings{}).Enabled
 	}
 	oidcOn := s.authEnabled && s.auth.OIDCEnabled()
+	// SSO switched on but its provider failed to load: the sign-in page says so
+	// instead of silently dropping the button. The reason (issuer URL, network
+	// error) stays admin-only, in the access settings.
+	oidcUnavailable := false
+	if s.authEnabled && !oidcOn {
+		oidcUnavailable = s.auth.OIDCStatus().Configured
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"auth_enabled":            s.authEnabled,
 		"oidc_enabled":            oidcOn,
+		"oidc_unavailable":        oidcUnavailable,
 		"password_login_disabled": oidcOn && s.auth.OIDC().DisablePasswordLogin(),
 		"oidc_auto_login":         oidcOn && s.auth.OIDC().AutoLogin(),
 		"cluster_enabled":         s.clusterEnabled,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IPMaze/MazeDNS/internal/auth"
 	"github.com/IPMaze/MazeDNS/internal/store"
 )
 
@@ -42,7 +43,17 @@ func (s *Server) getCPSettings(w http.ResponseWriter, _ *http.Request) {
 		"settings":                 c,
 		"oidc_has_client_secret":   hasSecret,
 		"has_metrics_scrape_token": hasScrapeToken,
+		"oidc_status":              s.oidcStatus(),
 	})
+}
+
+// oidcStatus is the live SSO state for the access settings (admin-only: it may
+// name the issuer and the network error).
+func (s *Server) oidcStatus() auth.OIDCStatus {
+	if !s.authEnabled || s.auth == nil {
+		return auth.OIDCStatus{}
+	}
+	return s.auth.OIDCStatus()
 }
 
 // putCPSettings validates, persists, and live-applies the control-plane runtime
@@ -122,7 +133,7 @@ func (s *Server) putCPSettings(w http.ResponseWriter, r *http.Request) {
 
 	c := in
 	c.OIDC.ClientSecret = ""
-	writeJSON(w, http.StatusOK, map[string]any{"settings": c, "oidc_has_client_secret": in.OIDC.ClientSecret != ""})
+	writeJSON(w, http.StatusOK, map[string]any{"settings": c, "oidc_has_client_secret": in.OIDC.ClientSecret != "", "oidc_status": s.oidcStatus()})
 }
 
 // ApplyCPSettings live-applies the stored control-plane settings (called at boot

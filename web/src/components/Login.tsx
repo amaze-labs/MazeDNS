@@ -47,11 +47,15 @@ export function MazeArt() {
 
 export default function Login({
   oidc,
+  ssoUnavailable = false,
   passwordDisabled = false,
   autoLogin = false,
   onLogin,
 }: {
   oidc: boolean
+  // SSO is switched on but its provider didn't load (issuer unreachable or
+  // misconfigured): say so instead of silently dropping the button.
+  ssoUnavailable?: boolean
   passwordDisabled?: boolean
   autoLogin?: boolean
   onLogin: () => void
@@ -193,6 +197,17 @@ export default function Login({
               </p>
             </div>
             {err && <div className="error">{err}</div>}
+            {ssoUnavailable && !oidc && (
+              <div className="callout warn" role="status">
+                <div>
+                  <b>Single sign-on is unavailable right now</b>
+                  <p>
+                    It's set up, but the control plane can't reach the identity provider. Sign in with a local
+                    account, or ask an administrator to check the SSO settings.
+                  </p>
+                </div>
+              </div>
+            )}
             {oidc && (
               <a className="btn block" href="/api/auth/oidc/login">
                 Continue with single sign-on

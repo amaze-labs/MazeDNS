@@ -8,6 +8,7 @@ import {
   type VMExportSettings,
   type VLExportSettings,
   type CPSettings,
+  type OIDCStatus,
   type AuditEntry,
 } from '../api'
 import ApiTokens from './ApiTokens'
@@ -299,6 +300,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
   const [cp, setCp] = useState<CPSettings | null>(null)
   const [cpErr, setCpErr] = useState('')
   const [oidcHasSecret, setOidcHasSecret] = useState(false)
+  // Live SSO state from the server: switched on is not the same as working.
+  const [oidcStatus, setOidcStatus] = useState<OIDCStatus | null>(null)
   const [ssoOpen, setSsoOpen] = useState(false)
   const [hasMetricsToken, setHasMetricsToken] = useState(false)
   const [newScrapeToken, setNewScrapeToken] = useState('')
@@ -349,6 +352,7 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setCp(r.settings)
         setSsoOpen(r.settings.oidc.enabled)
         setOidcHasSecret(r.oidc_has_client_secret)
+        setOidcStatus(r.oidc_status ?? null)
         setHasMetricsToken(r.has_metrics_scrape_token)
         setSaved((p) => ({ ...p, cp: r.settings }))
       })
@@ -534,11 +538,22 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
         setSaved((p) => ({ ...p, vl: v }))
       }
       if (dirty.access && cp) {
-        const r = await api.saveCPSettings(cp)
-        setCp(r.settings)
-        setOidcHasSecret(r.oidc_has_client_secret)
-        setHasMetricsToken(r.has_metrics_scrape_token)
-        setSaved((p) => ({ ...p, cp: r.settings }))
+        try {
+          const r = await api.saveCPSettings(cp)
+          setCp(r.settings)
+          setOidcHasSecret(r.oidc_has_client_secret)
+          setOidcStatus(r.oidc_status ?? null)
+          setHasMetricsToken(r.has_metrics_scrape_token)
+          setSaved((p) => ({ ...p, cp: r.settings }))
+        } catch (e) {
+          // "Saved, but SSO provider init failed" still changed the SSO state:
+          // refresh it so the section shows why.
+          api
+            .cpSettings()
+            .then((r) => setOidcStatus(r.oidc_status ?? null))
+            .catch(() => {})
+          throw e
+        }
       }
       setSavedNote(true)
     } catch (e: any) {
@@ -1139,6 +1154,10 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
 
   // -------------------------------------------------------------------- Access
   const passwordOff = !!cp && cp.oidc.enabled && cp.oidc.disable_password_login
+  // SSO is switched on (as saved) but no provider is loaded, so the sign-in page
+  // has no SSO button. ssoErr also covers a failed change that kept the old one.
+  const ssoDown = !!oidcStatus?.configured && !oidcStatus.available
+  const ssoErr = oidcStatus?.configured && oidcStatus.error ? oidcStatus : null
   const accessView = readonly ? (
     <div className="callout">
       <InfoIcon />
@@ -1181,7 +1200,8 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             <small>Authentik, Keycloak, Entra ID, Google… Map a group to the admin role.</small>
           </div>
           <span className="method-act">
-            {cp.oidc.enabled && <span className="tag ok">On</span>}
+            {cp.oidc.enabled &&
+              (ssoDown ? <span className="tag warn">Unavailable</span> : <span className="tag ok">On</span>)}
             {!ssoOpen ? (
               <button type="button" className="btn sm" onClick={() => setSsoOpen(true)}>
                 {cp.oidc.enabled ? 'Edit' : 'Set up SSO'}
@@ -1196,6 +1216,25 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
           </span>
           {ssoOpen && (
             <div className="method-body">
+              {ssoErr && (
+                <div className="callout warn" role="status">
+                  <div>
+                    <b>{ssoDown ? 'SSO is on, but not working' : 'The last SSO change did not apply'}</b>
+                    <p>
+                      {ssoDown
+                        ? 'The sign-in page shows no SSO button until the identity provider can be reached. '
+                        : 'Sign-in still uses the previous SSO settings. '}
+                      Discovery failed{ssoErr.error_at ? ` ${timeAgo(ssoErr.error_at * 1000)}` : ''}:{' '}
+                      <code>{ssoErr.error}</code>
+                    </p>
+                    <p>
+                      {ssoErr.retrying
+                        ? 'The control plane keeps retrying in the background; SSO turns on by itself once the issuer answers.'
+                        : 'Check the issuer URL and that the control plane can reach it, then save again.'}
+                    </p>
+                  </div>
+                </div>
+              )}
               <Toggle
                 label="Allow sign-in with SSO"
                 desc="Adds a “Continue with SSO” button to the sign-in page."

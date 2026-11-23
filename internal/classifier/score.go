@@ -254,7 +254,7 @@ func computeScore(in ScoreInput) Score {
 	}
 
 	// Behaviour on this network (passive DNS) — signals no outside service has.
-	for _, f := range behaviourFactors(in.Domain, in.Behaviour, in.Lex) {
+	for _, f := range behaviourFactors(in.Domain, in.Platform, in.Behaviour, in.Lex) {
 		add(f.Label, f.Detail, f.Delta)
 	}
 
@@ -360,6 +360,19 @@ func computeScore(in ScoreInput) Score {
 	return Score{Legitimacy: legit, Factors: fs}
 }
 
+// cnameTargetPlatforms are CDN and traffic-steering suffixes whose names are
+// CNAME targets built from the customer's own hostname
+// ("www.apple.com.akadns.net", "x.z01.azurefd.net"): a brand in front is the
+// brand's own traffic, not impersonation. Publishing platforms (github.io,
+// web.app, …) are not here: anyone can put a brand in front there.
+var cnameTargetPlatforms = map[string]bool{
+	"akadns.net": true, "akamaiedge.net": true, "akamai.net": true, "edgekey.net": true,
+	"edgesuite.net": true, "akamaized.net": true, "akamaihd.net": true,
+	"azurefd.net": true, "azureedge.net": true, "trafficmanager.net": true,
+	"cloudfront.net": true, "fastly.net": true, "fastlylb.net": true,
+	"cdn.cloudflare.net": true, "elb.amazonaws.com": true,
+}
+
 // riskyTLDs is a conservative list of TLDs with disproportionate abuse rates
 // (Spamhaus / Interisle "most abused TLDs"). Membership is a soft signal only.
 var riskyTLDs = map[string]bool{
@@ -430,7 +443,7 @@ func lexicalFactors(domain string, lex *Lexicon) []Factor {
 
 // behaviourFactors weighs what this network saw of the domain: tunneling,
 // generated names that don't exist, a brand put in front of another domain.
-func behaviourFactors(domain string, b Behaviour, lex *Lexicon) []Factor {
+func behaviourFactors(domain, platform string, b Behaviour, lex *Lexicon) []Factor {
 	if b.Queries == 0 {
 		return nil
 	}
@@ -442,6 +455,9 @@ func behaviourFactors(domain string, b Behaviour, lex *Lexicon) []Factor {
 		fs = append(fs, Factor{"Behaviour: names don't exist", fmt.Sprintf("%d of %d answers said the name doesn't exist — typical of generated (DGA) names", b.NXDomain, b.Queries), -10})
 	}
 	for _, n := range b.Names {
+		if cnameTargetPlatforms[platform] {
+			break // CDN names embed the customer's hostname by design
+		}
 		if brand, ok := lex.brandInSubdomain(n, domain); ok {
 			fs = append(fs, Factor{"Brand in subdomain", fmt.Sprintf("“%s” puts “%s” in front of another domain", n, brand), -25})
 			break

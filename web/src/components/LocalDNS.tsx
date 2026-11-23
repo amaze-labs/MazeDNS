@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api, type Rewrite } from '../api'
 import EditScopedModal from './EditScopedModal'
 import TestQuery from './TestQuery'
+import { Icon } from './icons'
+import { relName, zoneFor } from './recordZones'
 import ScopePicker, { ALL_SCOPE, scopeBadge, useIsAdmin, type Scope } from './ScopePicker'
 import { useTable, Th, Pager, SearchBox, TableStatusRow, type SortAccessors } from './tableKit'
 import { invalidateAllClientNames } from '../useClientNames'
@@ -35,6 +37,11 @@ export default function LocalDNS() {
   const [err, setErr] = useState('')
 
   const [search, setSearch] = useState('')
+  const [view, setView] = useState<View>(() => (readStore(VIEW_KEY) === 'list' ? 'list' : 'grouped'))
+  const pickView = (v: View) => {
+    setView(v)
+    writeStore(VIEW_KEY, v)
+  }
 
   const [nodes, setNodes] = useState<string[] | null>(null)
   const [sites, setSites] = useState<string[] | null>(null)
@@ -138,6 +145,9 @@ export default function LocalDNS() {
     q ? `${n.toLocaleString()} of ${plural(of, one, many)}` : plural(of, one, many)
   const matches = shown.length
   const known = (t?: string) => (t === 'nodes' ? nodes ?? undefined : t === 'sites' ? sites ?? undefined : undefined)
+  // Zones come from every record, not just the matches, so a search never
+  // moves a record to another group.
+  const zones = useMemo(() => zoneFor(rows.map((r) => r.domain)), [rows])
   const recordTable = (rs: Rewrite[], empty: string) => (
     <RecordTable
       rows={rs}
@@ -147,6 +157,8 @@ export default function LocalDNS() {
       admin={admin}
       known={known}
       empty={empty}
+      view={view}
+      zones={zones}
       onToggle={toggle}
       onEdit={setEditing}
       onDelete={del}
@@ -204,6 +216,15 @@ export default function LocalDNS() {
             {matches === 0 ? 'Nothing matches' : plural(matches, 'match', 'matches')}
           </span>
         )}
+        <span className="spacer" />
+        <div className="seg" role="group" aria-label="Layout">
+          <button type="button" aria-pressed={view === 'grouped'} onClick={() => pickView('grouped')}>
+            By zone
+          </button>
+          <button type="button" aria-pressed={view === 'list'} onClick={() => pickView('list')}>
+            List
+          </button>
+        </div>
       </div>
 
       <section className="card flush">
@@ -310,8 +331,30 @@ export default function LocalDNS() {
   )
 }
 
+// The table's layout, remembered per browser: records grouped by zone (the
+// default) or one flat list; and which zones are folded.
+type View = 'grouped' | 'list'
+const VIEW_KEY = 'mazedns.localdns.view'
+const FOLDED_KEY = 'mazedns.localdns.folded'
+const readStore = (k: string) => {
+  try {
+    return localStorage.getItem(k)
+  } catch {
+    return null
+  }
+}
+const writeStore = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v)
+  } catch {
+    /* private mode: not remembered */
+  }
+}
+
 // RecordTable lists local records. A manual record can be edited and deleted;
 // one an integration owns can only be switched, or detached to make it manual.
+// Grouped, records sit under their zone (recordZones.ts) with the short name,
+// and a zone folds away; the list view is the plain sortable, paged table.
 function RecordTable({
   rows,
   query,
@@ -320,6 +363,8 @@ function RecordTable({
   admin,
   known,
   empty,
+  view,
+  zones,
   onToggle,
   onEdit,
   onDelete,
@@ -332,6 +377,8 @@ function RecordTable({
   admin: boolean
   known: (scopeType?: string) => string[] | undefined
   empty: string
+  view: View
+  zones: Map<string, string>
   onToggle: (r: Rewrite) => void
   onEdit: (r: Rewrite) => void
   onDelete: (r: Rewrite) => void
@@ -341,79 +388,160 @@ function RecordTable({
   // A new search starts from the first page of matches.
   const { setPage } = table
   useEffect(() => setPage(0), [query, setPage])
+
+  const [folded, setFolded] = useState<Set<string>>(() => new Set(JSON.parse(readStore(FOLDED_KEY) || '[]') as string[]))
+  const fold = (zone: string) =>
+    setFolded((prev) => {
+      const next = new Set(prev)
+      if (next.has(zone)) next.delete(zone)
+      else next.add(zone)
+      writeStore(FOLDED_KEY, JSON.stringify([...next]))
+      return next
+    })
+
+  // Grouped: zones in name order, records inside sorted like the list view.
+  const groups = useMemo(() => {
+    if (view !== 'grouped') return []
+    const acc = COLS[table.sortKey] ?? COLS.domain
+    const cmp = (a: Rewrite, b: Rewrite) => {
+      const c = String(acc(a)).localeCompare(String(acc(b)), undefined, { sensitivity: 'base', numeric: true })
+      return table.desc ? -c : c
+    }
+    const by = new Map<string, Rewrite[]>()
+    for (const r of rows) {
+      const z = zones.get(r.domain) ?? r.domain
+      by.set(z, [...(by.get(z) ?? []), r])
+    }
+    return [...by.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([zone, rs]) => ({ zone, rows: rs.sort(cmp) }))
+  }, [rows, view, zones, table.sortKey, table.desc])
+
+  const cols = 4
+  const row = (r: Rewrite, zone?: string) => (
+    <tr key={r.id} className={r.enabled ? '' : 'off'}>
+      <td className="lead">
+        {zone ? (
+          <span className="domain rw-name" title={r.domain}>
+            {relName(r.domain, zone)}
+            {relName(r.domain, zone) === '*' && <span className="muted rw-hint"> every name in the zone</span>}
+            {relName(r.domain, zone) === '@' && <span className="muted rw-hint"> the zone itself</span>}
+          </span>
+        ) : (
+          <span className="domain">{r.domain}</span>
+        )}
+      </td>
+      <td>
+        <span className="tag rewrite">{r.rrtype}</span> <span className="domain">{r.value}</span>
+      </td>
+      <td>
+        {(r.scope_type || 'all') === 'all' ? (
+          <span className="muted rw-everyone">Everyone</span>
+        ) : (
+          scopeBadge(r.scope_type, r.scope_values, known(r.scope_type))
+        )}
+      </td>
+      <td className="lead-r rw-ctl">
+        {admin ? (
+          <span className="rw-ctl-in">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={r.enabled}
+              aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.domain}`}
+              className="switch-btn"
+              onClick={() => onToggle(r)}
+              title={r.enabled ? 'On — click to turn off' : 'Off — click to turn on'}
+            >
+              <span className={`switch${r.enabled ? ' on' : ''}`} />
+            </button>
+            {r.source ? (
+              <button
+                className="btn sm quiet"
+                onClick={() => onDetach(r)}
+                title={`Stop ${r.source} from managing this record and edit it by hand`}
+              >
+                Detach
+              </button>
+            ) : (
+              <>
+                <button className="icon-btn" onClick={() => onEdit(r)} aria-label={`Edit ${r.domain}`} title="Edit">
+                  <Icon name="pencil" size={16} />
+                </button>
+                <button className="icon-btn rw-del" onClick={() => onDelete(r)} aria-label={`Delete ${r.domain}`} title="Delete">
+                  <Icon name="trash" size={16} />
+                </button>
+              </>
+            )}
+          </span>
+        ) : r.enabled ? (
+          <span className="tag ok">On</span>
+        ) : (
+          <span className="tag">Off</span>
+        )}
+      </td>
+    </tr>
+  )
+
   return (
     <>
       <div className="table-scroll">
-        <table className="stackable rw-table">
+        <table className={`stackable rw-table${view === 'grouped' ? ' grouped' : ''}`}>
           <thead>
             <tr>
               <Th table={table} col="domain">Name</Th>
               <Th table={table} col="value">Answer</Th>
               <Th table={table} col="scope">Scope</Th>
-              <th>{admin ? <span className="sr-only">Enabled</span> : 'Status'}</th>
-              {admin && <th></th>}
+              <th>
+                <span className="sr-only">{admin ? 'Enabled and actions' : 'Status'}</span>
+              </th>
             </tr>
           </thead>
-          <tbody>
-            {table.rows.map((r) => (
-              <tr key={r.id} className={r.enabled ? '' : 'off'}>
-                <td className="lead">
-                  <span className="domain">{r.domain}</span>
-                </td>
-                <td>
-                  <span className="tag rewrite">{r.rrtype}</span> <span className="domain">{r.value}</span>
-                </td>
-                <td>{scopeBadge(r.scope_type, r.scope_values, known(r.scope_type))}</td>
-                <td className="lead-r rw-switch">
-                  {admin ? (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={r.enabled}
-                      aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.domain}`}
-                      className="switch-btn"
-                      onClick={() => onToggle(r)}
-                      title={r.enabled ? 'On — click to turn off' : 'Off — click to turn on'}
-                    >
-                      <span className={`switch${r.enabled ? ' on' : ''}`} />
-                    </button>
-                  ) : r.enabled ? (
-                    <span className="tag ok">On</span>
-                  ) : (
-                    <span className="tag">Off</span>
-                  )}
-                </td>
-                {admin && (
-                  <td className="actions">
-                    {r.source ? (
+          {view === 'grouped' ? (
+            groups.map(({ zone, rows: rs }) => {
+              // While searching every zone with a match stays open.
+              const open = !!query || !folded.has(zone)
+              const off = rs.filter((r) => !r.enabled).length
+              return (
+                <tbody key={zone} className="rw-group">
+                  <tr className="rw-zone">
+                    <th colSpan={cols} scope="rowgroup">
                       <button
-                        className="btn sm quiet"
-                        onClick={() => onDetach(r)}
-                        title={`Stop ${r.source} from managing this record and edit it by hand`}
+                        type="button"
+                        className="rw-zone-btn"
+                        aria-expanded={open}
+                        aria-label={`${zone}: ${plural(rs.length, 'record', 'records')}${off > 0 ? `, ${off} off` : ''}`}
+                        onClick={() => fold(zone)}
                       >
-                        Detach
+                        <Icon name="chevron-down" size={16} className={open ? '' : 'folded'} />
+                        <span className="domain">{zone}</span>
+                        <span className="muted">
+                          {plural(rs.length, 'record', 'records')}
+                          {off > 0 ? ` · ${off} off` : ''}
+                        </span>
                       </button>
-                    ) : (
-                      <>
-                        <button className="btn sm quiet" onClick={() => onEdit(r)}>
-                          Edit
-                        </button>
-                        <button className="btn sm quiet rw-del" onClick={() => onDelete(r)}>
-                          Delete
-                        </button>
-                      </>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-            <TableStatusRow loading={!loaded} error={err} empty={table.rows.length === 0} colSpan={admin ? 5 : 4}>
+                    </th>
+                  </tr>
+                  {open && rs.map((r) => row(r, zone))}
+                </tbody>
+              )
+            })
+          ) : (
+            <tbody>{table.rows.map((r) => row(r))}</tbody>
+          )}
+          <tbody>
+            <TableStatusRow
+              loading={!loaded}
+              error={err}
+              empty={(view === 'grouped' ? rows.length : table.rows.length) === 0}
+              colSpan={cols}
+            >
               {empty}
             </TableStatusRow>
           </tbody>
         </table>
       </div>
-      <Pager table={table} unit="records" />
+      {view === 'list' && <Pager table={table} unit="records" />}
     </>
   )
 }

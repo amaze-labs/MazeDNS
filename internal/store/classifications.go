@@ -493,3 +493,45 @@ func (s *Store) DeleteMachineVerdict(domain string) (removed, wasAuto bool, err 
 	n, _ := res.RowsAffected()
 	return n > 0, n > 0 && status == ClassAuto, nil
 }
+
+// CleanVerdicts returns the clean, untrusted verdicts with their factors —
+// what a threat-feed refresh re-checks.
+func (s *Store) CleanVerdicts() ([]MachineVerdict, error) {
+	rows, err := s.read.Query(`SELECT domain, status, factors, threat, updated_at FROM classifications WHERE status = ? AND trusted = 0`, ClassClean)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MachineVerdict
+	for rows.Next() {
+		var v MachineVerdict
+		var threat int
+		if err := rows.Scan(&v.Domain, &v.Status, &v.Factors, &threat, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		v.Threat = threat != 0
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// ReflaggedVerdicts returns the machine suggestions and auto-blocks that an
+// older threat-feed recheck flagged without scoring them (reason
+// "re-flagged: …"), so they can be scored properly once.
+func (s *Store) ReflaggedVerdicts() ([]string, error) {
+	rows, err := s.read.Query(`SELECT domain FROM classifications WHERE status IN (?, ?) AND trusted = 0 AND reason LIKE ?`,
+		ClassSuggested, ClassAuto, "re-flagged:%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}

@@ -165,7 +165,9 @@ func computeScore(in ScoreInput) Score {
 	// minutes, which phishing kits exploit.
 	switch age := in.Whois.AgeDays; {
 	case in.Platform != "":
-		add("Hosting platform", "a customer site on "+in.Platform+" — anyone can publish there in minutes", -10)
+		// -15: the strongest name-level signal in classifier-eval (a feed
+		// domain is far more often a platform customer site than a popular one).
+		add("Hosting platform", "a customer site on "+in.Platform+" — anyone can publish there in minutes", -15)
 	case age <= 0:
 		note("Domain age", "registration date unknown — the registry doesn't publish it, or the lookup failed")
 	case age < 30:
@@ -342,7 +344,10 @@ func lexicalFactors(domain string, lex *Lexicon) []Factor {
 	if isLook && look.Label == "Lexical: IDN homograph" {
 		fs = append(fs, look)
 	} else if strings.HasPrefix(label, "xn--") {
-		fs = append(fs, Factor{"Lexical: punycode", "internationalized name (xn--) — homograph/look-alike risk", -20})
+		// Small: classifier-eval found internationalized names as common on
+		// legitimate domains as on malicious ones; imitation is the IDN
+		// homograph check above.
+		fs = append(fs, Factor{"Lexical: punycode", "internationalized name (xn--) — check it isn't imitating a familiar name", -5})
 	}
 	if n := strings.Count(label, "-"); n >= 3 {
 		fs = append(fs, Factor{"Lexical: hyphens", fmt.Sprintf("%d hyphens — common in look-alike domains", n), -8})

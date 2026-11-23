@@ -66,10 +66,10 @@ func TestThreatSources(t *testing.T) {
 	// Multiple built-in feeds + multiple custom sources, de-duplicated; unknown
 	// feed keys are skipped.
 	src := threatSources(Settings{
-		ThreatFeeds:   []string{"urlhaus", "threatfox", "nope"},
+		ThreatFeeds:   []string{"urlhaus", "phishing_filter", "threatfox", "nope"}, // threatfox: retired, skipped
 		ThreatListURL: "https://x/a.txt\nhttps://x/b.txt , https://x/a.txt",
 	})
-	if len(src) != 4 { // urlhaus + threatfox + a.txt + b.txt (dup a.txt dropped)
+	if len(src) != 4 { // urlhaus + phishing_filter + a.txt + b.txt (dup a.txt dropped)
 		t.Fatalf("expected 4 deduped sources, got %d: %+v", len(src), src)
 	}
 }

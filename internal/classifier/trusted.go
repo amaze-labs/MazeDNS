@@ -23,9 +23,10 @@ const DefaultTrustedURL = "https://downloads.majestic.com/majestic_million.csv"
 const DefaultTrustedTopN = 100000
 
 // DefaultThreatURL is the public threat-intelligence list used by default to
-// corroborate malicious verdicts. abuse.ch URLhaus publishes a free, no-auth
-// hosts file of domains hosting active malware.
-const DefaultThreatURL = "https://urlhaus.abuse.ch/downloads/hostfile/"
+// corroborate malicious verdicts: URLhaus's domains hosting active malware.
+// abuse.ch retired its keyless downloads (HTTP 410), so this is the free,
+// keyless malware-filter mirror of the same data.
+const DefaultThreatURL = "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains-online.txt"
 
 // TrustedSet is an immutable set of registered domains considered well-known and
 // legitimate (e.g. a popularity list like Tranco/Umbrella, or a curated
@@ -167,34 +168,87 @@ func parseTrusted(r io.Reader, topN int) (*TrustedSet, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Tokenize on commas and whitespace and take the first token that is a
-		// real registered domain. This handles every common layout regardless of
-		// which column the domain is in:
-		//   "example.com"                       plain
-		//   "1,example.com"                     ranked CSV (Tranco: rank,domain)
-		//   "1,1,example.com,com,123,…"         ranked CSV (Majestic: domain in col 3)
-		//   "0.0.0.0 example.com"               hosts
-		for _, tok := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
-			if tok == "" || net.ParseIP(tok) != nil {
-				continue // skip rank numbers, IPs, etc.
+		if d := lineDomain(line); d != "" {
+			if _, dup := set.domains[d]; !dup && len(set.ranked) < rankedCap {
+				set.ranked = append(set.ranked, d)
 			}
-			// URL feeds (e.g. OpenPhish) list full URLs — extract the host.
-			if strings.Contains(tok, "://") {
-				if u, err := url.Parse(tok); err == nil && u.Hostname() != "" {
-					tok = u.Hostname()
-				}
-			}
-			if d := RegisteredDomain(tok); d != "" && strings.ContainsRune(d, '.') {
-				if _, dup := set.domains[d]; !dup && len(set.ranked) < rankedCap {
-					set.ranked = append(set.ranked, d)
-				}
-				set.domains[d] = struct{}{}
-				break
-			}
+			set.domains[d] = struct{}{}
 		}
 		if topN > 0 && len(set.domains) >= topN {
 			break
 		}
 	}
 	return set, sc.Err()
+}
+
+// lineDomain returns the registered domain a list line names, or "".
+// Tokenize on commas and whitespace and take the first token that is a real
+// registered domain. This handles every common layout regardless of which
+// column the domain is in:
+//
+//	"example.com"                       plain
+//	"1,example.com"                     ranked CSV (Tranco: rank,domain)
+//	"1,1,example.com,com,123,…"         ranked CSV (Majestic: domain in col 3)
+//	"0.0.0.0 example.com"               hosts
+func lineDomain(line string) string {
+	for _, tok := range strings.FieldsFunc(line, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+		if tok == "" || net.ParseIP(tok) != nil {
+			continue // skip rank numbers, IPs, etc.
+		}
+		// URL feeds (e.g. OpenPhish) list full URLs — extract the host.
+		if strings.Contains(tok, "://") {
+			if u, err := url.Parse(tok); err == nil && u.Hostname() != "" {
+				tok = u.Hostname()
+			}
+		}
+		if d := RegisteredDomain(tok); d != "" && strings.ContainsRune(d, '.') {
+			return d
+		}
+	}
+	return ""
+}
+
+// LoadRanked reads a list (file path or http(s) URL) in order and returns up
+// to n distinct registered domains after skipping the first `from` — e.g. the
+// long tail of a popularity list, past the part trusted outright.
+func LoadRanked(source string, from, n int) ([]string, error) {
+	var r io.ReadCloser
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		client := &http.Client{Timeout: 120 * time.Second}
+		resp, err := client.Get(source)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("download %s: HTTP %d", source, resp.StatusCode)
+		}
+		r = resp.Body
+	} else {
+		f, err := os.Open(source)
+		if err != nil {
+			return nil, err
+		}
+		r = f
+	}
+	defer r.Close()
+	seen := map[string]bool{}
+	var out []string
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() && len(out) < n {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		d := lineDomain(line)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		if len(seen) > from {
+			out = append(out, d)
+		}
+	}
+	return out, sc.Err()
 }

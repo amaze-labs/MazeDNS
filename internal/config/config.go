@@ -219,7 +219,7 @@ type Classifier struct {
 	TrustedTopN           int    `yaml:"trusted_top_n"`
 	TrustedDisableDefault bool   `yaml:"trusted_disable_default"`
 	// Threat lists (corroborate malicious verdicts): ThreatFeeds enables built-in
-	// public feeds (urlhaus, threatfox, phishing_army, hagezi_tif, …);
+	// public feeds (urlhaus, phishing_army, hagezi_tif, phishing_filter, …);
 	// ThreatListURL adds custom sources (one per line / comma-separated).
 	ThreatFeeds          []string `yaml:"threat_feeds"`
 	ThreatListURL        string   `yaml:"threat_list_url"`

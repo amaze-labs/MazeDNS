@@ -276,7 +276,7 @@ func TestScoreTrustCapAgainstStrongThreat(t *testing.T) {
 
 func TestScoreHostingPlatformAndUnknownAge(t *testing.T) {
 	s := computeScore(ScoreInput{Domain: "evecurls.workers.dev", Platform: "workers.dev"})
-	if d, _ := factorDelta(s, "Hosting platform"); d != -10 {
+	if d, _ := factorDelta(s, "Hosting platform"); d != -15 {
 		t.Errorf("hosting platform delta = %d, want -10", d)
 	}
 	if _, ok := factorDelta(s, "Domain age"); ok {

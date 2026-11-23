@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -300,5 +301,81 @@ func TestBrandInSubdomainSkipsCDNTargets(t *testing.T) {
 	}
 	if !has(score("paypal.com.evil.github.io")) {
 		t.Error("paypal.com.evil.github.io: brand in subdomain missed on a publishing platform")
+	}
+}
+
+// A feed refresh re-scores a clean domain only when the feeds now list it
+// more widely than its verdict recorded; it never flags it outright, and never
+// touches human decisions.
+func TestRescanThreatRescores(t *testing.T) {
+	w, st := testWorker(t, ModeSuggest)
+	one, _ := json.Marshal([]Factor{{Label: "Threat intel", Detail: "listed on x — single source (possible misreport)", Delta: -45}})
+	for _, c := range []store.Classification{
+		{Domain: "newly-listed.example", Status: store.ClassClean},
+		{Domain: "already-weighed.example", Status: store.ClassClean, Threat: true, Factors: one},
+		{Domain: "now-two.example", Status: store.ClassClean, Threat: true, Factors: one},
+		{Domain: "reviewed.example", Status: store.ClassRejected},
+		{Domain: "unlisted.example", Status: store.ClassClean},
+	} {
+		if _, err := st.InsertClassification(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.threat.set.Store(&TrustedSet{
+		domains: map[string]struct{}{"newly-listed.example": {}, "already-weighed.example": {}, "now-two.example": {}, "reviewed.example": {}},
+		counts:  map[string]int{"newly-listed.example": 1, "already-weighed.example": 1, "now-two.example": 2, "reviewed.example": 3},
+	})
+	w.rescanThreat()
+	var queued []string
+	for len(w.queue) > 0 {
+		queued = append(queued, <-w.queue)
+	}
+	sort.Strings(queued)
+	if strings.Join(queued, ",") != "newly-listed.example,now-two.example" {
+		t.Fatalf("queued %v", queued)
+	}
+	for d, want := range map[string]bool{"newly-listed.example": false, "now-two.example": false,
+		"already-weighed.example": true, "reviewed.example": true, "unlisted.example": true} {
+		if got, _ := st.IsClassified(d); got != want {
+			t.Errorf("%s classified = %v, want %v", d, got, want)
+		}
+	}
+	// Nothing was flagged without scoring.
+	if cs, _ := st.ListClassifications(store.ClassSuggested, "", 10, 0); len(cs) != 0 {
+		t.Fatalf("flagged without scoring: %+v", cs)
+	}
+}
+
+func TestScoredFeedHits(t *testing.T) {
+	for delta, want := range map[int]int{-45: 1, -70: 2, -90: 3} {
+		b, _ := json.Marshal([]Factor{{Label: "Domain age", Delta: -6}, {Label: "Threat intel", Delta: delta}})
+		if got := scoredFeedHits(string(b)); got != want {
+			t.Errorf("delta %d: %d, want %d", delta, got, want)
+		}
+	}
+	if scoredFeedHits(`[]`) != 0 || scoredFeedHits(`bad`) != 0 {
+		t.Error("no threat factor")
+	}
+}
+
+func TestRescoreReflaggedOnce(t *testing.T) {
+	w, st := testWorker(t, ModeSuggest)
+	for _, c := range []store.Classification{
+		{Domain: "cdn.example", Status: store.ClassSuggested, Block: true, Threat: true, Reason: "re-flagged: now listed on 1 threat-intel feed — review (possible misreport)"},
+		{Domain: "scored.example", Status: store.ClassSuggested, Block: true, Reason: "legitimacy 20%."},
+		{Domain: "human.example", Status: store.ClassApproved, Block: true, Reason: "re-flagged: now listed on 2 threat-intel feeds"},
+	} {
+		if _, err := st.InsertClassification(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.rescoreReflagged()
+	if len(w.queue) != 1 || <-w.queue != "cdn.example" {
+		t.Fatal("re-flagged verdict not queued (alone)")
+	}
+	_, _ = st.InsertClassification(store.Classification{Domain: "later.example", Status: store.ClassSuggested, Reason: "re-flagged: x"})
+	w.rescoreReflagged()
+	if len(w.queue) != 0 {
+		t.Fatal("ran twice")
 	}
 }

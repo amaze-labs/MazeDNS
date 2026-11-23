@@ -184,3 +184,33 @@ func (w *Worker) rescoreDomain(domain, why string) bool {
 		return false // queue full: it is classified again on its next sighting
 	}
 }
+
+// Earlier versions: a threat-feed refresh flagged a newly listed clean domain
+// straight to Review (or auto-block), without scoring it. rescoreReflagged
+// scores those verdicts properly, once (only while still a machine verdict).
+const rescoreReflaggedKey = "classifier.rescore_reflagged_v1"
+
+func (w *Worker) rescoreReflagged() {
+	s := w.get()
+	if !s.Enabled || ParseMode(s.Mode) == ModeOff {
+		return
+	}
+	if done, _ := w.store.GetMeta(rescoreReflaggedKey); done != "" {
+		return
+	}
+	domains, err := w.store.ReflaggedVerdicts()
+	if err != nil {
+		slog.Warn("rescore re-flagged: list failed", "err", err)
+		return
+	}
+	n := 0
+	for _, d := range domains {
+		if w.rescoreDomain(d, "flagged by a feed refresh without scoring") {
+			n++
+		}
+	}
+	_ = w.store.SetMeta(rescoreReflaggedKey, time.Now().UTC().Format(time.RFC3339))
+	if n > 0 {
+		slog.Info("rescore: feed-flagged verdicts sent back to scoring", "count", n)
+	}
+}

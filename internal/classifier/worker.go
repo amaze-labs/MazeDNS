@@ -294,6 +294,7 @@ func (w *Worker) Run(ctx context.Context) {
 	go w.refreshThreatLoop(ctx)
 	go w.rescoreLegacyTrusted(ctx) // feeds the queue below, so it can't run inline
 	go w.rescoreLoop(ctx)          // verdicts whose evidence aged (rescore.go)
+	go w.rescoreReflagged()        // once: verdicts an older feed recheck flagged unscored
 	// Content categories for verdicts from before categories existed are asked
 	// of the model while the queue is idle, one call per tick, so the backfill
 	// never competes with newly seen domains.
@@ -349,55 +350,71 @@ func (w *Worker) refreshThreatLoop(ctx context.Context) {
 	}
 }
 
-// rescanThreat re-checks existing clean (untrusted) verdicts against the current
-// threat set and flips any now-listed domain to a block, so a domain that turned
-// malicious after we classified it doesn't stay allowed until it's re-queried.
-// Fired after the threat set (re)loads.
+// rescanThreat re-checks the clean (untrusted) verdicts against the threat
+// set after it (re)loads. A domain the feeds now list more widely than when
+// it was scored — newly listed, or from one feed to several — is scored again
+// through the whole pipeline, so the listing is weighed with everything else
+// (age, trust floors, corroboration) instead of flagged outright: one feed on
+// long-established cloud infrastructure no longer lands in Review by itself.
+// Comparing with the listing its verdict recorded keeps a domain that stays
+// clean from being scored again on every refresh.
 func (w *Worker) rescanThreat() {
 	s := w.get()
 	if !s.Enabled || ParseMode(s.Mode) == ModeOff {
 		return
 	}
-	domains, err := w.store.CleanDomains()
+	verdicts, err := w.store.CleanVerdicts()
 	if err != nil {
-		slog.Warn("threat rescan: list clean domains failed", "err", err)
+		slog.Warn("threat rescan: list clean verdicts failed", "err", err)
 		return
 	}
-	autoMode := ParseMode(s.Mode) == ModeAuto
-	flipped, autoFlipped := 0, 0
-	for _, d := range domains {
-		hits := w.threat.hits(d)
-		if hits == 0 {
+	queued := 0
+	for _, v := range verdicts {
+		hits := w.threat.hits(v.Domain)
+		if hits == 0 || feedLevel(hits) <= feedLevel(scoredFeedHits(v.Factors)) {
 			continue
 		}
-		// A lone feed could be a misreport — only multi-feed corroboration auto-blocks
-		// a previously-clean domain; a single feed is sent to review instead.
-		status := store.ClassSuggested
-		reason := "re-flagged: now listed on 1 threat-intel feed — review (possible misreport)"
-		if hits >= 2 {
-			reason = fmt.Sprintf("re-flagged: now listed on %d threat-intel feeds", hits)
-			if autoMode {
-				status = store.ClassAuto
-			}
+		if queued >= rescanBatch {
+			break // the rest on the next refresh: they are still listed then
 		}
-		ok, err := w.store.FlagThreat(d, status, reason)
-		if err != nil {
-			slog.Warn("threat rescan: flag failed", "domain", d, "err", err)
+		if w.rescoreDomain(v.Domain, fmt.Sprintf("now listed on %d threat-intel feeds", hits)) {
+			queued++
+		}
+	}
+	if queued > 0 {
+		slog.Info("threat rescan: newly listed domains sent back to scoring", "count", queued)
+	}
+}
+
+// rescanBatch caps the domains one feed refresh sends back to scoring (each
+// may spend reputation lookups).
+const rescanBatch = 200
+
+// feedLevel is how corroborated a listing is, as the scorer weighs it: none,
+// one feed, two, three or more.
+func feedLevel(hits int) int { return min(hits, 3) }
+
+// scoredFeedHits reads, from a verdict's factors, how many feeds listed the
+// domain when it was scored (0 = none).
+func scoredFeedHits(factorsJSON string) int {
+	var fs []Factor
+	if json.Unmarshal([]byte(factorsJSON), &fs) != nil {
+		return 0
+	}
+	for _, f := range fs {
+		if f.Label != "Threat intel" {
 			continue
 		}
-		if ok {
-			flipped++
-			if status == store.ClassAuto {
-				autoFlipped++
-			}
+		switch {
+		case f.Delta <= -90:
+			return 3
+		case f.Delta <= -70:
+			return 2
+		default:
+			return 1
 		}
 	}
-	if flipped > 0 {
-		slog.Info("threat rescan re-flagged clean domains", "count", flipped, "auto", autoFlipped)
-		if autoFlipped > 0 && w.reload != nil {
-			_ = w.reload()
-		}
-	}
+	return 0
 }
 
 // TrustedCount / ThreatCount report the loaded set sizes (for the UI). Trusted

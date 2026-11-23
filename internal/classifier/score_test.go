@@ -143,10 +143,10 @@ func TestRiskyTLDAndLexical(t *testing.T) {
 	if _, risky := riskyTLD("foo.com"); risky {
 		t.Error(".com should not be flagged risky")
 	}
-	if fs := lexicalFactors("xn--pple-43d.com"); len(fs) == 0 {
+	if fs := lexicalFactors("xn--pple-43d.com", nil); len(fs) == 0 {
 		t.Error("punycode should produce a lexical factor")
 	}
-	if fs := lexicalFactors("google.com"); len(fs) != 0 {
+	if fs := lexicalFactors("google.com", nil); len(fs) != 0 {
 		t.Errorf("clean name should have no lexical factors, got %+v", fs)
 	}
 }
@@ -181,16 +181,16 @@ func TestBrandImpersonation(t *testing.T) {
 // clean domain.
 func fullTrust() (WhoisInfo, Reputation) {
 	return WhoisInfo{
-			AgeDays:    6000,
-			Registrant: "Example Corp",
-			Expires:    time.Now().AddDate(5, 0, 0).Format(time.RFC3339),
-			Status:     []string{"server transfer prohibited", "server delete prohibited"},
-			DNSSEC:     true,
-		}, Reputation{
-			VTChecked: true, VTHarmless: 70,
-			KasperskyChecked: true, KasperskyZone: "Green",
-			AbuseChecked: true, AbuseIP: "192.0.2.1",
-		}
+		AgeDays:    6000,
+		Registrant: "Example Corp",
+		Expires:    time.Now().AddDate(5, 0, 0).Format(time.RFC3339),
+		Status:     []string{"server transfer prohibited", "server delete prohibited"},
+		DNSSEC:     true,
+	}, Reputation{
+		VTChecked: true, VTHarmless: 70,
+		KasperskyChecked: true, KasperskyZone: "Green",
+		AbuseChecked: true, AbuseIP: "192.0.2.1",
+	}
 }
 
 func factorDelta(s Score, label string) (int, bool) {

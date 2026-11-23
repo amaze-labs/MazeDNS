@@ -116,6 +116,11 @@ func loadSources(sources []domainSource, count bool) (*TrustedSet, error) {
 			}
 			continue
 		}
+		for _, d := range one.ranked {
+			if _, dup := set.domains[d]; !dup && len(set.ranked) < rankedCap {
+				set.ranked = append(set.ranked, d)
+			}
+		}
 		for d := range one.domains {
 			set.domains[d] = struct{}{}
 			if count {

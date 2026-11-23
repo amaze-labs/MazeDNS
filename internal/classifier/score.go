@@ -59,6 +59,10 @@ type ScoreInput struct {
 	Whois       WhoisInfo  // registration data
 	Rep         Reputation // public reputation services (VirusTotal / AbuseIPDB)
 	Verdict     Verdict    // the model's assessment
+	// Lex is learned from the trusted list (nil = not loaded: the simpler
+	// built-in checks apply); Behaviour is what this network saw of the domain.
+	Lex       *Lexicon
+	Behaviour Behaviour
 }
 
 // threatHits returns how many feeds list the domain, tolerating callers that only
@@ -207,7 +211,12 @@ func computeScore(in ScoreInput) Score {
 
 	// Lexical structure — random-looking, very long, punycode (homograph) or
 	// hyphen/digit-heavy names are classic DGA / look-alike patterns.
-	for _, f := range lexicalFactors(in.Domain) {
+	for _, f := range lexicalFactors(in.Domain, in.Lex) {
+		add(f.Label, f.Detail, f.Delta)
+	}
+
+	// Behaviour on this network (passive DNS) — signals no outside service has.
+	for _, f := range behaviourFactors(in.Domain, in.Behaviour, in.Lex) {
 		add(f.Label, f.Detail, f.Delta)
 	}
 
@@ -324,13 +333,15 @@ func riskyTLD(domain string) (string, bool) {
 
 // lexicalFactors inspects the registered domain's primary label for look-alike /
 // machine-generated patterns. Each is a soft (small) deduction.
-func lexicalFactors(domain string) []Factor {
-	label := domain
-	if i := strings.IndexByte(domain, '.'); i >= 0 {
-		label = domain[:i]
-	}
+func lexicalFactors(domain string, lex *Lexicon) []Factor {
+	label := firstLabel(domain)
 	var fs []Factor
-	if strings.HasPrefix(label, "xn--") {
+	// Look-alikes of the popular brands (typo, brand + keyword, IDN homograph),
+	// when the lexicon is loaded.
+	look, isLook := lex.lookalike(label)
+	if isLook && look.Label == "Lexical: IDN homograph" {
+		fs = append(fs, look)
+	} else if strings.HasPrefix(label, "xn--") {
 		fs = append(fs, Factor{"Lexical: punycode", "internationalized name (xn--) — homograph/look-alike risk", -20})
 	}
 	if n := strings.Count(label, "-"); n >= 3 {
@@ -348,11 +359,42 @@ func lexicalFactors(domain string) []Factor {
 	if len(label) >= 25 {
 		fs = append(fs, Factor{"Lexical: length", fmt.Sprintf("%d-character name — unusually long", len(label)), -8})
 	}
-	if len(label) >= 12 && entropy(label) > 3.8 {
+	if lex != nil {
+		if lex.LooksGenerated(label) {
+			fs = append(fs, Factor{"Lexical: randomness", "less natural than 99% of popular domain names — looks machine-generated (DGA)", -12})
+		}
+	} else if len(label) >= 12 && entropy(label) > 3.8 {
 		fs = append(fs, Factor{"Lexical: randomness", "high-entropy name — looks machine-generated (DGA)", -12})
 	}
-	if f, ok := brandImpersonationFactor(label); ok {
-		fs = append(fs, f)
+	switch {
+	case isLook && look.Label != "Lexical: IDN homograph":
+		fs = append(fs, look)
+	case !isLook:
+		if f, ok := brandImpersonationFactor(label); ok {
+			fs = append(fs, f)
+		}
+	}
+	return fs
+}
+
+// behaviourFactors weighs what this network saw of the domain: tunneling,
+// generated names that don't exist, a brand put in front of another domain.
+func behaviourFactors(domain string, b Behaviour, lex *Lexicon) []Factor {
+	if b.Queries == 0 {
+		return nil
+	}
+	fs := []Factor{{"Seen on this network", fmt.Sprintf("%d queries from %d clients, %d distinct names", b.Queries, b.Clients, b.Subdomains+1), 0}}
+	if b.Tunneling() {
+		fs = append(fs, Factor{"Behaviour: DNS tunneling", fmt.Sprintf("%d distinct subdomains, %d of them long and random (longest label %d characters) — data carried in DNS names", b.Subdomains, b.RandomSubs, b.LongestSub), -40})
+	}
+	if b.MostlyNX() {
+		fs = append(fs, Factor{"Behaviour: names don't exist", fmt.Sprintf("%d of %d answers said the name doesn't exist — typical of generated (DGA) names", b.NXDomain, b.Queries), -10})
+	}
+	for _, n := range b.Names {
+		if brand, ok := lex.brandInSubdomain(n, domain); ok {
+			fs = append(fs, Factor{"Brand in subdomain", fmt.Sprintf("“%s” puts “%s” in front of another domain", n, brand), -25})
+			break
+		}
 	}
 	return fs
 }

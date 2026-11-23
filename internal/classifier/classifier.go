@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/publicsuffix"
@@ -84,6 +86,30 @@ type Client struct {
 	model    string
 	apiKey   string
 	http     *http.Client
+	// noSchema is set once an OpenAI-compatible server rejected a JSON-schema
+	// response_format: it then gets the plain prompt (older local servers).
+	noSchema atomic.Bool
+}
+
+// verdictSchema is the JSON schema the reply must follow (structured output):
+// the server constrains the model to it, so the reply always parses and the
+// category is always one we know.
+func verdictSchema() map[string]any {
+	cats := make([]string, 0, len(validCategories))
+	for c := range validCategories {
+		cats = append(cats, c)
+	}
+	sort.Strings(cats)
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"category":   map[string]any{"type": "string", "enum": cats},
+			"confidence": map[string]any{"type": "number", "minimum": 0, "maximum": 1},
+			"reason":     map[string]any{"type": "string"},
+		},
+		"required":             []string{"category", "confidence", "reason"},
+		"additionalProperties": false,
+	}
 }
 
 // NewClient builds a classifier client for the given provider. For "openai",
@@ -158,6 +184,8 @@ type chatReq struct {
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature"`
 	Stream      bool          `json:"stream"`
+	// ResponseFormat asks for a reply that follows verdictSchema.
+	ResponseFormat map[string]any `json:"response_format,omitempty"`
 }
 
 type chatMessage struct {
@@ -222,7 +250,21 @@ func (c *Client) Classify(ctx context.Context, domain string, h Hints) (Verdict,
 
 // classifyOpenAI calls an OpenAI-compatible /chat/completions endpoint.
 func (c *Client) classifyOpenAI(ctx context.Context, user string) (Verdict, Usage, error) {
-	body, err := json.Marshal(chatReq{
+	schema := !c.noSchema.Load()
+	v, usage, status, err := c.chatOpenAI(ctx, user, schema)
+	// A server that doesn't support structured output rejects the request
+	// (400/422): remember that and ask again with the plain prompt.
+	if schema && err != nil && (status == http.StatusBadRequest || status == http.StatusUnprocessableEntity) {
+		c.noSchema.Store(true)
+		v, usage, _, err = c.chatOpenAI(ctx, user, false)
+	}
+	return v, usage, err
+}
+
+// chatOpenAI makes one /chat/completions call; it also returns the HTTP
+// status (0 when the request never got one).
+func (c *Client) chatOpenAI(ctx context.Context, user string, schema bool) (Verdict, Usage, int, error) {
+	creq := chatReq{
 		Model:       c.model,
 		Temperature: 0,
 		Stream:      false,
@@ -230,13 +272,20 @@ func (c *Client) classifyOpenAI(ctx context.Context, user string) (Verdict, Usag
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: user},
 		},
-	})
+	}
+	if schema {
+		creq.ResponseFormat = map[string]any{
+			"type":        "json_schema",
+			"json_schema": map[string]any{"name": "domain_verdict", "strict": true, "schema": verdictSchema()},
+		}
+	}
+	body, err := json.Marshal(creq)
 	if err != nil {
-		return Verdict{}, Usage{}, err
+		return Verdict{}, Usage{}, 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return Verdict{}, Usage{}, err
+		return Verdict{}, Usage{}, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -244,29 +293,29 @@ func (c *Client) classifyOpenAI(ctx context.Context, user string) (Verdict, Usag
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Verdict{}, Usage{}, err
+		return Verdict{}, Usage{}, 0, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusOK {
-		return Verdict{}, Usage{}, fmt.Errorf("classifier: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return Verdict{}, Usage{}, resp.StatusCode, fmt.Errorf("classifier: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var cr chatResp
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return Verdict{}, Usage{}, fmt.Errorf("classifier: bad response: %w", err)
+		return Verdict{}, Usage{}, http.StatusOK, fmt.Errorf("classifier: bad response: %w", err)
 	}
 	if cr.Error != nil {
-		return Verdict{}, Usage{}, fmt.Errorf("classifier: %s", cr.Error.Message)
+		return Verdict{}, Usage{}, http.StatusOK, fmt.Errorf("classifier: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
-		return Verdict{}, Usage{}, fmt.Errorf("classifier: empty response")
+		return Verdict{}, Usage{}, http.StatusOK, fmt.Errorf("classifier: empty response")
 	}
 	var usage Usage
 	if cr.Usage != nil {
 		usage = *cr.Usage
 	}
 	v, err := parseVerdict(cr.Choices[0].Message.Content)
-	return v, usage, err
+	return v, usage, http.StatusOK, err
 }
 
 // Anthropic Messages API request/response (https://api.anthropic.com/v1/messages).
@@ -275,6 +324,10 @@ type anthropicReq struct {
 	MaxTokens int                `json:"max_tokens"`
 	System    string             `json:"system,omitempty"`
 	Messages  []anthropicMessage `json:"messages"`
+	// Tools and ToolChoice force the verdict through a tool whose input
+	// follows verdictSchema (structured output).
+	Tools      []map[string]any `json:"tools,omitempty"`
+	ToolChoice map[string]any   `json:"tool_choice,omitempty"`
 }
 
 type anthropicMessage struct {
@@ -284,8 +337,9 @@ type anthropicMessage struct {
 
 type anthropicResp struct {
 	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		Input json.RawMessage `json:"input"` // a tool_use block's arguments
 	} `json:"content"`
 	StopReason string `json:"stop_reason"`
 	Usage      *struct {
@@ -307,6 +361,12 @@ func (c *Client) classifyAnthropic(ctx context.Context, user string) (Verdict, U
 		MaxTokens: 1024,
 		System:    systemPrompt,
 		Messages:  []anthropicMessage{{Role: "user", Content: user}},
+		Tools: []map[string]any{{
+			"name":         "record_verdict",
+			"description":  "Record the domain's classification.",
+			"input_schema": verdictSchema(),
+		}},
+		ToolChoice: map[string]any{"type": "tool", "name": "record_verdict"},
 	})
 	if err != nil {
 		return Verdict{}, Usage{}, err
@@ -340,11 +400,21 @@ func (c *Client) classifyAnthropic(ctx context.Context, user string) (Verdict, U
 	if ar.StopReason == "refusal" {
 		return Verdict{}, Usage{}, fmt.Errorf("classifier: model declined to classify the domain")
 	}
+	// The structured verdict (the tool call's input) wins; text is the
+	// fallback for a reply without one.
 	var text strings.Builder
+	var toolInput []byte
 	for _, b := range ar.Content {
-		if b.Type == "text" {
+		switch b.Type {
+		case "tool_use":
+			toolInput = b.Input
+		case "text":
 			text.WriteString(b.Text)
 		}
+	}
+	if len(toolInput) > 0 {
+		text.Reset()
+		text.Write(toolInput)
 	}
 	var usage Usage
 	if ar.Usage != nil {

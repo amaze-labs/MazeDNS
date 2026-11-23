@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/IPMaze/MazeDNS/internal/categories"
@@ -145,6 +146,11 @@ type Worker struct {
 	// catDB is the category database: a domain it knows needs no content
 	// category from the model (nil = no database: always ask).
 	catDB *categories.Holder
+
+	// lex is learned from the trusted list (lexicon.go); obs tallies the query
+	// stream per domain (observe.go).
+	lex atomic.Pointer[Lexicon]
+	obs *observer
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -162,6 +168,9 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 
 		zoneResolves: zoneResolves,
 	}
+	w.obs = newObserver(w.lex.Load)
+	// The lexicon is learned from the trusted list: rebuild it when that loads.
+	w.trusted.onChange = func() { w.lex.Store(BuildLexicon(w.trusted.set.Load())) }
 	// Whenever the threat set (re)loads, re-check existing clean verdicts against it
 	// so domains that became malicious after we last saw them get flagged.
 	w.threat.onChange = w.rescanThreat
@@ -198,6 +207,24 @@ func (w *Worker) clientFor(s Settings) *Client {
 // Enqueue submits a queried name for classification. It extracts the registered
 // domain, skips ones seen recently, and never blocks the caller (drops on a full
 // queue) — the DNS hot path must not wait on this.
+// Observe records one query from the stream (its behaviour signals) and
+// submits its name for classification. A classified domain whose behaviour
+// turns into a tunneling pattern goes back to scoring.
+func (w *Worker) Observe(e store.QueryLogEntry) {
+	s := w.get()
+	if !s.Enabled || ParseMode(s.Mode) == ModeOff {
+		return
+	}
+	domain := RegisteredDomain(e.Name)
+	if domain == "" || IsReservedName(domain) || w.Excluded(e.Name) {
+		return
+	}
+	if w.obs.add(domain, e, time.Now()) {
+		w.rescoreDomain(domain, "behaviour changed: DNS tunneling pattern")
+	}
+	w.Enqueue(e.Name)
+}
+
 func (w *Worker) Enqueue(name string) {
 	s := w.get()
 	if !s.Enabled || ParseMode(s.Mode) == ModeOff {
@@ -249,6 +276,7 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	go w.refreshThreatLoop(ctx)
 	go w.rescoreLegacyTrusted(ctx) // feeds the queue below, so it can't run inline
+	go w.rescoreLoop(ctx)          // verdicts whose evidence aged (rescore.go)
 	// Content categories for verdicts from before categories existed are asked
 	// of the model while the queue is idle, one call per tick, so the backfill
 	// never competes with newly seen domains.
@@ -460,19 +488,26 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// Score the domain: start at baseLegitimacy and let the evidence move it.
 	// A lone threat-feed hit is weighed as a possible misreport (see computeScore);
 	// corroboration across feeds, or a reputation flag, blocks decisively.
-	in := ScoreInput{Domain: domain, Platform: platform, NSTrustedOn: nsOwner, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v}
+	in := ScoreInput{Domain: domain, Platform: platform, NSTrustedOn: nsOwner, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v,
+		Lex: w.lex.Load(), Behaviour: w.obs.get(domain)}
 	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security
 	// category, a threat feed matched, or a reputation service flagged it) AND a low
 	// legitimacy score. So young / risky-TLD legitimate domains are NOT blocked on
 	// structure alone, and a trusted/established domain stays well above the threshold.
-	candidate := v.ShouldBlock() || threat || in.RepMalicious()
+	// A tunneling pattern seen on this network is an indicator too, but only for
+	// review: it is a heuristic, never enough to auto-block on its own.
+	tunnel := in.Behaviour.Tunneling()
+	candidate := v.ShouldBlock() || threat || in.RepMalicious() || tunnel
 	block := candidate && score.Legitimacy < blockThreshold
+	reviewOnly := tunnel && !v.ShouldBlock() && !threat && !in.RepMalicious()
 
 	category := v.Category
 	if (threat || in.RepMalicious()) && !v.ShouldBlock() {
 		category = "malware" // flagged by a feed/reputation but the model missed it
+	} else if tunnel && !v.ShouldBlock() {
+		category = "malware" // data smuggled over DNS: a compromised client
 	}
 	// A verdict's category is the reason it blocks; one that doesn't block is
 	// "other" — a malicious tag the trust/score overrode is dropped, and what the
@@ -483,7 +518,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 
 	status := store.ClassClean
 	if block {
-		if mode == ModeAuto && score.Legitimacy < autoThreshold {
+		if mode == ModeAuto && score.Legitimacy < autoThreshold && !reviewOnly {
 			status = store.ClassAuto // confidently malicious -> enforce now
 		} else {
 			status = store.ClassSuggested // borderline -> review

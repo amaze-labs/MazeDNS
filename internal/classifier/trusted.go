@@ -37,6 +37,34 @@ type TrustedSet struct {
 	// list each domain — so a single-feed hit (a possible misreport) can be weighed
 	// less than corroboration across several feeds.
 	counts map[string]int
+	// ranked keeps the first rankedCap domains in list order: for a ranked
+	// list (Majestic, Tranco) the most popular ones, used as the brands
+	// look-alikes imitate (lexicon.go).
+	ranked []string
+}
+
+// rankedCap is how many top domains a set keeps in order.
+const rankedCap = 2000
+
+// Top returns up to n of the set's first (most popular) domains.
+func (t *TrustedSet) Top(n int) []string {
+	if t == nil {
+		return nil
+	}
+	if n > len(t.ranked) {
+		n = len(t.ranked)
+	}
+	return t.ranked[:n]
+}
+
+// Each calls fn for every domain in the set (in no particular order).
+func (t *TrustedSet) Each(fn func(domain string)) {
+	if t == nil {
+		return
+	}
+	for d := range t.domains {
+		fn(d)
+	}
 }
 
 // Has reports whether name's registered domain is in the trusted set.
@@ -157,6 +185,9 @@ func parseTrusted(r io.Reader, topN int) (*TrustedSet, error) {
 				}
 			}
 			if d := RegisteredDomain(tok); d != "" && strings.ContainsRune(d, '.') {
+				if _, dup := set.domains[d]; !dup && len(set.ranked) < rankedCap {
+					set.ranked = append(set.ranked, d)
+				}
 				set.domains[d] = struct{}{}
 				break
 			}

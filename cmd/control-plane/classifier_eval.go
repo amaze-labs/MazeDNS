@@ -35,6 +35,7 @@ func classifierEvalCmd(args []string) {
 	n := fs.Int("n", 2000, "samples per class")
 	feeds := fs.String("feeds", strings.Join(classifier.DefaultThreatFeeds, ","), "threat feeds for malicious samples (keys, comma-separated)")
 	rdap := fs.Int("rdap", 0, "look up registration data for this many samples per class (free RDAP, ~2 per second)")
+	nrd := fs.Bool("nrd", false, "use the free newly-registered-domains lists (downloads ~90 MB)")
 	cfgPath := fs.String("config", "", "config file: also use this control plane's review decisions as labels")
 	out := fs.String("out", "", "write the report here instead of stdout")
 	seed := fs.Int64("seed", 1, "sampling seed")
@@ -143,6 +144,14 @@ func classifierEvalCmd(args []string) {
 			defer cancel()
 			return cache.Lookup(lctx, d)
 		}
+	}
+	if *nrd {
+		slog.Info("loading the newly-registered-domains lists")
+		lists, err := classifier.LoadNRDLists(ctx)
+		if err != nil {
+			fail("newly-registered-domains lists", err)
+		}
+		opt.NRD = lists
 	}
 	slog.Info("scoring", "samples", len(samples), "rdap_per_class", *rdap)
 	res := classifier.Evaluate(ctx, samples, opt)

@@ -64,6 +64,17 @@ type Settings struct {
 	// WhoisEnabled enriches each classification with the domain's registration
 	// data (via RDAP) — domain age is a strong signal for the model.
 	WhoisEnabled bool `json:"whois_enabled"`
+	// NRDEnabled downloads the free newly-registered-domains lists (hagezi/nrd,
+	// ~90 MB a day, ~45 MB in memory): a domain registered in the last two
+	// weeks is known to be young without looking anything up.
+	NRDEnabled bool `json:"nrd_enabled"`
+	// NetRepEnabled checks the address a domain resolves to against Spamhaus
+	// DROP / ASN-DROP (free lists of hijacked and criminal networks); the
+	// address's network is looked up with Team Cymru's free DNS service.
+	NetRepEnabled bool `json:"netrep_enabled"`
+	// CTEnabled asks crt.sh (Certificate Transparency) when the domain got its
+	// first certificate, used when the registration date is unknown.
+	CTEnabled bool `json:"ct_enabled"`
 	// Reputation enrichment (optional, key-gated): corroborate verdicts against
 	// public reputation services. A clean report raises legitimacy; a malicious
 	// one lowers it. VirusTotal checks the domain; AbuseIPDB checks its resolved IP.
@@ -151,6 +162,11 @@ type Worker struct {
 	// stream per domain (observe.go).
 	lex atomic.Pointer[Lexicon]
 	obs *observer
+
+	// Free open-data signals (nrd.go, netrep.go, ct.go).
+	nrd    nrdHolder
+	netrep netrepHolder
+	ct     *ctCache
 }
 
 // NewWorker builds a classification worker driven by the live settings getter.
@@ -169,6 +185,7 @@ func NewWorker(st *store.Store, get func() Settings, reload func() error) *Worke
 		zoneResolves: zoneResolves,
 	}
 	w.obs = newObserver(w.lex.Load)
+	w.ct = newCTCache()
 	// The lexicon is learned from the trusted list: rebuild it when that loads.
 	w.trusted.onChange = func() { w.lex.Store(BuildLexicon(w.trusted.set.Load())) }
 	// Whenever the threat set (re)loads, re-check existing clean verdicts against it
@@ -416,6 +433,8 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	}
 	w.trusted.ensureSync(trustedSources(s))
 	w.threat.ensureSync(threatSources(s))
+	w.nrd.ensure(s.NRDEnabled)
+	w.netrep.ensure(s.NetRepEnabled)
 	if done, err := w.store.IsClassified(domain); err != nil || done {
 		return // already have a verdict (or DB error) — classify once.
 	}
@@ -449,13 +468,29 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	}
 	nsOwner := w.trustedNameservers(ctx, domain, whois)
 
+	// Open-data age and network signals (each behind its own switch).
+	nrdDays := w.nrd.days(domain)
+	certAge, noCert := 0, false
+	if s.CTEnabled && whois.AgeDays <= 0 && nrdDays == 0 && platform == "" {
+		switch a := w.ct.firstCertAge(ctx, domain); {
+		case a > 0:
+			certAge = a
+		case a == 0:
+			noCert = true
+		}
+	}
+	var netRep NetRep
+	if s.NetRepEnabled {
+		netRep = w.netrep.check(ctx, domain)
+	}
+
 	// Not trusted: spend the remaining signals. Threat-feed membership is a cheap
 	// in-memory lookup that also tells us how many feeds list the domain. A hit on
 	// 2+ feeds is corroborated enough to be a definitive block, so we can skip the
 	// costly reputation + LLM work entirely (saves API quota and LLM tokens).
 	threatHits := w.threat.hits(domain)
 	threat := threatHits > 0
-	strong := threatHits >= 2
+	strong := threatHits >= 2 || netRep.Listed()
 
 	var rep Reputation
 	if !strong {
@@ -489,7 +524,7 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// A lone threat-feed hit is weighed as a possible misreport (see computeScore);
 	// corroboration across feeds, or a reputation flag, blocks decisively.
 	in := ScoreInput{Domain: domain, Platform: platform, NSTrustedOn: nsOwner, Threat: threat, ThreatHits: threatHits, Whois: whois, Rep: rep, Verdict: v,
-		Lex: w.lex.Load(), Behaviour: w.obs.get(domain)}
+		Lex: w.lex.Load(), Behaviour: w.obs.get(domain), NRDDays: nrdDays, CertAgeDays: certAge, NoCert: noCert, Net: netRep}
 	score := computeScore(in)
 
 	// A block requires an actual threat indicator (the model named a security
@@ -499,12 +534,12 @@ func (w *Worker) process(ctx context.Context, domain string) {
 	// A tunneling pattern seen on this network is an indicator too, but only for
 	// review: it is a heuristic, never enough to auto-block on its own.
 	tunnel := in.Behaviour.Tunneling()
-	candidate := v.ShouldBlock() || threat || in.RepMalicious() || tunnel
+	candidate := v.ShouldBlock() || threat || in.RepMalicious() || tunnel || netRep.Listed()
 	block := candidate && score.Legitimacy < blockThreshold
-	reviewOnly := tunnel && !v.ShouldBlock() && !threat && !in.RepMalicious()
+	reviewOnly := tunnel && !v.ShouldBlock() && !threat && !in.RepMalicious() && !netRep.Listed()
 
 	category := v.Category
-	if (threat || in.RepMalicious()) && !v.ShouldBlock() {
+	if (threat || in.RepMalicious() || netRep.Listed()) && !v.ShouldBlock() {
 		category = "malware" // flagged by a feed/reputation but the model missed it
 	} else if tunnel && !v.ShouldBlock() {
 		category = "malware" // data smuggled over DNS: a compromised client

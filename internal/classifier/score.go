@@ -63,6 +63,13 @@ type ScoreInput struct {
 	// built-in checks apply); Behaviour is what this network saw of the domain.
 	Lex       *Lexicon
 	Behaviour Behaviour
+	// Open-data signals: the newly-registered-domains band the domain is in
+	// (0 = none), the age of its first logged certificate (0 = unknown;
+	// NoCert = none ever logged), and its network's DROP listing.
+	NRDDays     int
+	CertAgeDays int
+	NoCert      bool
+	Net         NetRep
 }
 
 // threatHits returns how many feeds list the domain, tolerating callers that only
@@ -86,7 +93,7 @@ func (in ScoreInput) RepMalicious() bool { return in.Rep.Malicious() }
 // strong on its own (it can be a misreport of an otherwise-clean domain), so it
 // does not bypass the established / reputation-clean floors below.
 func (in ScoreInput) StrongThreat() bool {
-	return in.threatHits() >= 2 || in.RepMalicious()
+	return in.threatHits() >= 2 || in.RepMalicious() || in.Net.Listed()
 }
 
 func imin(a, b int) int {
@@ -168,8 +175,37 @@ func computeScore(in ScoreInput) Score {
 		// -15: the strongest name-level signal in classifier-eval (a feed
 		// domain is far more often a platform customer site than a popular one).
 		add("Hosting platform", "a customer site on "+in.Platform+" — anyone can publish there in minutes", -15)
+	case age <= 0 && in.NRDDays > 0:
+		// No registration date, but the free newly-registered-domains lists
+		// know the domain is young.
+		delta := -35
+		if in.NRDDays <= 7 {
+			delta = -45
+		}
+		add("Domain age", fmt.Sprintf("registered within the last %d days (newly-registered-domains list)", in.NRDDays), delta)
+	case age <= 0 && in.CertAgeDays > 0:
+		// No registration date: when the site got its first certificate
+		// (Certificate Transparency) stands in for it.
+		switch c := in.CertAgeDays; {
+		case c < 7:
+			add("Site age", fmt.Sprintf("first certificate %d days ago (Certificate Transparency) — a brand-new site", c), -30)
+		case c < 30:
+			add("Site age", fmt.Sprintf("first certificate %d days ago (Certificate Transparency)", c), -18)
+		case c < 90:
+			add("Site age", fmt.Sprintf("first certificate %d days ago (Certificate Transparency)", c), -8)
+		case c < establishedDays:
+			note("Site age", fmt.Sprintf("first certificate %d days ago (Certificate Transparency)", c))
+		case c >= ctOld:
+			vouch("Site age", "thousands of certificates logged (Certificate Transparency) — a long-running site", 6)
+		default:
+			vouch("Site age", fmt.Sprintf("first certificate %d years ago (Certificate Transparency)", c/365), 6)
+		}
 	case age <= 0:
-		note("Domain age", "registration date unknown — the registry doesn't publish it, or the lookup failed")
+		detail := "registration date unknown — the registry doesn't publish it, or the lookup failed"
+		if in.NoCert {
+			detail += "; no certificate ever logged for it"
+		}
+		note("Domain age", detail)
 	case age < 30:
 		add("Domain age", fmt.Sprintf("registered %d days ago — very new", age), -45)
 	case age < 90:
@@ -258,6 +294,16 @@ func computeScore(in ScoreInput) Score {
 		default:
 			note("Kaspersky OpenTIP", "grey zone — no data")
 		}
+	}
+
+	// Network reputation — Spamhaus DROP / ASN-DROP: where it is hosted.
+	switch {
+	case in.Net.DropCIDR != "":
+		add("Spamhaus DROP", fmt.Sprintf("answers from %s, in %s — a hijacked or criminal netblock", in.Net.IP, in.Net.DropCIDR), -50)
+	case in.Net.DropASN:
+		add("Spamhaus ASN-DROP", fmt.Sprintf("hosted on AS%d (%s), a network listed as hijacked or criminal", in.Net.ASN, in.Net.ASName), -40)
+	case in.Net.Checked && in.Net.ASN != 0:
+		note("Network", fmt.Sprintf("answers from %s on AS%d — not on Spamhaus DROP", in.Net.IP, in.Net.ASN))
 	}
 
 	// Model assessment — the LLM's own read, made WITH all the signals above in

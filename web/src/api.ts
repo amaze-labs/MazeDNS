@@ -431,6 +431,9 @@ export interface ClassifierSettings {
   threat_list_url: string
   threat_disable_default: boolean
   whois_enabled: boolean
+  nrd_enabled?: boolean // newly-registered-domains lists (hagezi/nrd)
+  netrep_enabled?: boolean // Spamhaus DROP / ASN-DROP + Team Cymru
+  ct_enabled?: boolean // Certificate Transparency (crt.sh)
   vt_enabled: boolean
   vt_api_key: string
   abuseipdb_enabled: boolean

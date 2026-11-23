@@ -475,6 +475,9 @@ export default function Classifier({
               }
             />
             <Signal on={!!st?.whois_enabled} title="WHOIS age" detail="Domain age via RDAP — the strongest phishing hint." />
+            {st?.nrd_enabled && <Signal on title="Newly registered" detail="Free NRD lists: registered in the last two weeks." />}
+            {st?.netrep_enabled && <Signal on title="Network reputation" detail="Spamhaus DROP / ASN-DROP." />}
+            {st?.ct_enabled && <Signal on title="Certificate Transparency" detail="First certificate, when the age is unknown." />}
             {st?.vt_enabled && <Signal on title="VirusTotal" detail="Per-domain reputation lookup." />}
             {st?.abuseipdb_enabled && <Signal on title="AbuseIPDB" detail="Reputation of the resolved IPs." />}
             {st?.opentip_enabled && <Signal on title="Kaspersky OpenTIP" detail="Threat-zone lookup." />}

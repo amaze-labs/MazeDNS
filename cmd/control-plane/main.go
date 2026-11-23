@@ -243,7 +243,7 @@ func main() {
 	apiSrv.ApplyCPSettings(cpset)
 	apiSrv.SetProcessLogs(procRing)
 	apiSrv.SetClassifierStatus(clsWorker)
-	apiSrv.SetClassifierEnqueue(clsWorker.Enqueue)
+	apiSrv.SetClassifierEnqueue(clsWorker.Observe)
 	apiSrv.SetEnricher(enricher)
 	apiSrv.SetPrivacy(anon)
 	if categorizer != nil {

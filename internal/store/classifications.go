@@ -420,3 +420,76 @@ func (s *Store) insertID(query string, args ...any) (int64, error) {
 	}
 	return res.LastInsertId()
 }
+
+// MachineVerdict is a verdict the classifier reached on its own (clean,
+// suggested or auto — never a human decision, never a trusted shortcut), for
+// re-scoring when its evidence may have changed.
+type MachineVerdict struct {
+	Domain    string
+	Status    string
+	Factors   string // JSON score breakdown
+	Threat    bool
+	UpdatedAt int64 // unix millis
+}
+
+// MachineVerdictsMatching returns up to limit machine verdicts last updated
+// before beforeMs, oldest first: those whose factors contain factorLike (a
+// LIKE pattern), or, with threatOnly, the feed-flagged blocks and suggestions.
+func (s *Store) MachineVerdictsMatching(beforeMs int64, factorLike string, threatOnly bool, limit int) ([]MachineVerdict, error) {
+	q := `SELECT domain, status, factors, threat, updated_at FROM classifications
+		 WHERE status IN (?, ?, ?) AND trusted = 0 AND updated_at < ?`
+	args := []any{ClassClean, ClassSuggested, ClassAuto, beforeMs}
+	if threatOnly {
+		q += ` AND threat = 1 AND status <> ?`
+		args = append(args, ClassClean)
+	} else {
+		q += ` AND factors LIKE ?`
+		args = append(args, factorLike)
+	}
+	q += ` ORDER BY updated_at LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.read.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MachineVerdict
+	for rows.Next() {
+		var v MachineVerdict
+		var threat int
+		if err := rows.Scan(&v.Domain, &v.Status, &v.Factors, &threat, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		v.Threat = threat != 0
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// TouchMachineVerdict bumps a machine verdict's updated_at, so a verdict
+// checked and kept isn't checked again until its next interval.
+func (s *Store) TouchMachineVerdict(domain string) error {
+	_, err := s.db.Exec(`UPDATE classifications SET updated_at = ? WHERE domain = ? AND status IN (?, ?, ?) AND trusted = 0`,
+		time.Now().UnixMilli(), domain, ClassClean, ClassSuggested, ClassAuto)
+	return err
+}
+
+// DeleteMachineVerdict removes a verdict only while it is still a machine
+// verdict, so a human decision made meanwhile is never lost. It reports
+// whether a row was removed and whether that verdict was enforcing a block.
+func (s *Store) DeleteMachineVerdict(domain string) (removed, wasAuto bool, err error) {
+	var status string
+	if err := s.read.QueryRow(`SELECT status FROM classifications WHERE domain = ? AND trusted = 0`, domain).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	res, err := s.db.Exec(`DELETE FROM classifications WHERE domain = ? AND status IN (?, ?, ?) AND trusted = 0`,
+		domain, ClassClean, ClassSuggested, ClassAuto)
+	if err != nil {
+		return false, false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, n > 0 && status == ClassAuto, nil
+}

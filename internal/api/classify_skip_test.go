@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/IPMaze/MazeDNS/internal/store"
+
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +17,7 @@ func TestClusterLogSkipsLocalAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	var queued []string
-	s.SetClassifierEnqueue(func(name string) { queued = append(queued, name) })
+	s.SetClassifierEnqueue(func(e store.QueryLogEntry) { queued = append(queued, e.Name) })
 	body := `[{"ts":1,"name":"nas.amaze-labs.com.","action":"rewrite"},
 	          {"ts":1,"name":"ns.amaze-labs.com.","action":"authoritative"},
 	          {"ts":1,"name":"www.google.com.","action":"forward"},

@@ -59,7 +59,7 @@ type Server struct {
 	statsCache          *ttlCache
 	classifierAvailable bool // master only — classifier endpoints/tab are offered
 	cls                 classifierStatus
-	enqueue             func(string) // feed classifier from ingested agent logs (may be nil)
+	enqueue             func(store.QueryLogEntry) // feed classifier from ingested agent logs (may be nil)
 	enricher            *clientname.Enricher
 	categorizer         *classifier.Categorizer // nil = domain categories off
 	ingested            atomic.Int64            // query-log entries received from agents
@@ -143,7 +143,7 @@ func (s *Server) SetClassifierStatus(cs classifierStatus) { s.cls = cs }
 // agents' shipped query logs are fed to the classifier. On the control plane no
 // DNS is served locally, so this ingest path is the classifier's source of newly
 // seen domains.
-func (s *Server) SetClassifierEnqueue(fn func(name string)) { s.enqueue = fn }
+func (s *Server) SetClassifierEnqueue(fn func(e store.QueryLogEntry)) { s.enqueue = fn }
 
 // SetPrivacy wires the query-log privacy level into ingest (a nil Anonymizer
 // keeps everything).
@@ -1086,7 +1086,7 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 	}
 	s.labelEntries(entries)
 	// Names go to the classifier before the privacy level may hide them.
-	var classify []string
+	var classify []store.QueryLogEntry
 	if s.enqueue != nil {
 		for _, e := range entries {
 			// A name a local record answered is the network's own: it never
@@ -1094,7 +1094,7 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 			if e.Action == "rewrite" || e.Action == "authoritative" {
 				continue
 			}
-			classify = append(classify, e.Name)
+			classify = append(classify, e)
 		}
 	}
 	s.priv.Ingest(entries, time.Now())
@@ -1110,8 +1110,8 @@ func (s *Server) clusterLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ingested.Add(int64(len(entries)))
-	for _, name := range classify {
-		s.enqueue(name)
+	for _, e := range classify {
+		s.enqueue(e) // behaviour signals (client, type, answer) and the name
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ingested": len(entries)})
 }

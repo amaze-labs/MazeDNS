@@ -20,7 +20,7 @@ func TestClusterLogAppliesPrivacy(t *testing.T) {
 		t.Fatal(err)
 	}
 	var queued []string
-	s.SetClassifierEnqueue(func(name string) { queued = append(queued, name) })
+	s.SetClassifierEnqueue(func(e store.QueryLogEntry) { queued = append(queued, e.Name) })
 	s.SetPrivacy(privacy.New(func() privacy.Policy { return privacy.Policy{Level: privacy.LevelHideClients} },
 		privacy.NewKeyring(st)))
 	body := `[{"ts":1,"client":"10.0.0.7","name":"www.google.com.","action":"forward"}]`

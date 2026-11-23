@@ -56,7 +56,7 @@ env:
 jobs:
   version:
     name: Compute version
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.next.outputs.version }}
       previous: ${{ steps.next.outputs.previous }}
@@ -165,8 +165,8 @@ jobs:
           matrix=$(jq -cn --argjson cp "$cp" --argjson agent "$agent" '
             [ (if $cp then {image: "control-plane", suffix: "control-plane"} else empty end),
               (if $agent then {image: "dns-resolver", suffix: "agent", alias: "resolver"} else empty end) ] as $imgs
-            | [ {arch: "amd64", runner: ["self-hosted", "linux", "x64"], platform: "linux/amd64"},
-                {arch: "arm64", runner: ["self-hosted", "linux", "x64"], platform: "linux/arm64"} ] as $arches
+            | [ {arch: "amd64", runner: "ubuntu-latest", platform: "linux/amd64"},
+                {arch: "arm64", runner: "ubuntu-24.04-arm", platform: "linux/arm64"} ] as $arches
             | {include: [ $imgs[] as $i | $arches[] as $a | $i + $a ]}')
           {
             echo "build_cp=$cp"
@@ -257,7 +257,7 @@ jobs:
       !cancelled() && needs.version.outputs.skip != 'true' &&
       (needs.build.result == 'success' ||
        (needs.build.result == 'skipped' && needs.version.outputs.any == 'false'))
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
@@ -363,7 +363,7 @@ jobs:
     if: >-
       !cancelled() && needs.version.outputs.skip != 'true' &&
       needs.publish.result == 'success'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:

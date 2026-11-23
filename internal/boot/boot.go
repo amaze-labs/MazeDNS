@@ -284,12 +284,24 @@ func BuildPolicy(st *store.Store, cfg config.Config) (*resolver.Policy, error) {
 	} else {
 		slog.Warn("load ai classifications", "err", aerr)
 	}
-	rewrites := map[string][]resolver.RewriteRR{}
-	wildcards := map[string][]resolver.RewriteRR{}
 	rws, werr := st.ListRewrites()
 	if werr != nil {
 		return nil, werr
 	}
+	rewrites, wildcards := RewriteMaps(rws)
+	// Freeze the engines: they are now fully built and about to be published
+	// read-only, so the resolver can match against them lock-free on the hot path.
+	block.Seal()
+	allow.Seal()
+	return &resolver.Policy{Block: block, Allow: allow, Rewrites: rewrites, Wildcards: wildcards}, nil
+}
+
+// RewriteMaps turns local DNS records into the policy's lookup maps: exact
+// names, and "*.suffix" wildcards keyed by suffix. Disabled records and
+// unsupported types are skipped.
+func RewriteMaps(rws []store.Rewrite) (rewrites, wildcards map[string][]resolver.RewriteRR) {
+	rewrites = map[string][]resolver.RewriteRR{}
+	wildcards = map[string][]resolver.RewriteRR{}
 	for _, rw := range rws {
 		if !rw.Enabled {
 			continue
@@ -306,9 +318,5 @@ func BuildPolicy(st *store.Store, cfg config.Config) (*resolver.Policy, error) {
 			rewrites[key] = append(rewrites[key], rr)
 		}
 	}
-	// Freeze the engines: they are now fully built and about to be published
-	// read-only, so the resolver can match against them lock-free on the hot path.
-	block.Seal()
-	allow.Seal()
-	return &resolver.Policy{Block: block, Allow: allow, Rewrites: rewrites, Wildcards: wildcards}, nil
+	return rewrites, wildcards
 }

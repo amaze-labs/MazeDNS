@@ -238,6 +238,9 @@ type Resolver struct {
 	// and timeout, so an unchanged upstream keeps its warm connections.
 	upMu      sync.Mutex
 	upstreams map[string]Upstream
+	// traceUps holds upstreams only a Trace uses (a forwarder scoped to another
+	// resolver), so repeated traces reuse them. Guarded by upMu.
+	traceUps map[string]Upstream
 }
 
 // answerKey identifies the settings a cached answer depends on: where queries
@@ -264,6 +267,11 @@ func (r *Resolver) SetCategoryDB(h *categories.Holder) { r.catDB.Store(h) }
 // decides first — an override out of a blocked category exempts the domain —
 // then the category database.
 func (r *Resolver) blockedCategory(rt *runtime, name string) (string, bool) {
+	return blockedCategoryIn(rt, r.catDB.Load(), name)
+}
+
+// blockedCategoryIn is blockedCategory against a given category database.
+func blockedCategoryIn(rt *runtime, db *categories.Holder, name string) (string, bool) {
 	if len(rt.blockedCats) == 0 {
 		return "", false
 	}
@@ -279,7 +287,7 @@ func (r *Resolver) blockedCategory(rt *runtime, name string) (string, bool) {
 			rest = rest[i+1:]
 		}
 	}
-	if db := r.catDB.Load(); db != nil {
+	if db != nil {
 		if cat, ok := db.Lookup(name); ok && rt.blockedCats[cat] {
 			return cat, true
 		}

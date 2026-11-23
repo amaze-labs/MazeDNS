@@ -230,6 +230,45 @@ export interface AuthInfo {
   setup_required: boolean
 }
 
+// TestQuery* mirror the "Test a query" tool (POST /api/tools/resolve).
+export interface TestQueryRecord {
+  name: string
+  type: string
+  ttl: number
+  data: string
+}
+
+export interface TestQueryAnswer {
+  rcode: string
+  answer: TestQueryRecord[]
+  authority?: TestQueryRecord[]
+  ad?: boolean
+}
+
+export interface TestQueryResult {
+  name: string
+  type: string
+  node?: string
+  site?: string
+  ran_on: string
+  decision: 'authoritative' | 'rewrite' | 'blocked' | 'forward' | 'error'
+  zone?: string
+  rewrite?: string
+  rewrite_scope?: string
+  rewrite_scope_values?: string[]
+  rewrite_yielded?: string
+  category?: string
+  category_block?: boolean
+  allowed?: boolean
+  block_paused?: boolean
+  forwarder?: string
+  upstream?: string
+  rtt_ms?: number
+  error?: string
+  answer: TestQueryAnswer
+  upstream_answer?: TestQueryAnswer
+}
+
 // OIDCStatus mirrors auth.OIDCStatus: whether SSO is switched on, whether its
 // provider actually loaded, and if not, why (admin-only).
 export interface OIDCStatus {
@@ -1009,6 +1048,8 @@ export const api = {
   deleteEnrollKey: (id: string) =>
     fetch(`/api/cluster/enroll-keys/${encodeURIComponent(id)}?forever=true`, { method: 'DELETE' }).then(ok),
   clusterSites: () => fetch('/api/cluster/sites').then(j<Site[]>),
+  testQuery: (q: { name: string; type: string; node?: string; site?: string; dnssec?: boolean; forward_blocked?: boolean }) =>
+    fetch('/api/tools/resolve', { method: 'POST', headers: jsonHeaders, body: JSON.stringify(q) }).then(j<TestQueryResult>),
   createSite: (name: string, description = '') =>
     fetch('/api/cluster/sites', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ name, description }) }).then(j),
   updateSite: (name: string, newName: string, description: string) =>

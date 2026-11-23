@@ -249,6 +249,7 @@ func main() {
 	if categorizer != nil {
 		apiSrv.SetCategorizer(categorizer)
 	}
+	apiSrv.SetCategoryDB(catDB)
 	registerControlPlaneMetrics(mx, st, apiSrv, catDB)
 	// SSO settings change live: rebuild and swap the OIDC provider without a restart.
 	apiSrv.SetRebuildOIDC(func(o store.OIDCSettings) error {

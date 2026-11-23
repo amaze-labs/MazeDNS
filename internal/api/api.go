@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/IPMaze/MazeDNS/internal/auth"
+	"github.com/IPMaze/MazeDNS/internal/categories"
 	"github.com/IPMaze/MazeDNS/internal/classifier"
 	"github.com/IPMaze/MazeDNS/internal/clientname"
 	"github.com/IPMaze/MazeDNS/internal/cluster"
@@ -82,6 +83,11 @@ type Server struct {
 	// rebuildOIDC swaps the running OIDC provider when SSO settings change (nil =
 	// unsupported). Set by main, which owns the config→provider construction.
 	rebuildOIDC func(store.OIDCSettings) error
+	// catDB is the category database (control plane only) the "Test a query"
+	// tool checks category blocks against; testQueryLimit rate-limits that tool
+	// per user.
+	catDB          *categories.Holder
+	testQueryLimit userLimiter
 	// procLogs holds recent process-log lines: the control plane's own slog ring
 	// plus one shipped ring per agent (see logs.go).
 	procLogs *procLogStore
@@ -161,6 +167,7 @@ func (s *Server) SetEnricher(e *clientname.Enricher) { s.enricher = e }
 // after every mutation.
 func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metrics, reload func() error, refresher *lists.Refresher, authMgr *auth.Manager, authEnabled, worker, clusterEnabled bool) *Server {
 	s := &Server{store: st, res: res, reload: reload, refresher: refresher, auth: authMgr, authEnabled: authEnabled, clusterEnabled: clusterEnabled, statsCache: newTTLCache(statsTTL), classifierAvailable: !worker, procLogs: newProcLogStore(), live: newLiveHub()}
+	s.testQueryLimit = userLimiter{limit: testQueryLimit, window: testQueryWindow}
 	s.setupDone.Store(true) // no gating unless main calls EnableSetupMode
 	// Login rate limiting seeded to the default; live-updated via applyCPSettings.
 	s.loginRate = newKeyedLimiter()
@@ -217,6 +224,8 @@ func New(addr string, st *store.Store, res *resolver.Resolver, m *metrics.Metric
 		mux.HandleFunc("POST /api/rules/import", s.requireRole(roleAdmin, s.importRules))
 		mux.HandleFunc("DELETE /api/rules/{id}", s.requireRole(roleAdmin, s.deleteRule))
 		mux.HandleFunc("GET /api/rewrites", s.requireRole(roleReadonly, s.listRewrites))
+		// "Test a query": changes nothing, so readonly may use it (rate-limited).
+		mux.HandleFunc("POST /api/tools/resolve", s.requireRole(roleReadonly, s.testQuery))
 		mux.HandleFunc("POST /api/rewrites", s.requireRole(roleAdmin, s.addRewrite))
 		mux.HandleFunc("PUT /api/rewrites/{id}", s.requireRole(roleAdmin, s.updateRewrite))
 		mux.HandleFunc("DELETE /api/rewrites/{id}", s.requireRole(roleAdmin, s.deleteRewrite))

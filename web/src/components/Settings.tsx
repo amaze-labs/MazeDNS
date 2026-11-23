@@ -170,6 +170,10 @@ function externalContacts(c: ClassifierSettings): string[] {
   if ((c.threat_feeds ?? []).length || (c.threat_list_url ?? '').trim())
     out.push('The threat feeds’ publishers: their lists are downloaded (they receive none of your queries).')
   if (c.whois_enabled) out.push('rdap.org and domain registries receive every new domain (WHOIS).')
+  if (c.nrd_enabled) out.push('jsdelivr.net: the newly-registered-domains lists are downloaded (they receive none of your queries).')
+  if (c.netrep_enabled)
+    out.push('spamhaus.org: the DROP lists are downloaded; Team Cymru (DNS) receives the address each new domain resolves to.')
+  if (c.ct_enabled) out.push('crt.sh receives new domains whose registration date is unknown (Certificate Transparency).')
   if (c.whois_enabled && !c.ns_check_disabled) out.push('Cloudflare and Quad9 (DoH) receive domains served by trusted companies’ nameservers.')
   if (c.ai_enabled) out.push(`Your AI model (${c.provider === 'anthropic' ? 'api.anthropic.com' : c.endpoint || 'its endpoint'}) receives every new domain.`)
   if (c.vt_enabled) out.push('virustotal.com receives every new domain.')
@@ -1664,6 +1668,32 @@ export default function Settings({ onClassifierChange }: { onClassifierChange?: 
             placeholder={'https://example.com/malware-domains.txt\n/path/to/threatlist.txt'}
           />
         </Field>
+      </Group>
+
+      <Group
+        title="Open data"
+        desc="Risk: free, keyless sources. Lists are downloaded whole, so they never see your domains; the lookups send as little as they can."
+      >
+        <div className="toggles">
+          <Toggle
+            label="Newly registered domains"
+            desc="Downloads the free hagezi/nrd lists daily (about 90 MB; 45 MB in memory). A domain registered in the last two weeks counts as young even without WHOIS. Sends nothing."
+            checked={!!cls.nrd_enabled}
+            onChange={(v) => setCls({ ...cls, nrd_enabled: v })}
+          />
+          <Toggle
+            label="Network reputation"
+            desc="Checks the address a new domain resolves to against Spamhaus DROP and ASN-DROP (hijacked or criminal networks). The address, not the domain, goes to Team Cymru to find its network."
+            checked={!!cls.netrep_enabled}
+            onChange={(v) => setCls({ ...cls, netrep_enabled: v })}
+          />
+          <Toggle
+            label="Certificate Transparency"
+            desc="When the registration date is unknown, asks crt.sh when the domain got its first certificate: a brand-new site is suspect. Sends those domains to crt.sh, a free shared service that is often busy: when it doesn't answer, the check is skipped."
+            checked={!!cls.ct_enabled}
+            onChange={(v) => setCls({ ...cls, ct_enabled: v })}
+          />
+        </div>
       </Group>
 
       <Group

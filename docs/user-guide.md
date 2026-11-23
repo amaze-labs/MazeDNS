@@ -295,6 +295,20 @@ domain every month until it is established, an unknown registration date after a
 week, and a domain the threat feeds have since dropped after a day. Your own
 decisions are never revisited.
 
+**Open data** (Settings → Classification), each off until you turn it on, all free
+and keyless:
+
+- **Newly registered domains**: the hagezi/nrd lists of every domain registered in
+  the last two weeks, downloaded daily (about 90 MB; 45 MB in memory). A domain on
+  them counts as young even without WHOIS, and nothing is sent anywhere.
+- **Network reputation**: the address a new domain resolves to is checked against
+  Spamhaus DROP and ASN-DROP (hijacked or criminal networks). Only the address goes
+  out, to Team Cymru's DNS service, to find its network. A listed network is a
+  threat signal on its own.
+- **Certificate Transparency**: when the registration date is unknown, crt.sh says
+  when the domain got its first certificate; a brand-new site is suspect. crt.sh is
+  a free shared service and often busy: when it doesn't answer, the check is skipped.
+
 The built-in threat feeds are free and need no key: URLhaus (through the
 malware-filter mirror, since abuse.ch now requires an account), Phishing Army,
 HaGeZi TIF and the malware-filter phishing list are on by default; OpenPhish and
@@ -318,7 +332,13 @@ control-plane classifier-eval --n 2000 --rdap 250 --out report.md
 
 `--popular` takes another ranked list (for example a downloaded Tranco CSV),
 `--rdap N` looks up registration data for N domains per class (slow on purpose:
-about two a second), and `--feeds` picks the feeds.
+about two a second), `--nrd` adds the newly-registered-domains lists, and
+`--feeds` picks the feeds.
+
+Measured this way, the default trusted list (Majestic) lets far fewer known-bad
+domains through than Tranco: Tranco's top 100,000 includes over twice as many
+domains from the HaGeZi threat feed, because it also ranks by DNS traffic, which
+busy malware domains have plenty of.
 
 ### Review
 

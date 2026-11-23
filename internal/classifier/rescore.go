@@ -138,11 +138,14 @@ func (w *Worker) rescoreAged(now time.Time) int {
 	} else {
 		slog.Warn("rescore: list flagged verdicts failed", "err", err)
 	}
-	// Young domains: a "registered N days ago" factor (under two years).
-	if vs, err := w.store.MachineVerdictsMatching(ms(rescoreYoungAfter), `%"label":"Domain age","detail":"registered %`, false, rescoreBatch); err == nil {
-		for _, v := range vs {
-			if w.rescoreDomain(v.Domain, "domain has aged since it was scored") {
-				n++
+	// Young domains: a "registered N days ago" / "registered within" factor
+	// (under two years), or a recent first certificate.
+	for _, like := range []string{`%"label":"Domain age","detail":"registered %`, `%"label":"Site age","detail":"first certificate %`} {
+		if vs, err := w.store.MachineVerdictsMatching(ms(rescoreYoungAfter), like, false, rescoreBatch); err == nil {
+			for _, v := range vs {
+				if w.rescoreDomain(v.Domain, "domain has aged since it was scored") {
+					n++
+				}
 			}
 		}
 	}

@@ -37,6 +37,8 @@ type EvalOptions struct {
 	Whois      func(ctx context.Context, domain string) (WhoisInfo, error)
 	WhoisLimit int
 	Seed       int64
+	// NRD, when set, are newly-registered-domains lists (LoadNRDLists).
+	NRD *NRDLists
 	// Progress, when set, is called every 250 samples.
 	Progress func(done, total int)
 }
@@ -106,7 +108,7 @@ func Evaluate(ctx context.Context, samples []Sample, opt EvalOptions) EvalResult
 		if opt.Progress != nil && i > 0 && i%250 == 0 {
 			opt.Progress(i, len(samples))
 		}
-		in := ScoreInput{Domain: s.Domain, Platform: HostingPlatform(s.Domain), Lex: opt.Lex}
+		in := ScoreInput{Domain: s.Domain, Platform: HostingPlatform(s.Domain), Lex: opt.Lex, NRDDays: opt.NRD.days(s.Domain)}
 		if opt.Whois != nil && whoisLeft[s.Malicious] > 0 && in.Platform == "" {
 			whoisLeft[s.Malicious]--
 			if w, err := opt.Whois(ctx, s.Domain); err == nil {

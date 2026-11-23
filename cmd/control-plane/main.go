@@ -48,6 +48,11 @@ func main() {
 		resetAdminCmd(os.Args[2:])
 		return
 	}
+	// Measure the classifier's score on labelled open data (classifier_eval.go).
+	if len(os.Args) > 1 && os.Args[1] == "classifier-eval" {
+		classifierEvalCmd(os.Args[2:])
+		return
+	}
 
 	cfgPath := flag.String("config", "configs/mazedns.yaml", "path to the YAML config file")
 	flag.Parse()

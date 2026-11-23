@@ -285,6 +285,41 @@ registration, the company's own nameservers, registry locks, clean reputation. A
 domain becomes a block candidate only below **50** *and* with a real threat signal,
 so a young but legitimate site is never blocked on its shape alone.
 
+The score also uses what your own network sees, with no outside service: names
+that imitate a popular brand (a typo, the brand plus "login", look-alike letters),
+names less natural than real domain names, a brand placed in front of another
+domain, and query patterns. Many long random subdomains of one domain look like
+data smuggled out over DNS (**DNS tunneling**): that is sent to Review, never
+blocked automatically. Verdicts are revisited when their evidence ages: a young
+domain every month until it is established, an unknown registration date after a
+week, and a domain the threat feeds have since dropped after a day. Your own
+decisions are never revisited.
+
+The built-in threat feeds are free and need no key: URLhaus (through the
+malware-filter mirror, since abuse.ch now requires an account), Phishing Army,
+HaGeZi TIF and the malware-filter phishing list are on by default; OpenPhish and
+Phishing.Database can be added.
+
+#### Measuring the score
+
+`control-plane classifier-eval` measures how well the score tells malicious from
+legitimate domains, on labelled samples built from open data: domains from the
+threat feeds, the long tail of the popularity list (past the trusted part), and,
+with `--config`, your own Review decisions. The feeds themselves, reputation
+services and the AI model are left out, so the numbers are for the analysis that
+has to catch what no list knows yet. It prints a Markdown report: ROC AUC, how
+many malicious domains are caught and legitimate ones flagged at each threshold,
+and for every factor how often it fires on each side and the points the data
+supports.
+
+```bash
+control-plane classifier-eval --n 2000 --rdap 250 --out report.md
+```
+
+`--popular` takes another ranked list (for example a downloaded Tranco CSV),
+`--rdap N` looks up registration data for N domains per class (slow on purpose:
+about two a second), and `--feeds` picks the feeds.
+
 ### Review
 
 **Filtering → Review** lists the domains the classifier scored, under **To check**

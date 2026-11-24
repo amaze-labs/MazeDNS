@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/amaze-labs/MazeDNS/security/advisories/new
+    about: Privately, not as a public issue. See SECURITY.md.
+  - name: Troubleshooting
+    url: https://github.com/amaze-labs/MazeDNS/blob/main/docs/troubleshooting.md
+    about: Common symptoms and their fix. Worth a look before opening a bug.
+  - name: Documentation
+    url: https://github.com/amaze-labs/MazeDNS/tree/main/docs
+    about: Install, user guide, configuration and developer docs.

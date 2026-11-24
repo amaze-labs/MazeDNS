@@ -1,0 +1,95 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Issues are **public**: replace real domains,
+        hostnames, client names and addresses with invented ones (`nas.home.lan`,
+        `10.20.0.0/24`, `example.com`) in the text, the logs and the screenshots.
+
+        A security vulnerability doesn't go here: report it privately, see
+        [SECURITY.md](https://github.com/amaze-labs/MazeDNS/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: For a DNS answer, the query (`dig @resolver name type`) and what came back.
+      placeholder: |
+        1. Add a block rule for …
+        2. dig @10.20.0.53 example.com A
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Settings → About, or `GET /api/version`. Say if the resolvers run a different one.
+      placeholder: "1.42.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Where
+      options:
+        - Control plane (web UI)
+        - Control plane (API)
+        - Resolver (DNS answers)
+        - Resolver enrollment / sync
+        - Filtering and blocklists
+        - Classification (categories, risk score)
+        - Local DNS / forwarding
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker Compose (images from GHCR)
+        - Kubernetes
+        - Built from source
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options:
+        - SQLite (default)
+        - PostgreSQL
+
+  - type: input
+    id: topology
+    attributes:
+      label: Resolvers and sites
+      description: How many resolvers, in how many sites, and whether they share a host with the control plane.
+      placeholder: "3 resolvers in 2 sites, control plane on its own host"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        The lines around the error from `docker compose logs control-plane` and/or
+        the resolver's container.
+      render: text

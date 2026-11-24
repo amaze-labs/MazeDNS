@@ -1,0 +1,40 @@
+name: Feature request
+description: Something MazeDNS could do, or do better.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are **public**: in examples, use invented names and addresses
+        (`nas.home.lan`, `site-a`, `10.20.0.0/24`), not your own network's.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: How it could work. A sketch, or how AdGuard Home / Pi-hole / another tool does it, helps.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Where
+      options:
+        - Control plane (web UI)
+        - Control plane (API)
+        - Resolver
+        - Filtering and blocklists
+        - Classification (categories, risk score)
+        - Local DNS / forwarding
+        - Multi-site / enrollment
+        - Documentation
+        - Not sure
+    validations:
+      required: true

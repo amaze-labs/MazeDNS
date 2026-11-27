@@ -14,23 +14,16 @@ type ClientRow struct {
 	LastSeen int64  `json:"last_seen"` // unix millis
 }
 
-// ClientList returns the top clients by query volume since sinceMs (with the
-// optional node filter), newest activity first as a tie-break is not needed
-// since we order by volume.
+// ClientList returns the busiest clients since sinceMs (with the optional node
+// filter), up to limit (200 when out of 1..1000). Like the dashboard's top
+// clients, the counts come from client_rollup, so the window starts on the
+// hour; see clientListQuery.
 func (s *Store) ClientList(sinceMs int64, limit int, nodes []string) ([]ClientRow, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	nf, nargs := nodeFilterSQL(nodes)
-	args := append([]any{sinceMs}, nargs...)
-	args = append(args, limit)
-	rows, err := s.read.Query(
-		`SELECT client,
-		        COUNT(*) AS total,
-		        SUM(CASE WHEN action='blocked' THEN 1 ELSE 0 END) AS blocked,
-		        MAX(ts) AS last_seen
-		 FROM query_log WHERE ts >= ? AND client <> ''`+nf+`
-		 GROUP BY client ORDER BY total DESC LIMIT ?`, args...)
+	q, args := clientListQuery(sinceMs, limit, nodes)
+	rows, err := s.read.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -153,4 +146,25 @@ func scanDomainStats(s *Store, query string, args []any) ([]DomainStat, error) {
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// clientListQuery builds ClientList's statement. It must not aggregate
+// query_log itself: GROUP BY client there makes SQLite walk the whole log in
+// idx_query_log_client_ts order, a month of it on every visit (#121). The
+// counts come from client_rollup instead, and each listed client's last-seen
+// time is one MAX(ts) on (client, ts) bounded to the window's hour, so a
+// client counted in the window always has one.
+func clientListQuery(sinceMs int64, limit int, nodes []string) (string, []any) {
+	nf, nargs := nodeFilterSQL(nodes)
+	hour := sinceMs / 3600000
+	args := append([]any{hour * 3600000}, nargs...)
+	args = append(args, hour)
+	args = append(args, nargs...)
+	args = append(args, limit)
+	return `SELECT r.client, r.total, r.blocked,
+		        COALESCE((SELECT MAX(q.ts) FROM query_log q
+		                  WHERE q.client = r.client AND q.ts >= ?` + nf + `), 0) AS last_seen
+		 FROM (SELECT client, SUM(cnt) AS total, SUM(blocked) AS blocked
+		       FROM client_rollup WHERE hour >= ?` + nf + ` GROUP BY client) r
+		 ORDER BY r.total DESC, r.client LIMIT ?`, args
 }

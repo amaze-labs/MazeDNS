@@ -132,6 +132,7 @@ never the secret values), viewable at `GET /api/settings/audit`.
 | `MAZEDNS_DB_PATH` | No | `mazedns.db` | SQLite file path. In containers set it under the mounted volume, e.g. `/data/mazedns.db`. |
 | `MAZEDNS_DB_DRIVER` | No | `sqlite` | `sqlite` or `postgres`. |
 | `MAZEDNS_DB_DSN` | For Postgres | *(empty)* | PostgreSQL DSN, e.g. `postgres://user:pass@host:5432/mazedns?sslmode=disable`. Setting only the DSN implies the `postgres` driver. |
+| `MAZEDNS_DB_CACHE_MB` | No | `8` | SQLite page cache of **each** database connection, in MiB (YAML: `database.cache_mb`). There are up to nine connections (one writer, eight readers), so memory can reach nine times this, and it sits outside the Go heap: `GOMEMLIMIT` does not count or bound it. Raise it only with memory to spare; see [Memory](#memory). |
 | `MAZEDNS_BLOCKLIST_FILES` | No | *(empty)* | Local blocklist file path(s), comma/space separated (absolute paths). Replaces `filter.blocklist_files`. Loaded locally per component (not replicated). |
 | `MAZEDNS_LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, or `error`. |
 | `MAZEDNS_CATEGORY_DB` | No | on | `off` turns domain categories off: the control plane stops labelling queries, a resolver stops blocking categories. Otherwise both download the UT1 category database from `dsi.ut-capitole.fr` next to their database — all of it on the control plane (~48 MB in memory), only the blocked categories on a resolver (see [Domain categories](user-guide.md#domain-categories)). |
@@ -142,10 +143,22 @@ never the secret values), viewable at `GET /api/settings/audit`.
 > the source of truth. Use PostgreSQL for the control plane if you want managed
 > backups/HA, and leave resolvers on their local SQLite.
 
+### Memory
+
 The Go garbage-collector knobs `GOGC` and `GOMEMLIMIT` are honored on both images.
 When `GOGC` is unset, the DNS resolver raises it to `200` to cut GC jitter on the
 query path; the control plane keeps Go's default (`100`), since it serves no DNS
 and a higher value would only inflate its heap.
+
+`GOMEMLIMIT` bounds the Go heap only. With SQLite, each database connection also
+keeps a page cache (`MAZEDNS_DB_CACHE_MB`, 8 MiB by default) and the temporary
+tables of the statistics it is running, outside the Go heap. A dashboard load runs
+its statistics in parallel, one connection each, so on the control plane leave
+room above `GOMEMLIMIT` for them. Measured on a month of query log at about
+600,000 queries a day, with the default cache, the whole process peaked at about
+400 MiB resident for a dashboard over 24 hours and about 770 MiB over 15 days
+(the temporary tables grow with the window). Up to 0.151, a 64 MiB cache per
+connection brought the same loads to about 1 GiB and 1.4 GiB.
 
 `MAZEDNS_IMAGE_VERSION` and `MAZEDNS_RESOLVER_BUILD` (`MAZEDNS_AGENT_BUILD`, its
 old name, is still set and read) are set **by the published images**, not by you. A release rebuilds only the image whose code changed and

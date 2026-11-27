@@ -71,6 +71,9 @@ func OpenStore(cfg config.Config, opts ...store.Option) (*store.Store, error) {
 	case "postgres", "pgx":
 		return store.OpenWith("pgx", cfg.Database.DSN, opts...)
 	default:
+		if cfg.Database.CacheMB > 0 {
+			opts = append(opts, store.WithCacheMiB(cfg.Database.CacheMB))
+		}
 		return store.Open(cfg.Database.Path, opts...)
 	}
 }

@@ -47,6 +47,9 @@ type Store struct {
 	// checkpointPages is the WAL size, in pages, that triggers a checkpoint
 	// (0 = SQLite's default, 1000). See WithCheckpointPages.
 	checkpointPages int
+	// cacheMiB is each connection's page cache (0 = DefaultCacheMiB). See
+	// WithCacheMiB.
+	cacheMiB int
 
 	// Node heartbeats held in memory between writes (see TouchNode).
 	hbMu       sync.Mutex
@@ -72,6 +75,22 @@ func WithoutQueryLogIndexes() Option { return func(s *Store) { s.noQueryLogIndex
 // client) costs one database write per checkpoint: fewer checkpoints, fewer
 // writes. The WAL file grows to about pages × 4 KB. SQLite only.
 func WithCheckpointPages(pages int) Option { return func(s *Store) { s.checkpointPages = pages } }
+
+// DefaultCacheMiB is each SQLite connection's page cache unless WithCacheMiB
+// says otherwise.
+//
+// The cache is per connection, and there are up to nine (the writer and eight
+// readers): a dashboard load runs its statistics in parallel, one reader each,
+// and each fills its own cache. The pure-Go driver allocates it outside the Go
+// heap, so GOMEMLIMIT neither sees nor bounds it. At 64 MiB a 24-hour
+// dashboard on a month of query log reached ~1 GiB of resident memory against
+// a 130 MiB heap; at 8 MiB it stays under 400 MiB and answers faster. Reads of the first
+// mmap_size bytes come from the OS page cache, which the kernel can reclaim.
+const DefaultCacheMiB = 8
+
+// WithCacheMiB sets each connection's page cache, in MiB (0 or less keeps
+// DefaultCacheMiB). The total can reach nine times this. SQLite only.
+func WithCacheMiB(mib int) Option { return func(s *Store) { s.cacheMiB = mib } }
 
 // Rule is an allow/deny entry for a domain, tagged with a category.
 type Rule struct {
@@ -107,15 +126,15 @@ type Rewrite struct {
 // default backend) and runs migrations.
 func Open(path string, opts ...Option) (*Store, error) {
 	// PRAGMAs are set in the DSN so they apply to *every* connection (including each
-	// connection in the read pool). WAL + NORMAL sync are the safe fast pairing; the
-	// bigger page cache + memory-mapped reads + in-memory temp B-trees cut the I/O
-	// thrash of the dashboard's GROUP BY/COUNT scans over a large query_log.
+	// connection in the read pool). WAL + NORMAL sync are the safe fast pairing;
+	// memory-mapped reads + in-memory temp B-trees cut the I/O thrash of the
+	// dashboard's GROUP BY/COUNT scans over a large query_log. The page cache is
+	// per connection: see DefaultCacheMiB.
 	pragmas := []string{
 		"_pragma=busy_timeout(5000)",
 		"_pragma=journal_mode(WAL)",
 		"_pragma=foreign_keys(1)",
 		"_pragma=synchronous(NORMAL)",
-		"_pragma=cache_size(-65536)",   // 64 MiB page cache (negative = KiB)
 		"_pragma=mmap_size(268435456)", // 256 MiB memory-mapped I/O
 		"_pragma=temp_store(MEMORY)",   // GROUP BY/ORDER BY temporaries in RAM
 	}
@@ -123,6 +142,11 @@ func Open(path string, opts ...Option) (*Store, error) {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	cacheMiB := o.cacheMiB
+	if cacheMiB <= 0 {
+		cacheMiB = DefaultCacheMiB
+	}
+	pragmas = append(pragmas, fmt.Sprintf("_pragma=cache_size(-%d)", cacheMiB*1024)) // negative = KiB
 	if o.checkpointPages > 0 {
 		pragmas = append(pragmas, fmt.Sprintf("_pragma=wal_autocheckpoint(%d)", o.checkpointPages))
 	}

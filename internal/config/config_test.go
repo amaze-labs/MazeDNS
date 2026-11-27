@@ -267,6 +267,31 @@ func TestUpstreamStrategyConfig(t *testing.T) {
 	}
 }
 
+// MAZEDNS_DB_CACHE_MB sets the SQLite page cache per connection; unset, zero,
+// negative or unparsable leaves it to the store's default (0 here).
+func TestDBCacheMB(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		want int
+	}{
+		{"", 0},
+		{"32", 32},
+		{" 16 ", 16},
+		{"0", 0},
+		{"-4", 0},
+		{"lots", 0},
+	} {
+		t.Setenv("MAZEDNS_DB_CACHE_MB", tc.env)
+		cfg, err := Load(writeConfig(t, minimalConfig))
+		if err != nil {
+			t.Fatalf("%q: load: %v", tc.env, err)
+		}
+		if cfg.Database.CacheMB != tc.want {
+			t.Errorf("%q: cache = %d MiB, want %d", tc.env, cfg.Database.CacheMB, tc.want)
+		}
+	}
+}
+
 // The control plane writes shipped query logs every 5 minutes unless
 // MAZEDNS_QUERYLOG_FLUSH_INTERVAL says otherwise; below 30s (resolvers ship
 // once a sync) it is raised to 30s, and an unparsable value keeps the default.

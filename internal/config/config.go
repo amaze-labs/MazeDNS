@@ -271,6 +271,10 @@ type Database struct {
 	Driver string `yaml:"driver"` // "sqlite" (default) | "postgres"
 	Path   string `yaml:"path"`   // sqlite: database file
 	DSN    string `yaml:"dsn"`    // postgres: e.g. postgres://user:pass@host:5432/mazedns?sslmode=disable
+	// CacheMB is each SQLite connection's page cache in MiB (0 = the store's
+	// default, see store.DefaultCacheMiB). Up to nine connections hold one
+	// each, outside the Go heap. MAZEDNS_DB_CACHE_MB.
+	CacheMB int `yaml:"cache_mb"`
 }
 
 // Log configures logging.
@@ -439,6 +443,11 @@ func Load(path string) (Config, error) {
 		// must not silently win, or the DSN is ignored and SQLite is opened.
 		if os.Getenv("MAZEDNS_DB_DRIVER") == "" {
 			cfg.Database.Driver = "postgres"
+		}
+	}
+	if v := os.Getenv("MAZEDNS_DB_CACHE_MB"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			cfg.Database.CacheMB = n
 		}
 	}
 	if v := os.Getenv("MAZEDNS_LOG_LEVEL"); v != "" {
